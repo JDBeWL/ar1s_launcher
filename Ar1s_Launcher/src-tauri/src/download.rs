@@ -31,8 +31,8 @@ pub enum DownloadStatus {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DownloadProgress {
-    pub progress: u64,      // 已完成文件数
-    pub total: u64,        // 总文件数
+    pub progress: u64,      // 已下载字节数
+    pub total: u64,        // 总字节数
     pub speed: f64,        // 下载速度(KB/s)
     pub status: DownloadStatus,
     pub bytes_downloaded: u64, // 已下载字节数
@@ -132,8 +132,8 @@ pub async fn download_all_files(
                 } else { 0 };
 
                 let progress = DownloadProgress {
-                    progress: downloaded_count,
-                    total: actual_total,
+                    progress: current_bytes,
+                    total: total_size,
                     speed,
                     status: DownloadStatus::Downloading,
                     bytes_downloaded: current_bytes,
@@ -272,8 +272,8 @@ pub async fn download_all_files(
         } else { 0 };
 
         let _ = window.emit("download-progress", &DownloadProgress {
-            progress: files_downloaded.load(Ordering::SeqCst),
-            total: actual_total,
+            progress: final_bytes,
+            total: total_bytes,
             speed: 0.0,
             status: DownloadStatus::Cancelled,
             bytes_downloaded: final_bytes,
@@ -291,8 +291,8 @@ pub async fn download_all_files(
         } else { 0 };
 
         let _ = window.emit("download-progress", &DownloadProgress {
-            progress: files_downloaded.load(Ordering::SeqCst),
-            total: actual_total,
+            progress: final_bytes,
+            total: total_bytes,
             speed: 0.0,
             status: DownloadStatus::Error,
             bytes_downloaded: final_bytes,
@@ -304,8 +304,8 @@ pub async fn download_all_files(
     
     // 下载完成 - 确保只发送一次完成事件
     let _ = window.emit("download-progress", &DownloadProgress {
-        progress: actual_total,
-        total: actual_total,
+        progress: bytes_downloaded.load(Ordering::SeqCst),
+        total: jobs.iter().map(|j| j.size).sum(),
         speed: 0.0,
         status: DownloadStatus::Completed,
         bytes_downloaded: bytes_downloaded.load(Ordering::SeqCst),

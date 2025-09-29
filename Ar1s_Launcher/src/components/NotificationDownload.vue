@@ -45,6 +45,17 @@ const remainingTime = computed(() => {
   
   return `${hours ? `${hours}h ` : ''}${minutes ? `${minutes}m ` : ''}${secs}s`
 })
+
+const progressText = computed(() => {
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+  return `${formatBytes(props.progress)} / ${formatBytes(props.total)}`;
+})
 </script>
 
 <template>
@@ -67,7 +78,7 @@ const remainingTime = computed(() => {
       ></v-progress-linear>
       
       <div class="d-flex justify-space-between text-caption">
-        <span>{{ progress }} / {{ total }} 文件</span>
+        <span>{{ progressText }}</span>
         <span>{{ progressPercentage.toFixed(1) }}%</span>
       </div>
       
