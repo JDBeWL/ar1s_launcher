@@ -16,6 +16,24 @@ const sortOrder = ref('newest');
 const itemsPerPage = 10;
 const currentPage = ref(1);
 
+const typeMeta: Record<string, { label: string; color: string; icon: string }> = {
+  release: { label: '正式版', color: 'success', icon: 'mdi-check-circle-outline' },
+  snapshot: { label: '快照版', color: 'warning', icon: 'mdi-flash-outline' }
+};
+
+const getTypeMeta = (type: string) => typeMeta[type] ?? { label: '其他版本', color: 'primary', icon: 'mdi-cube-outline' };
+const getTypeLabel = (type: string) => getTypeMeta(type).label;
+const getTypeColor = (type: string) => getTypeMeta(type).color;
+const getTypeIcon = (type: string) => getTypeMeta(type).icon;
+
+const formatDateTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '发布日期未知';
+  }
+  return date.toLocaleString();
+};
+
 // 从store获取下载状态
 const isDownloading = computed(() => downloadStore.isDownloading);
 const selectedVersion = computed(() => downloadStore.selectedVersion);
@@ -161,55 +179,74 @@ onMounted(async () => {
           </v-col>
         </v-row>
 
-        <!-- Versions Table -->
+        <!-- Versions List -->
         <v-row>
           <v-col cols="12">
-            <v-data-table
-              :headers="[
-                { title: '版本', key: 'id', align: 'start' },
-                { title: '类型', key: 'type', align: 'center' },
-                { title: '发布日期', key: 'releaseTime', align: 'end' },
-                { title: '操作', key: 'actions', align: 'end', sortable: false }
-              ]"
-              :items="paginatedVersions"
-              :loading="loading"
-              items-per-page="-1"
-              hide-default-footer
-            >
-              <template v-slot:item.releaseTime="{ item }">
-                {{ new Date(item.releaseTime).toLocaleDateString() }}
-              </template>
-              
-              <template v-slot:item.actions="{ item }">
-                <v-btn
-                  v-if="isDownloading && selectedVersion === item.id"
-                  color="error"
-                  variant="tonal"
-                  size="small"
-                  @click="cancelDownload"
+            <div v-if="loading" class="text-center py-6">
+              正在加载...
+            </div>
+            <template v-else>
+              <div v-if="paginatedVersions.length === 0" class="text-center py-6">
+                没有找到匹配的版本
+              </div>
+              <template v-else>
+                <v-card
+                  v-for="item in paginatedVersions"
+                  :key="item.id"
+                  class="version-card mb-3"
+                  variant="outlined"
                 >
-                  取消
-                </v-btn>
-                <v-btn
-                  v-else
-                  color="primary"
-                  variant="tonal"
-                  size="small"
-                  :disabled="isDownloading"
-                  @click="startDownload(item.id)"
-                >
-                  下载
-                </v-btn>
+                  <div class="version-card__left">
+                    <v-avatar
+                      size="56"
+                      :color="getTypeColor(item.type)"
+                      variant="tonal"
+                      class="mr-4"
+                    >
+                      <v-icon :icon="getTypeIcon(item.type)" size="32"></v-icon>
+                    </v-avatar>
+                    <div class="version-card__info">
+                      <div class="version-card__title">
+                        <span class="version-card__id">{{ item.id }}</span>
+                        <v-chip
+                          size="small"
+                          :color="getTypeColor(item.type)"
+                          variant="tonal"
+                          class="font-weight-medium"
+                        >
+                          {{ getTypeLabel(item.type) }}
+                        </v-chip>
+                      </div>
+                      <div class="version-card__date">
+                        {{ formatDateTime(item.releaseTime) }}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="version-card__right">
+                    <v-btn
+                      v-if="isDownloading && selectedVersion === item.id"
+                      color="error"
+                      variant="tonal"
+                      size="small"
+                      @click="cancelDownload"
+                    >
+                      取消
+                    </v-btn>
+                    <v-btn
+                      v-else
+                      color="primary"
+                      variant="tonal"
+                      size="small"
+                      :disabled="isDownloading"
+                      @click="startDownload(item.id)"
+                    >
+                      下载
+                    </v-btn>
+                  </div>
+                </v-card>
               </template>
-              
-              <template v-slot:no-data>
-                <div class="text-center pa-4">
-                  <p v-if="loading">正在加载...</p>
-                  <p v-else>没有找到匹配的版本</p>
-                </div>
-              </template>
-            </v-data-table>
-            
+            </template>
+
             <v-pagination
               v-if="totalPages > 1"
               v-model="currentPage"
@@ -226,5 +263,62 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* Keeping scoped styles minimal as Vuetify handles most of it */
+.version-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  gap: 16px;
+}
+
+.version-card__left {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: 16px;
+}
+
+.version-card__info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 6px;
+}
+
+.version-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.version-card__id {
+  font-weight: 600;
+  font-size: 1.1rem;
+  word-break: break-word;
+}
+
+.version-card__date {
+  font-size: 0.875rem;
+  opacity: 0.7;
+}
+
+.version-card__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .version-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .version-card__right {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
 </style>
