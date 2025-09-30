@@ -21,8 +21,14 @@ const props = defineProps({
   status: {
     type: String,
     default: 'idle'
+  },
+  modelValue: {
+    type: Boolean,
+    default: true
   }
 })
+
+const emit = defineEmits(['update:modelValue', 'cancel'])
 
 const progressPercentage = computed(() => {
   if (props.total === 0) return 0
@@ -56,15 +62,28 @@ const progressText = computed(() => {
   };
   return `${formatBytes(props.progress)} / ${formatBytes(props.total)}`;
 })
+
+// 处理关闭通知
+function hideNotification() {
+  emit('update:modelValue', false)
+}
+
+// 处理取消下载
+function handleCancel() {
+  emit('cancel')
+}
 </script>
 
 <template>
-  <v-card class="notification-download" width="400">
+  <v-card v-if="modelValue" class="notification-download" width="400">
     <v-card-title class="d-flex align-center">
       <v-icon class="mr-2" color="primary">mdi-download</v-icon>
       <span class="text-subtitle-1">{{ version }}</span>
       <v-spacer></v-spacer>
-      <v-btn icon size="small" variant="text">
+      <v-btn v-if="status === 'downloading'" icon size="small" variant="text" @click="handleCancel" title="取消下载">
+        <v-icon>mdi-cancel</v-icon>
+      </v-btn>
+      <v-btn icon size="small" variant="text" @click="hideNotification" title="隐藏通知">
         <v-icon>mdi-close</v-icon>
       </v-btn>
     </v-card-title>
@@ -73,7 +92,7 @@ const progressText = computed(() => {
       <v-progress-linear
         :model-value="progressPercentage"
         height="8"
-        color="primary"
+        :color="status === 'completed' ? 'success' : status === 'error' ? 'error' : 'primary'"
         class="mb-2"
       ></v-progress-linear>
       
@@ -85,6 +104,16 @@ const progressText = computed(() => {
       <div class="d-flex justify-space-between text-caption mt-1">
         <span>{{ formattedSpeed }}</span>
         <span>剩余: {{ remainingTime }}</span>
+      </div>
+      
+      <div v-if="status === 'completed'" class="text-success text-caption mt-1">
+        下载完成
+      </div>
+      <div v-else-if="status === 'error'" class="text-error text-caption mt-1">
+        下载失败
+      </div>
+      <div v-else-if="status === 'cancelled'" class="text-warning text-caption mt-1">
+        下载已取消
       </div>
     </v-card-text>
   </v-card>

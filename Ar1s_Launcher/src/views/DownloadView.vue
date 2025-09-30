@@ -1,29 +1,24 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
-import NotificationDownload from '@/components/NotificationDownload.vue';
 import { invoke } from "@tauri-apps/api/core";
-import { listen, emit } from '@tauri-apps/api/event';
+import { useDownloadStore } from '@/stores/downloadStore';
+
+// 使用全局下载状态
+const downloadStore = useDownloadStore();
 
 // --- State ---
-// 移除未使用的versions变量
 const allVersions = ref<Array<any>>([]);
-const selectedVersion = ref('');
 const downloadSource = ref('bmcl'); // Default to BMCL
 const loading = ref(false);
-const completionNotified = ref(false); // 添加标志，跟踪是否已显示完成提示
-const showNotification = ref(false); // 控制通知显示
-const downloadProgress = ref({
-  progress: 0,
-  total: 0,
-  speed: 0,
-  status: 'idle' // idle, downloading, completed, cancelled, error
-});
-const isDownloading = computed(() => downloadProgress.value.status === 'downloading');
 const searchQuery = ref('');
-const versionType = ref('all');
+const versionType = ref('release');
 const sortOrder = ref('newest');
 const itemsPerPage = 10;
 const currentPage = ref(1);
+
+// 从store获取下载状态
+const isDownloading = computed(() => downloadStore.isDownloading);
+const selectedVersion = computed(() => downloadStore.selectedVersion);
 
 // --- Methods ---
 
@@ -47,28 +42,12 @@ async function fetchVersions() {
 
 // Start a download
 async function startDownload(versionId: string) {
-  selectedVersion.value = versionId;
-  downloadProgress.value.status = 'downloading'; // Only update status
-  completionNotified.value = false; // 重置完成通知标志
-  
-  try {
-    await invoke('download_version', { 
-      versionId: selectedVersion.value,
-      mirror: downloadSource.value === 'bmcl' ? 'bmcl' : undefined,
-    });
-    // Note: Success is now handled by the event listener
-  } catch (err) {
-    console.error('Failed to download version:', err);
-    downloadProgress.value.status = 'error';
-    const errorMessage = (err as any).message || String(err);
-    alert(`下载失败: ${errorMessage}`);
-  }
+  await downloadStore.startDownload(versionId, downloadSource.value);
 }
 
 // Cancel a download
 async function cancelDownload() {
-  await emit('cancel-download');
-  // The backend will confirm cancellation via the progress event
+  await downloadStore.cancelDownload();
 }
 
 // --- Computed Properties ---
@@ -108,33 +87,10 @@ const totalPages = computed(() => {
 
 onMounted(async () => {
   await fetchVersions();
-  
-  await listen('download-progress', (event) => {
-    const data = event.payload as any;
-    downloadProgress.value = data; // The backend now sends the full state object
-
-    if (data.status === 'completed' && !completionNotified.value) {
-      completionNotified.value = true; // 标记已显示完成提示
-      alert(`版本 ${selectedVersion.value} 下载完成！`);
-      selectedVersion.value = '';
-    } else if (data.status === 'cancelled' || data.status === 'error') {
-      completionNotified.value = false; // 重置标志
-      selectedVersion.value = '';
-    }
-  });
 });
 </script>
 
 <template>
-  <NotificationDownload
-    v-if="isDownloading"
-    :version="selectedVersion"
-    :progress="downloadProgress.progress"
-    :total="downloadProgress.total"
-    :speed="downloadProgress.speed"
-    :status="downloadProgress.status"
-  />
-  
   <v-container>
     <v-card>
       <v-card-title class="d-flex align-center">
@@ -144,8 +100,8 @@ onMounted(async () => {
       </v-card-title>
       <v-card-text>
         <!-- Search and Filter -->
-        <v-row>
-          <v-col cols="12" md="6">
+        <v-row no-gutters class="align-center">
+          <v-col class="flex-grow-1 pr-2">
             <v-text-field
               v-model="searchQuery"
               label="搜索版本"
@@ -156,7 +112,7 @@ onMounted(async () => {
               @update:model-value="currentPage = 1"
             ></v-text-field>
           </v-col>
-          <v-col cols="6" md="3">
+          <v-col class="shrink pr-2" style="max-width: 150px;">
             <v-select
               v-model="versionType"
               label="版本类型"
@@ -170,7 +126,7 @@ onMounted(async () => {
               @update:model-value="currentPage = 1"
             ></v-select>
           </v-col>
-          <v-col cols="6" md="3">
+          <v-col class="shrink" style="max-width: 180px;">
             <v-select
               v-model="sortOrder"
               label="排序方式"
@@ -198,19 +154,10 @@ onMounted(async () => {
             <v-btn
               variant="text"
               color="primary"
-              @click="showNotification = true"
-              v-if="isDownloading"
+              @click="downloadStore.showDownloadNotification()"
             >
               查看下载进度
             </v-btn>
-            <NotificationDownload
-              v-model="showNotification"
-              :version="selectedVersion"
-              :progress="downloadProgress.progress"
-              :total="downloadProgress.total"
-              :speed="downloadProgress.speed"
-              :status="downloadProgress.status"
-            />
           </v-col>
         </v-row>
 

@@ -2,6 +2,8 @@
 import { Window } from '@tauri-apps/api/window'
 import { ref, onMounted } from 'vue'
 import { useTheme } from 'vuetify'
+import { useDownloadStore } from './stores/downloadStore'
+import GlobalDownloadStatus from './components/GlobalDownloadStatus.vue'
 
 // 窗口控制
 const appWindow = Window.getCurrent()
@@ -28,8 +30,13 @@ function toggleTheme() {
   localStorage.setItem('theme', isDarkMode.value ? 'dark' : 'light')
 }
 
-// 初始化主题
-onMounted(() => {
+// 初始化下载监听器和主题
+onMounted(async () => {
+  // 初始化下载监听器
+  const downloadStore = useDownloadStore()
+  await downloadStore.initListeners()
+  
+  // 初始化主题
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme) {
     isDarkMode.value = savedTheme === 'dark'
@@ -77,6 +84,9 @@ onMounted(() => {
     <v-main>
       <router-view></router-view>
     </v-main>
+    
+    <!-- 全局下载状态组件 -->
+    <GlobalDownloadStatus />
   </v-app>
 </template>
 

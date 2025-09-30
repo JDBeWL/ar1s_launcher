@@ -87,7 +87,7 @@ pub async fn download_all_files(
     };
 
     // 更新总文件数为实际需要下载的数量
-    let actual_total = jobs.len() as u64;
+    let _actual_total = jobs.len() as u64;
 
     let completed_count_from_state = download_state.lock().await.completed_files.len() as u64;
 
@@ -123,7 +123,7 @@ pub async fn download_all_files(
                 tokio::time::sleep(report_interval).await;
                 if !state.load(Ordering::SeqCst) { break; }
 
-                let downloaded_count = files_downloaded.load(Ordering::SeqCst);
+                let _downloaded_count = files_downloaded.load(Ordering::SeqCst);
                 let current_bytes = bytes_downloaded.load(Ordering::SeqCst);
                 let bytes_since = bytes_since_last.swap(0, Ordering::SeqCst);
                 let speed = (bytes_since as f64 / 1024.0) / report_interval.as_secs_f64();
