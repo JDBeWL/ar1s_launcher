@@ -75,8 +75,8 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', component: () => import('./views/HomeView.vue') },
-    { path: '/settings', component: () => import('./views/SettingsView.vue') },
     { path: '/download', component: () => import('./views/DownloadView.vue') },
+    { path: '/settings', component: () => import('./views/SettingsView.vue') },
   ],
 })
 

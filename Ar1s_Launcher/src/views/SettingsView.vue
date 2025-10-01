@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
+import { listen } from '@tauri-apps/api/event';
+import { useSettingsStore } from '../stores/settings';
 
 function formatJavaPath(rawPath: string) {
   if (!rawPath) return '';
   // 统一转换为正斜杠显示
   return rawPath.replace(/\\/g, '/');
 }
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
-import { listen } from '@tauri-apps/api/event';
-import { useSettingsStore } from '../stores/settings';
 
 const settingsStore = useSettingsStore()
 const gameDir = ref('')
@@ -165,7 +165,7 @@ onMounted(async () => {
                 v => !!v || '必须输入内存大小',
                 v => (v >= 512 && v <= Math.floor(settingsStore.totalMemoryMB * 0.8)) || `必须在512-${Math.floor(settingsStore.totalMemoryMB * 0.8)}MB之间`
               ]"
-              density="compact"
+              hide-spin-buttons
               @change="settingsStore.saveMaxMemory"
             ></v-text-field>
           </v-col>

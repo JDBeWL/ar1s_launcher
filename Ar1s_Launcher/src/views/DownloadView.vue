@@ -3,6 +3,10 @@ import { ref, onMounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useDownloadStore } from '@/stores/downloadStore';
 
+// SVG图标
+const grassBlockIcon = '/icons/grass_block.svg';
+const dirtPathIcon = '/icons/dirt_path.svg';
+
 // 使用全局下载状态
 const downloadStore = useDownloadStore();
 
@@ -17,8 +21,8 @@ const itemsPerPage = 10;
 const currentPage = ref(1);
 
 const typeMeta: Record<string, { label: string; color: string; icon: string }> = {
-  release: { label: '正式版', color: 'success', icon: 'mdi-check-circle-outline' },
-  snapshot: { label: '快照版', color: 'warning', icon: 'mdi-flash-outline' }
+  release: { label: '正式版', color: 'success', icon: grassBlockIcon },
+  snapshot: { label: '快照版', color: 'warning', icon: dirtPathIcon }
 };
 
 const getTypeMeta = (type: string) => typeMeta[type] ?? { label: '其他版本', color: 'primary', icon: 'mdi-cube-outline' };
@@ -197,14 +201,7 @@ onMounted(async () => {
                   variant="outlined"
                 >
                   <div class="version-card__left">
-                    <v-avatar
-                      size="56"
-                      :color="getTypeColor(item.type)"
-                      variant="tonal"
-                      class="mr-4"
-                    >
-                      <v-icon :icon="getTypeIcon(item.type)" size="32"></v-icon>
-                    </v-avatar>
+                    <img :src="getTypeIcon(item.type)" :alt="getTypeLabel(item.type)" width="48" height="48" class="mr-3">
                     <div class="version-card__info">
                       <div class="version-card__title">
                         <span class="version-card__id">{{ item.id }}</span>
@@ -228,20 +225,18 @@ onMounted(async () => {
                       color="error"
                       variant="tonal"
                       size="small"
+                      icon="mdi-close"
                       @click="cancelDownload"
-                    >
-                      取消
-                    </v-btn>
+                    ></v-btn>
                     <v-btn
                       v-else
                       color="primary"
                       variant="tonal"
                       size="small"
+                      icon="mdi-download"
                       :disabled="isDownloading"
                       @click="startDownload(item.id)"
-                    >
-                      下载
-                    </v-btn>
+                    ></v-btn>
                   </div>
                 </v-card>
               </template>
@@ -267,8 +262,9 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px;
-  gap: 16px;
+  padding: 12px;
+  gap: 12px;
+  min-height: 64px;
 }
 
 .version-card__left {
@@ -276,7 +272,7 @@ onMounted(async () => {
   align-items: center;
   flex: 1;
   min-width: 0;
-  gap: 16px;
+  gap: 12px;
 }
 
 .version-card__info {
