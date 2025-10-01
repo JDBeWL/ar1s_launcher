@@ -11,7 +11,7 @@
   - [ ] 下载错误/回退失败的用户可读提示与重试入口
   - [ ] 启动失败时的详细原因展示（缺库/JSON 解析/参数拼装/Java 不可用）
 - [ ] 配置一致性
-  - [ ] 统一 load_config/save_config（lib.rs 与 launcher.rs 存在重复实现），以避免不一致
+  - [x] 统一 load_config/save_config（lib.rs 与 launcher.rs 存在重复实现），以避免不一致
   - [ ] SettingsView 中“版本隔离”开关与后端 save_config_key/version_isolation 打通（当前仅前端状态）
 - [ ] 文件校验
   - [ ] validate_version_files 对 natives 的多格式兼容与更详细缺失项提示
