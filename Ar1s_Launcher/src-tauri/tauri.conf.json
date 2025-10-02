@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://launchermeta.mojang.com https://piston-meta.mojang.com https://piston-data.mojang.com https://libraries.minecraft.net https://resources.download.minecraft.net"
     },
     "withGlobalTauri": true
   },
