@@ -39,7 +39,6 @@ fn generate_offline_uuid(username: &str) -> String {
 
 
 /// 启动 Minecraft 游戏
-#[tauri::command]
 pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> Result<(), LauncherError> {
     // 保存用户名和UUID到配置文件
     let uuid = generate_offline_uuid(&options.username);
