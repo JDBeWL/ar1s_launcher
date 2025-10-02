@@ -5,7 +5,7 @@ use tauri::{Window, Emitter, Listener};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use reqwest;
-use crate::error::LauncherError;
+use crate::errors::LauncherError;
 use crate::models::DownloadJob;
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};

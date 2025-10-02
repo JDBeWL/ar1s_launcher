@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use tauri::command;
 use crate::{LauncherError, load_config, save_config};
 
 #[cfg(windows)]
@@ -11,7 +10,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 
 // 查找Java安装路径
-#[command]
+
 pub async fn find_java_installations_command() -> Result<Vec<String>, LauncherError> {
     let mut paths = Vec::new();
 
@@ -71,7 +70,7 @@ pub async fn find_java_installations_command() -> Result<Vec<String>, LauncherEr
 }
 
 // 设置Java路径
-#[command]
+
 pub async fn set_java_path_command(path: String) -> Result<(), LauncherError> {
     // 标准化路径格式
     let normalized_path = if cfg!(windows) {
@@ -91,7 +90,7 @@ pub async fn set_java_path_command(path: String) -> Result<(), LauncherError> {
     Ok(())
 }
 
-#[command]
+
 pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
     let java_exe = PathBuf::from(&path);
     if java_exe.is_file() {

@@ -7,9 +7,9 @@ use md5::Md5;
 use digest::Digest;
 use uuid::Uuid;
 
-use crate::error::LauncherError;
+use crate::errors::LauncherError;
 use crate::models::*;
-use crate::config::{load_config, save_config};
+use crate::services::config::{load_config, save_config};
 
 fn generate_offline_uuid(username: &str) -> String {
     // 首先检查配置中是否已有保存的UUID

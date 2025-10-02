@@ -3,25 +3,20 @@ use std::io::Write;
 use sysinfo::System;
 use std::path::PathBuf;
 use tauri::Emitter;
-
-use download::{download_all_files as download_all_files_impl};
-
-mod error;
+use services::download::{download_all_files as download_all_files_impl};
+mod errors;
 mod models;
-mod launcher;
-mod config;
-pub mod download;
+mod services;
+mod controllers;
 pub mod auth;
-pub mod java;
-
-pub use error::LauncherError;
+pub use errors::LauncherError;
 pub use models::*;
 
 // 直接导出launcher模块中的函数
-pub use launcher::launch_minecraft;
+pub use services::launcher::launch_minecraft;
 
 // 导出config模块中的函数
-pub use config::{load_config, save_config};
+pub use services::config::{load_config, save_config};
 
 // 获取 Minecraft 版本列表
 // 初始化日志系统
@@ -41,7 +36,8 @@ fn init_logging() -> Result<PathBuf, LauncherError> {
     Ok(log_dir)
 }
 
-#[tauri::command]
+
+#[allow(dead_code)]
 async fn get_versions() -> Result<VersionManifest, LauncherError> {
     // 初始化日志系统
     let _ = init_logging()?;
@@ -107,6 +103,7 @@ async fn get_versions() -> Result<VersionManifest, LauncherError> {
     Err(LauncherError::Custom("所有源都尝试失败，请检查网络连接".to_string()))
 }
 
+#[allow(dead_code)]
 async fn fetch_versions(client: &reqwest::Client, url: &str) -> Result<VersionManifest, LauncherError> {
     // 创建日志文件
     // 确保logs目录存在
@@ -179,7 +176,7 @@ async fn fetch_versions(client: &reqwest::Client, url: &str) -> Result<VersionMa
 }
 
 // 下载 Minecraft 版本
-#[tauri::command]
+#[allow(dead_code)]
 async fn download_version(
     version_id: String,
     mirror: Option<String>,
@@ -474,6 +471,7 @@ async fn download_version(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn download_all_files(
     jobs: Vec<DownloadJob>,
     window: &tauri::Window,
@@ -484,12 +482,13 @@ async fn download_all_files(
 }
 
 // 获取游戏目录
-#[tauri::command(rename = "get_config")]
+
+#[allow(dead_code)]
 async fn get_config() -> Result<GameConfig, LauncherError> {
     load_config()
 }
 
-#[tauri::command]
+#[allow(dead_code)]
 async fn load_config_key(key: String) -> Result<Option<String>, LauncherError> {
     let config = load_config()?;
     match key.as_str() {
@@ -508,7 +507,7 @@ async fn load_config_key(key: String) -> Result<Option<String>, LauncherError> {
     }
 }
 
-#[tauri::command]
+#[allow(dead_code)]
 async fn save_config_key(key: String, value: String) -> Result<(), LauncherError> {
     let mut config = load_config()?;
     match key.as_str() {
@@ -529,21 +528,21 @@ async fn save_config_key(key: String, value: String) -> Result<(), LauncherError
     Ok(())
 }
 
-#[tauri::command]
+#[allow(dead_code)]
 fn get_game_dir() -> Result<String, LauncherError> {
     let config = load_config()?;
     Ok(config.game_dir)
 }
 
 // 选择游戏目录
-#[tauri::command]
+#[allow(dead_code)]
 async fn select_game_dir(_window: tauri::Window) -> Result<String, LauncherError> {
     // 现在由前端直接处理对话框选择
     get_game_dir()
 }
 
 // 获取游戏目录信息
-#[tauri::command]
+#[allow(dead_code)]
 async fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
     let game_dir_str = get_game_dir()?;
     let versions_dir = PathBuf::from(&game_dir_str).join("versions");
@@ -572,7 +571,7 @@ async fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
 }
 
 // 设置游戏目录
-#[tauri::command]
+#[allow(dead_code)]
 async fn set_game_dir(path: String, window: tauri::Window) -> Result<(), LauncherError> {
     let mut config = load_config()?;
     config.game_dir = path.clone();
@@ -585,7 +584,7 @@ async fn set_game_dir(path: String, window: tauri::Window) -> Result<(), Launche
 }
 
 // 设置版本隔离
-#[tauri::command]
+#[allow(dead_code)]
 async fn set_version_isolation(enabled: bool) -> Result<(), LauncherError> {
     let mut config = load_config()?;
     config.version_isolation = enabled;
@@ -595,13 +594,13 @@ async fn set_version_isolation(enabled: bool) -> Result<(), LauncherError> {
 
 
 
-#[tauri::command]
+#[allow(dead_code)]
 fn get_download_threads() -> Result<u8, LauncherError> {
     let config = load_config()?;
     Ok(config.download_threads)
 }
 
-#[tauri::command]
+#[allow(dead_code)]
 async fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
     let mut config = load_config()?;
     config.download_threads = threads;
@@ -610,7 +609,7 @@ async fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
 }
 
 // 验证版本文件完整性
-#[tauri::command]
+#[allow(dead_code)]
 async fn validate_version_files(version_id: String) -> Result<Vec<String>, LauncherError> {
     let config = load_config()?;
     let game_dir = PathBuf::from(&config.game_dir);
@@ -689,7 +688,7 @@ async fn validate_version_files(version_id: String) -> Result<Vec<String>, Launc
 
 
 
-#[tauri::command]
+#[allow(dead_code)]
 fn get_total_memory() -> u64 {
     let mut sys = System::new();
     sys.refresh_memory();
@@ -712,28 +711,28 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
-            get_versions,
-            download_version,
+            controllers::download_controller::get_versions,
+            controllers::download_controller::download_version,
             launch_minecraft,
-            get_config,
-            get_game_dir,
-            get_game_dir_info,
-            set_game_dir,
-            select_game_dir,
-            set_version_isolation,
-            java::find_java_installations_command,
-            java::set_java_path_command,
-            load_config_key,
-            save_config_key,
-            java::validate_java_path,
-            get_download_threads,
-            set_download_threads,
-            validate_version_files,
-            auth::get_saved_username,
-            auth::set_saved_username,
-            auth::get_saved_uuid,
-            auth::set_saved_uuid,
-            get_total_memory
+            controllers::config_controller::get_config,
+            controllers::config_controller::get_game_dir,
+            controllers::config_controller::get_game_dir_info,
+            controllers::config_controller::set_game_dir,
+            controllers::config_controller::select_game_dir,
+            controllers::config_controller::set_version_isolation,
+            controllers::java_controller::find_java_installations_command,
+            controllers::java_controller::set_java_path_command,
+            controllers::config_controller::load_config_key,
+            controllers::config_controller::save_config_key,
+            controllers::java_controller::validate_java_path,
+            controllers::config_controller::get_download_threads,
+            controllers::config_controller::set_download_threads,
+            controllers::config_controller::validate_version_files,
+            controllers::auth_controller::get_saved_username,
+            controllers::auth_controller::set_saved_username,
+            controllers::auth_controller::get_saved_uuid,
+            controllers::auth_controller::set_saved_uuid,
+            controllers::config_controller::get_total_memory
         ])
         .setup(|_| {
             println!("[DEBUG] Tauri应用初始化完成");

@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
-use crate::error::LauncherError;
+use crate::errors::LauncherError;
 use crate::models::GameConfig;
 
 /// 加载配置文件
