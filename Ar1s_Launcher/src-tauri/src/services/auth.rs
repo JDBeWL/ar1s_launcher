@@ -1,4 +1,5 @@
-use crate::{LauncherError, load_config, save_config};
+use crate::errors::LauncherError;
+use crate::services::config::{load_config, save_config};
 
 // 获取保存的用户名
 #[allow(dead_code)]

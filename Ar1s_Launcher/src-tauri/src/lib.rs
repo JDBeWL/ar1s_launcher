@@ -8,7 +8,7 @@ mod errors;
 mod models;
 mod services;
 mod controllers;
-pub mod auth;
+
 pub use errors::LauncherError;
 pub use models::*;
 

@@ -4,20 +4,20 @@ use crate::errors::LauncherError;
 
 #[tauri::command]
 pub async fn get_saved_username() -> Result<Option<String>, LauncherError> {
-    crate::auth::get_saved_username().await
+    crate::services::auth::get_saved_username().await
 }
 
 #[tauri::command]
 pub async fn set_saved_username(username: String) -> Result<(), LauncherError> {
-    crate::auth::set_saved_username(username).await
+    crate::services::auth::set_saved_username(username).await
 }
 
 #[tauri::command]
 pub async fn get_saved_uuid() -> Result<Option<String>, LauncherError> {
-    crate::auth::get_saved_uuid().await
+    crate::services::auth::get_saved_uuid().await
 }
 
 #[tauri::command]
 pub async fn set_saved_uuid(uuid: String) -> Result<(), LauncherError> {
-    crate::auth::set_saved_uuid(uuid).await
+    crate::services::auth::set_saved_uuid(uuid).await
 }

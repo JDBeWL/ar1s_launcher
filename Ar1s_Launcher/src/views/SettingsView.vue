@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, computed, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from '@tauri-apps/api/event';
@@ -107,6 +107,24 @@ async function saveDownloadThreads() {
   }
 }
 
+// 加载和保存版本隔离设置
+async function loadVersionIsolation() {
+  try {
+    const isolation = await invoke('load_config_key', { key: 'versionIsolation' });
+    versionIsolation.value = isolation === 'true';
+  } catch (err) {
+    console.error('Failed to load version isolation:', err);
+  }
+}
+
+watch(versionIsolation, async (newValue) => {
+  try {
+    await invoke('save_config_key', { key: 'versionIsolation', value: newValue.toString() });
+  } catch (err) {
+    console.error('Failed to save version isolation:', err);
+  }
+});
+
 // 在组件挂载时加载所有设置
 onMounted(async () => {
   await settingsStore.loadSystemMemory();
@@ -115,6 +133,7 @@ onMounted(async () => {
   await loadJavaPath();
   await findJavaInstallations();
   await loadDownloadThreads();
+  await loadVersionIsolation();
   
   // 监听游戏目录变更事件
   await listen('game-dir-changed', (event) => {
