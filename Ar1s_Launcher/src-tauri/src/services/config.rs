@@ -195,8 +195,8 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
         for lib in libraries {
             if let Some(natives) = lib.get("natives") {
                 if let Some(os_classifier) = natives.get(std::env::consts::OS) {
-                    if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("classifiers")).and_then(|c| c.get(os_classifier.as_str().unwrap())) {
-                        let lib_path = libraries_base_dir.join(artifact["path"].as_str().unwrap());
+                    if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("classifiers")).and_then(|c| c.get(os_classifier.as_str().unwrap_or(""))) {
+                        let lib_path = libraries_base_dir.join(artifact["path"].as_str().unwrap_or(""));
                         if !lib_path.exists() {
                             missing_files.push(format!("Natives库文件不存在: {}", lib_path.display()));
                         }

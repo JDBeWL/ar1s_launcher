@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { Window } from '@tauri-apps/api/window'
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useTheme } from 'vuetify'
 import { useDownloadStore } from './stores/downloadStore'
+import { useLauncherStore } from './stores/launcherStore'
 import GlobalDownloadStatus from './components/GlobalDownloadStatus.vue'
+import GlobalGameStatus from './components/GlobalGameStatus.vue'
 
 // 窗口控制
 const appWindow = Window.getCurrent()
@@ -30,11 +32,14 @@ function toggleTheme() {
   localStorage.setItem('theme', isDarkMode.value ? 'dark' : 'light')
 }
 
+const downloadStore = useDownloadStore()
+const launcherStore = useLauncherStore()
+
 // 初始化下载监听器和主题
 onMounted(async () => {
-  // 初始化下载监听器
-  const downloadStore = useDownloadStore()
-  await downloadStore.initListeners()
+  // 初始化监听器
+  await downloadStore.subscribe()
+  await launcherStore.subscribe()
   
   // 初始化主题
   const savedTheme = localStorage.getItem('theme')
@@ -46,19 +51,24 @@ onMounted(async () => {
     theme.global.name.value = 'dark'
   }
 })
+
+onUnmounted(() => {
+  downloadStore.unsubscribe()
+  launcherStore.unsubscribe()
+})
 </script>
 
 <template>
   <v-app>
     <v-navigation-drawer :rail="rail" :mobile-breakpoint="0" rail-width="64">
       <v-list nav>
-        <v-list-item prepend-icon="mdi-rocket-launch" title="启动" value="home" to="/" rounded="lg"></v-list-item>
-        <v-list-item prepend-icon="mdi-download" title="下载" value="download" to="/download" rounded="lg"></v-list-item>
+        <v-list-item prepend-icon="mdi-rocket-launch" title="启动" to="/" rounded="lg"></v-list-item>
+        <v-list-item prepend-icon="mdi-download" title="下载" to="/download" rounded="lg"></v-list-item>
       </v-list>
 
       <template v-slot:append>
         <v-list nav>
-          <v-list-item prepend-icon="mdi-cog" title="设置" value="settings" to="/settings" rounded="lg"></v-list-item>
+          <v-list-item prepend-icon="mdi-cog" title="设置" to="/settings" rounded="lg"></v-list-item>
         </v-list>
       </template>
     </v-navigation-drawer>
@@ -87,6 +97,8 @@ onMounted(async () => {
     
     <!-- 全局下载状态组件 -->
     <GlobalDownloadStatus />
+    <!-- 全局游戏状态提示 -->
+    <GlobalGameStatus />
   </v-app>
 </template>
 

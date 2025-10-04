@@ -1,8 +1,41 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use fern::Dispatch;
+use log::LevelFilter;
+use std::fs;
+use chrono::Local;
+
+fn setup_logger() -> Result<(), fern::InitError> {
+    // Ensure the logs directory exists
+    fs::create_dir_all("logs")?;
+
+    let log_file = format!("logs/ar1s_launcher_{}.log", Local::now().format("%Y-%m-%d_%H-%M-%S"));
+
+    Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{} {}] {}",
+                Local::now().format("%Y-%m-%d %H:%M:%S"),
+                record.level(),
+                message
+            ))
+        })
+        .level(LevelFilter::Debug)
+        .chain(std::io::stdout())
+        .chain(fern::log_file(&log_file)?)
+        .apply()?;
+
+    Ok(())
+}
+
 fn main() {
-    println!("[DEBUG] 程序启动");
+    // 初始化日志记录器
+    if let Err(e) = setup_logger() {
+        eprintln!("Error setting up logger: {}", e);
+    }
+
+    log::info!("[DEBUG] 程序启动");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -34,7 +67,7 @@ fn main() {
             ar1s_launcher_lib::controllers::config_controller::get_total_memory
         ])
         .setup(|_| {
-            println!("[DEBUG] Tauri应用初始化完成");
+            log::info!("[DEBUG] Tauri应用初始化完成");
             Ok(())
         })
         .run(tauri::generate_context!())

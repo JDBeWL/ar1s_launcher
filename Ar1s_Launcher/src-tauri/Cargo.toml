@@ -21,7 +21,7 @@ winres = "0.1"
 
 [dependencies]
 md-5 = "0.10"
-uuid = { version = "1.4", features = ["v4", "v5", "md5"] }
+uuid = { version = "1.4", features = ["v3", "v4", "v5", "md5"] }
 digest = "0.10"
 tauri = { version = "2.0", features = [] }
 tauri-plugin-opener = "2.0"

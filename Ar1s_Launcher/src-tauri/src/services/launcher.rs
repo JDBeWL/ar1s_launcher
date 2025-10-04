@@ -3,8 +3,8 @@ use std::io;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use tauri::Emitter;
-use md5::Md5;
-use digest::Digest;
+
+
 use uuid::Uuid;
 
 use crate::errors::LauncherError;
@@ -21,25 +21,18 @@ fn generate_offline_uuid(username: &str) -> String {
             }
         }
     }
-    
-    // 如果没有保存的UUID或用户名不匹配，则生成新的UUID
-    // Minecraft官方算法: MD5("OfflinePlayer:" + username)
-    let mut hasher = Md5::new();
-    hasher.update(b"OfflinePlayer:");
-    hasher.update(username.as_bytes());
-    let result = hasher.finalize();
-    
-    // 将MD5哈希转换为UUID格式
-    let bytes: [u8; 16] = result.into();
-    let uuid = Uuid::new_v5(&Uuid::NAMESPACE_DNS, &bytes);
-    
-    uuid.to_string()
+    // 离线模式：UUID v3 (MD5) 基于 "OfflinePlayer:{username}"
+    // 对于 uuid 1.4，使用 Uuid::new_v3() 方法
+    Uuid::new_v3(&Uuid::NAMESPACE_DNS, format!("OfflinePlayer:{}", username).as_bytes()).to_string()
 }
 
 
 
 /// 启动 Minecraft 游戏
 pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> Result<(), LauncherError> {
+    let emit = |event: &str, msg: String| {
+        let _ = window.emit(event, msg);
+    };
     // 保存用户名和UUID到配置文件
     let uuid = generate_offline_uuid(&options.username);
     let mut config = load_config()?;
@@ -52,13 +45,13 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
     let version_dir = game_dir.join("versions").join(&options.version);
     let version_json_path = version_dir.join(format!("{}.json", &options.version));
 
-    println!("DEBUG: 尝试启动版本: {}", options.version);
-    println!("DEBUG: 游戏目录: {}", game_dir.display());
-    println!("DEBUG: 版本目录: {}", version_dir.display());
-    println!("DEBUG: 版本JSON路径: {}", version_json_path.display());
+    emit("log-debug", format!("尝试启动版本: {}", options.version));
+    emit("log-debug", format!("游戏目录: {}", game_dir.display()));
+    emit("log-debug", format!("版本目录: {}", version_dir.display()));
+    emit("log-debug", format!("版本JSON路径: {}", version_json_path.display()));
 
     if !version_json_path.exists() {
-        println!("ERROR: 版本JSON文件不存在: {}", version_json_path.display());
+        emit("log-error", format!("版本JSON文件不存在: {}", version_json_path.display()));
         return Err(LauncherError::Custom(format!("版本 {} 的json文件不存在!", options.version)));
     }
 
@@ -69,8 +62,10 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
         game_dir.join("libraries"), 
         game_dir.join("assets")
     );
-    println!("DEBUG: 库文件目录: {}", libraries_base_dir.display());
-    println!("DEBUG: 资源文件目录: {}", assets_base_dir.display());
+    emit("log-debug", format!("库文件目录: {}", libraries_base_dir.display()));
+    emit("log-debug", format!("资源文件目录: {}", assets_base_dir.display()));
+    // 统一 OS 名称映射，macos -> osx
+    let current_os = if std::env::consts::OS == "macos" { "osx" } else { std::env::consts::OS };
 
     // --- 1. 准备隔离目录 ---
     let natives_dir = version_dir.join("natives");
@@ -97,9 +92,9 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
             fs::copy(&options_src, &options_dst)?;
         }
     }
-    println!("DEBUG: Natives目录: {}", natives_dir.display());
+    emit("log-debug", format!("Natives目录: {}", natives_dir.display()));
     if natives_dir.exists() {
-        println!("DEBUG: 清理旧的Natives目录: {}", natives_dir.display());
+        emit("log-debug", format!("清理旧的Natives目录: {}", natives_dir.display()));
         fs::remove_dir_all(&natives_dir)?;
     }
     fs::create_dir_all(&natives_dir)?;
@@ -107,15 +102,15 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
     if let Some(libraries) = version_json["libraries"].as_array() {
         for lib in libraries {
             if let Some(natives) = lib.get("natives") {
-                println!("DEBUG: 发现Natives库: {:?}", lib);
-                if let Some(os_classifier) = natives.get(std::env::consts::OS) {
-                    println!("DEBUG: 正在查找的OS分类器: {}", os_classifier.as_str().unwrap_or("N/A"));
-                    if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("classifiers")).and_then(|c| c.get(os_classifier.as_str().unwrap())) {
-                        println!("DEBUG: Natives Artifact: {:?}", artifact);
-                        let lib_path = libraries_base_dir.join(artifact["path"].as_str().unwrap());
-                        println!("DEBUG: 尝试解压Natives库: {}", lib_path.display());
+                emit("log-debug", format!("发现Natives库: {:?}", lib));
+                if let Some(os_classifier) = natives.get(current_os) {
+                    emit("log-debug", format!("正在查找的OS分类器: {}", os_classifier.as_str().unwrap_or("N/A")));
+                    if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("classifiers")).and_then(|c| c.get(os_classifier.as_str().unwrap_or(""))) {
+                        emit("log-debug", format!("Natives Artifact: {:?}", artifact));
+                        let lib_path = libraries_base_dir.join(artifact["path"].as_str().unwrap_or(""));
+                        emit("log-debug", format!("尝试解压Natives库: {}", lib_path.display()));
                         if !lib_path.exists() {
-                            println!("ERROR: Natives库文件不存在: {}", lib_path.display());
+                            emit("log-error", format!("Natives库文件不存在: {}", lib_path.display()));
                             return Err(LauncherError::Custom(format!("Natives库文件不存在: {}", lib_path.display())));
                         }
                         let file = fs::File::open(&lib_path)?;
@@ -128,7 +123,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
                             // 检查是否需要排除
                             if let Some(extract_rules) = lib.get("extract") {
                                 if let Some(exclude) = extract_rules.get("exclude").and_then(|e| e.as_array()) {
-                                    if exclude.iter().any(|v| file.name().starts_with(v.as_str().unwrap())) {
+                                    if exclude.iter().any(|v| file.name().starts_with(v.as_str().unwrap_or(""))) {
                                         continue;
                                     }
                                 }
@@ -144,7 +139,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
                                 }
                                 let mut outfile = fs::File::create(&outpath)?;
                                 io::copy(&mut file, &mut outfile)?;
-                                println!("DEBUG: 解压Natives文件: {}", outpath.display());
+                                emit("log-debug", format!("解压Natives文件: {}", outpath.display()));
                             }
                         }
                     }
@@ -164,7 +159,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
                 for rule in rules {
                     if let Some(os) = rule.get("os") {
                         if let Some(name) = os["name"].as_str() {
-                            if name == std::env::consts::OS {
+                            if name == current_os {
                                 allowed = rule["action"].as_str() == Some("allow");
                             } else {
                                 allowed = rule["action"].as_str() != Some("allow");
@@ -177,9 +172,9 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
 
             if let Some(path) = lib["downloads"]["artifact"]["path"].as_str() {
                 let lib_path = libraries_base_dir.join(path);
-                println!("DEBUG: 添加到Classpath的库: {}", lib_path.display());
+                emit("log-debug", format!("添加到Classpath的库: {}", lib_path.display()));
                 if !lib_path.exists() {
-                    println!("ERROR: Classpath中的库文件不存在: {}", lib_path.display());
+                    emit("log-error", format!("Classpath中的库文件不存在: {}", lib_path.display()));
                     return Err(LauncherError::Custom(format!("Classpath中的库文件不存在: {}", lib_path.display())));
                 }
                 classpath.push(lib_path);
@@ -187,16 +182,16 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
         }
     }
     let main_game_jar_path = version_dir.join(format!("{}.jar", &options.version));
-    println!("DEBUG: 主游戏JAR路径: {}", main_game_jar_path.display());
+    emit("log-debug", format!("主游戏JAR路径: {}", main_game_jar_path.display()));
     if !main_game_jar_path.exists() {
-        println!("ERROR: 主游戏JAR文件不存在: {}", main_game_jar_path.display());
+        emit("log-error", format!("主游戏JAR文件不存在: {}", main_game_jar_path.display()));
         return Err(LauncherError::Custom(format!("主游戏JAR文件不存在: {}", main_game_jar_path.display())));
     }
     classpath.push(main_game_jar_path);
     let classpath_str = classpath.iter()
         .map(|p| p.to_string_lossy())
         .collect::<Vec<_>>().join(if cfg!(windows) { ";" } else { ":" });
-    println!("DEBUG: 最终Classpath: {}", classpath_str);
+    emit("log-debug", format!("最终Classpath: {}", classpath_str));
 
     // --- 3. 获取主类和参数 ---
     let main_class = version_json["mainClass"].as_str().ok_or_else(|| LauncherError::Custom("无法在json中找到mainClass".to_string()))?;
@@ -216,7 +211,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
            .replace("${game_directory}", &actual_game_dir)
            .replace("${assets_root}", &assets_dir.to_string_lossy().to_string())
            .replace("${assets_index_name}", assets_index)
-           .replace("${auth_uuid}", &generate_offline_uuid(&options.username))
+           .replace("${auth_uuid}", &uuid)
            .replace("${auth_access_token}", "0")
            .replace("${user_type}", "legacy")
            .replace("${version_type}", version_json["type"].as_str().unwrap_or("release"))
@@ -239,7 +234,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
                          for rule in rules {
                             if let Some(os) = rule.get("os") {
                                 if let Some(name) = os["name"].as_str() {
-                                    if name == std::env::consts::OS {
+                                    if name == current_os {
                                         allowed = rule["action"].as_str() == Some("allow");
                                     } else {
                                         allowed = rule["action"].as_str() != Some("allow");
@@ -254,7 +249,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
                                 jvm_args.push(replace_placeholders(s));
                             } else if let Some(arr) = value.as_array() {
                                 for item in arr {
-                                    jvm_args.push(replace_placeholders(item.as_str().unwrap()));
+                                    if let Some(s) = item.as_str() { jvm_args.push(replace_placeholders(s)); }
                                 }
                             }
                         }
@@ -278,7 +273,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
     // --- 4. 组装Java启动参数 ---
     let java_path = {
         // 1. 首先尝试使用配置中的Java路径
-        if let Some(config_path) = load_config()?.java_path {
+        if let Some(config_path) = config.java_path {
             if PathBuf::from(&config_path).exists() {
                 config_path
             } else {
@@ -303,7 +298,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
             }
         }
     };
-    println!("DEBUG: 使用的Java路径: {}", java_path);
+    emit("log-debug", format!("使用的Java路径: {}", java_path));
 
     let mut final_args = vec![
         format!("-Xmx{}M", options.memory.unwrap_or(2048)),
@@ -318,7 +313,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
     // --- 5. 启动游戏 ---
     let mut command = Command::new(&java_path);
     command.args(&final_args);
-    command.current_dir(&game_dir);
+    command.current_dir(if config.version_isolation { &version_dir } else { &game_dir });
     
     // 在Windows上隐藏命令行窗口
     #[cfg(target_os = "windows")]
@@ -329,7 +324,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
         command.creation_flags(0x08000000);
     }
 
-    println!("DEBUG: 最终启动命令: {:?}", command);
+    emit("log-debug", format!("最终启动命令: {:?}", command));
     window.emit("launch-command", format!("{:?}", command))?;
 
     // 启动游戏进程但不等待它结束
@@ -338,7 +333,7 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
         .stderr(Stdio::null())
         .spawn()?;
     
-    println!("DEBUG: 游戏已启动，PID: {:?}", child.id());
+    emit("log-debug", format!("游戏已启动，PID: {:?}", child.id()));
     
     // 发送游戏启动成功的事件到前端
     window.emit("minecraft-launched", format!("游戏已启动，PID: {}", child.id()))?;
@@ -349,19 +344,19 @@ pub async fn launch_minecraft(options: LaunchOptions, window: tauri::Window) -> 
         match child.wait_with_output() {
             Ok(output) => {
                 let status = output.status;
-                println!("DEBUG: 游戏进程退出，状态码: {:?}", status.code());
+                let _ = window_clone.emit("log-debug", format!("游戏进程退出，状态码: {:?}", status.code()));
                 // 发送游戏退出事件到前端
                 let _ = window_clone.emit("minecraft-exited", format!("游戏已退出，状态码: {:?}", status.code()));
             }
             Err(e) => {
-                println!("DEBUG: 等待游戏进程时出错: {:?}", e);
+                let _ = window_clone.emit("log-error", format!("监控游戏进程时出错: {}", e));
                 // 发送错误事件到前端
                 let _ = window_clone.emit("minecraft-error", format!("监控游戏进程时出错: {}", e));
             }
         }
     });
 
-    println!("DEBUG: 游戏成功启动");
+    emit("log-debug", "游戏成功启动".to_string());
     Ok(())
 }
 

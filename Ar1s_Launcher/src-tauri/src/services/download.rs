@@ -19,7 +19,7 @@ pub async fn process_and_download_version(
     mirror: Option<String>,
     window: &Window,
 ) -> Result<(), LauncherError> {
-    let is_mirror = mirror.as_deref() == Some("bmcl");
+    let is_mirror = mirror.is_some();
     let base_url = if is_mirror {
         "https://bmclapi2.bangbang93.com"
     } else {
@@ -157,7 +157,7 @@ pub async fn process_and_download_version(
                     let size = artifact["size"].as_u64().unwrap_or(0);
                     let hash = artifact["sha1"].as_str().unwrap_or("").to_string();
                     let download_url = if is_mirror {
-                        url.replace("https://libraries.minecraft.net", base_url)
+                        url.replace("https://libraries.minecraft.net", &format!("{}/maven", base_url))
                     } else {
                         url.to_string()
                     };
@@ -183,7 +183,7 @@ pub async fn process_and_download_version(
                                     let size = artifact["size"].as_u64().unwrap_or(0);
                                     let hash = artifact["sha1"].as_str().unwrap_or("").to_string();
                                     let download_url = if is_mirror {
-                                        url.replace("https://libraries.minecraft.net", base_url)
+                                        url.replace("https://libraries.minecraft.net", &format!("{}/maven", base_url))
                                     } else {
                                         url.to_string()
                                     };
@@ -206,7 +206,7 @@ pub async fn process_and_download_version(
                                     let size = artifact["size"].as_u64().unwrap_or(0);
                                     let hash = artifact["sha1"].as_str().unwrap_or("").to_string();
                                     let download_url = if is_mirror {
-                                        url.replace("https://libraries.minecraft.net", base_url)
+                                        url.replace("https://libraries.minecraft.net", &format!("{}/maven", base_url))
                                     } else {
                                         url.to_string()
                                     };
@@ -242,7 +242,11 @@ pub async fn process_and_download_version(
                             };
                             let natives_url = format!("https://libraries.minecraft.net/{}", natives_path);
                             let download_url = if is_mirror {
-                                natives_url.replace("https://libraries.minecraft.net", base_url)
+                                if artifact_id == "lwjgl" || artifact_id == "lwjgl-platform" {
+                                    format!("{}/maven/{}", base_url, natives_path)
+                                } else {
+                                    natives_url.replace("https://libraries.minecraft.net", &format!("{}/maven", base_url))
+                                }
                             } else {
                                 natives_url.clone()
                             };
@@ -313,6 +317,33 @@ pub async fn download_all_files(
     let config = load_config()?;
     let threads = config.download_threads as usize;
 
+    // 全局复用 HTTP 客户端，减少“starting new connection”
+    let mut default_headers = reqwest::header::HeaderMap::new();
+    default_headers.insert(
+        reqwest::header::USER_AGENT,
+        reqwest::header::HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ar1s-Launcher/1.0"),
+    );
+    // 禁用压缩，避免长度不一致；同时显式声明只接受 identity
+    default_headers.insert(
+        reqwest::header::ACCEPT_ENCODING,
+        reqwest::header::HeaderValue::from_static("identity"),
+    );
+
+    let http = std::sync::Arc::new(
+        reqwest::Client::builder()
+            .default_headers(default_headers)
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
+            // 为默认8线程优化连接复用；若线程数不同也按比例生效
+            .pool_max_idle_per_host(threads.max(1) * 4)
+            .pool_idle_timeout(Duration::from_secs(90))
+            .tcp_keepalive(Some(Duration::from_secs(60)))
+            .connect_timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|e| LauncherError::Custom(format!("创建HTTP客户端失败: {}", e)))?
+    );
+
     // 获取版本ID（从第一个下载任务的路径推断）
     let version_id = jobs.first()
         .and_then(|j| j.path.parent())
@@ -329,17 +360,11 @@ pub async fn download_all_files(
         let _ = std::fs::remove_file(&state_file);
     }
 
-    let download_state = Arc::new(Mutex::new(
-        if state_file.exists() {
-            serde_json::from_str(&std::fs::read_to_string(&state_file)?)?
-        } else {
-            DownloadState {
-                completed_files: Vec::new(),
-                failed_files: Vec::new(),
-                active_downloads: HashMap::new(),
-            }
-        }
-    ));
+    let download_state = Arc::new(Mutex::new(DownloadState {
+        completed_files: Vec::new(),
+        failed_files: Vec::new(),
+        active_downloads: HashMap::new(),
+    }));
 
     // 创建过滤后的任务列表（不移动原始jobs）
     let filtered_jobs: Vec<DownloadJob> = {
@@ -354,6 +379,7 @@ pub async fn download_all_files(
     let _actual_total = jobs.len() as u64;
 
     let completed_count_from_state = download_state.lock().await.completed_files.len() as u64;
+    let total_size_precomputed: u64 = filtered_jobs.iter().map(|j| j.size).sum::<u64>();
 
     // 创建共享状态
     // TODO: 这里的状态应该改为一个结构体，而不是使用原子类型，以便更好地跟踪状态
@@ -380,7 +406,7 @@ pub async fn download_all_files(
         let state = state.clone();
         let window = window.clone();
         let report_interval = Duration::from_millis(200); // 更频繁的更新
-        let total_size = jobs.iter().map(|j| j.size).sum::<u64>();
+        let total_size = total_size_precomputed;
 
         async_runtime::spawn(async move {
             while state.load(Ordering::SeqCst) {
@@ -436,6 +462,7 @@ pub async fn download_all_files(
         let job_state_file = state_file.clone();
         let job_download_state = download_state.clone();
 
+        let http = http.clone();
         handles.push(async_runtime::spawn(async move {
             let mut current_job_error: Option<LauncherError> = None;
             let mut job_succeeded = false;
@@ -448,7 +475,7 @@ pub async fn download_all_files(
                 let attempt_str = if retry == 0 { "attempt 1".to_string() } else { format!("retry {}/{}", retry, MAX_JOB_RETRIES - 1) };
                 println!("DEBUG: Downloading file: {} ({})", job.url, attempt_str);
 
-                match download_file(&job, &state, &bytes_downloaded, &bytes_since_last).await {
+                match download_file(http.clone(), &job, &state, &bytes_downloaded, &bytes_since_last).await {
                     Ok(_) => {
                         files_downloaded.fetch_add(1, Ordering::SeqCst);
                         current_job_error = None;
@@ -480,7 +507,7 @@ pub async fn download_all_files(
                 std::fs::write(&state_file_clone, serde_json::to_string(&*state)?)?;
             } else { // 下载失败
                 if let Some(e) = current_job_error {
-                    state.store(false, Ordering::SeqCst);
+                    // 不取消全局，记录失败
                     let mut error_guard = error_occurred.lock().await;
                     if error_guard.is_none() {
                         *error_guard = Some(e.to_string());
@@ -509,7 +536,7 @@ pub async fn download_all_files(
 
     if was_cancelled.load(Ordering::SeqCst) {
         let final_bytes = bytes_downloaded.load(Ordering::SeqCst);
-        let total_bytes = jobs.iter().map(|j| j.size).sum();
+        let total_bytes = total_size_precomputed;
         let final_percent = if total_bytes > 0 {
             (final_bytes as f64 / total_bytes as f64 * 100.0).round() as u8
         } else { 0 };
@@ -526,33 +553,27 @@ pub async fn download_all_files(
         return Err(LauncherError::Custom("下载已取消".to_string()));
     }
 
-    if let Some(err_msg) = error_occurred.lock().await.take() {
-        let final_bytes = bytes_downloaded.load(Ordering::SeqCst);
-        let total_bytes = jobs.iter().map(|j| j.size).sum();
-        let final_percent = if total_bytes > 0 {
-            (final_bytes as f64 / total_bytes as f64 * 100.0).round() as u8
-        } else { 0 };
-
-        let _ = window.emit("download-progress", &DownloadProgress {
-            progress: final_bytes,
-            total: total_bytes,
-            speed: 0.0,
-            status: DownloadStatus::Error,
-            bytes_downloaded: final_bytes,
-            total_bytes,
-            percent: final_percent,
-        });
-        return Err(LauncherError::Custom(err_msg));
+    // 如果有部分失败，发出摘要事件，但不报错，允许整体完成
+    let failed_list: Vec<String> = {
+        let state = download_state.lock().await;
+        state.failed_files.clone()
+    };
+    if !failed_list.is_empty() {
+        let _ = window.emit("download-summary", &serde_json::json!({
+            "status": "partial",
+            "failed_count": failed_list.len(),
+            "failed": failed_list,
+        }));
     }
     
     // 下载完成 - 确保只发送一次完成事件
     let _ = window.emit("download-progress", &DownloadProgress {
         progress: bytes_downloaded.load(Ordering::SeqCst),
-        total: jobs.iter().map(|j| j.size).sum(),
+        total: total_size_precomputed,
         speed: 0.0,
         status: DownloadStatus::Completed,
         bytes_downloaded: bytes_downloaded.load(Ordering::SeqCst),
-        total_bytes: jobs.iter().map(|j| j.size).sum(),
+        total_bytes: total_size_precomputed,
         percent: 100,
     });
 
@@ -561,6 +582,7 @@ pub async fn download_all_files(
 }
 
 async fn download_file(
+    http: std::sync::Arc<reqwest::Client>,
     job: &DownloadJob,
     state: &Arc<AtomicBool>,
     bytes_downloaded: &Arc<AtomicU64>,
@@ -568,19 +590,17 @@ async fn download_file(
 ) -> Result<(), LauncherError> {
     // 1. 验证文件完整性，如果文件有效则跳过下载
     if job.path.exists() {
-        let file_meta = tokio::fs::metadata(&job.path).await?;
-        if verify_file(&job.path, &job.hash, file_meta.len())? {
+        if verify_file(&job.path, &job.hash, job.size)? {
             println!("DEBUG: File already exists and is valid, skipping: {}", job.path.display());
-            // 虽然文件已存在，但我们需要将其大小添加到 `bytes_downloaded` 以确保进度条正确
             bytes_downloaded.fetch_add(job.size, Ordering::SeqCst);
             return Ok(());
         }
-        println!("DEBUG: File exists but is invalid, re-downloading: {}", job.path.display());
+        println!("DEBUG: File exists but is invalid, removing and re-downloading: {}", job.path.display());
+        tokio::fs::remove_file(&job.path).await?; // 清理损坏的文件
     }
 
-    // 2. 尝试从主 URL 下载
-    let client = reqwest::Client::new();
-    match download_chunk(&client, &job.url, job, state, bytes_downloaded, bytes_since_last).await {
+    // 2. 尝试从主 URL 下载（复用共享客户端）
+    match download_chunk(http.clone(), &job.url, job, state, bytes_downloaded, bytes_since_last).await {
         Ok(_) => Ok(()), // 主 URL 下载成功
         Err(e) => {
             // 3. 如果主 URL 失败，并且是特定错误，则尝试备用 URL
@@ -588,11 +608,17 @@ async fn download_file(
                 let is_http_error = if let LauncherError::Http(err) = &e {
                     err.status() == Some(reqwest::StatusCode::NOT_FOUND) || err.is_timeout()
                 } else { false };
-                let is_mismatch_error = e.to_string().contains("File size mismatch");
+                let err_str = e.to_string();
+                let should_fallback =
+                    is_http_error
+                    || err_str.contains("size or hash mismatch")
+                    || err_str.contains("File size mismatch")
+                    || err_str.contains("Unexpected Content-Length")
+                    || err_str.contains("Unexpected Content-Type");
 
-                if is_http_error || is_mismatch_error {
+                if should_fallback {
                     println!("DEBUG: Primary URL {} failed ({}), trying fallback: {}", job.url, e, fallback_url);
-                    return download_chunk(&client, fallback_url, job, state, bytes_downloaded, bytes_since_last).await;
+                    return download_chunk(http.clone(), fallback_url, job, state, bytes_downloaded, bytes_since_last).await;
                 }
             }
             // 4. 如果没有备用 URL 或错误不符合重试条件，则返回原始错误
@@ -602,65 +628,90 @@ async fn download_file(
 }
 
 async fn download_chunk(
-    client: &reqwest::Client,
+    client: std::sync::Arc<reqwest::Client>,
     url: &str,
     job: &DownloadJob,
     state: &Arc<AtomicBool>,
     bytes_downloaded: &Arc<AtomicU64>,
     bytes_since_last: &Arc<AtomicU64>,
 ) -> Result<(), LauncherError> {
-    if let Some(parent) = job.path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
+    let tmp_path = job.path.with_extension("part");
+    let mut bytes_added_this_attempt: u64 = 0;
 
-    let mut file;
-    let mut downloaded_size = 0;
-
-    if job.path.exists() {
-        let metadata = tokio::fs::metadata(&job.path).await?;
-        downloaded_size = metadata.len();
-        file = tokio::fs::OpenOptions::new().append(true).open(&job.path).await?;
-    } else {
-        file = tokio::fs::File::create(&job.path).await?;
-    }
-
-    if downloaded_size > 0 && downloaded_size == job.size {
-        if verify_file(&job.path, &job.hash, downloaded_size)? {
-            println!("DEBUG: File already fully downloaded and verified: {}", job.path.display());
-            return Ok(());
+    let result = async {
+        if let Some(parent) = job.path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
         }
-    }
 
-    let mut request = client.get(url);
-    if downloaded_size > 0 {
-        println!("DEBUG: Resuming download for {} from byte {}", job.path.display(), downloaded_size);
-        request = request.header("Range", format!("bytes={}-", downloaded_size));
-    }
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp_path)
+            .await?;
 
-    let mut response = request.send().await?.error_for_status()?;
+        let mut response = client.get(url).send().await?.error_for_status()?;
 
-    while let Some(chunk) = response.chunk().await? {
-        if !state.load(Ordering::SeqCst) {
-            return Err(LauncherError::Custom("Download cancelled".to_string()));
+        if let Some(len_hdr) = response.headers().get(reqwest::header::CONTENT_LENGTH) {
+            if let Ok(len_str) = len_hdr.to_str() {
+                if let Ok(remote_len) = len_str.parse::<u64>() {
+                    if remote_len == 0 && job.size > 0 {
+                        return Err(LauncherError::Custom(format!(
+                            "Unexpected Content-Length 0 for {}, expected {}",
+                            url, job.size
+                        )));
+                    }
+                }
+            }
         }
-        file.write_all(&chunk).await?;
-        let len = chunk.len() as u64;
-        bytes_downloaded.fetch_add(len, Ordering::Relaxed);
-        bytes_since_last.fetch_add(len, Ordering::Relaxed);
+        if let Some(ct) = response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+            let ct_lower = ct.to_ascii_lowercase();
+            if ct_lower.starts_with("text/") || ct_lower.contains("json") || ct_lower.contains("html") {
+                return Err(LauncherError::Custom(format!(
+                    "Unexpected Content-Type {} for {}",
+                    ct, url
+                )));
+            }
+        }
+
+        while let Some(chunk) = response.chunk().await? {
+            if !state.load(Ordering::SeqCst) {
+                return Err(LauncherError::Custom("Download cancelled".to_string()));
+            }
+            file.write_all(&chunk).await?;
+            let len = chunk.len() as u64;
+            bytes_downloaded.fetch_add(len, Ordering::Relaxed);
+            bytes_since_last.fetch_add(len, Ordering::Relaxed);
+            bytes_added_this_attempt += len;
+        }
+
+        if !verify_file(&tmp_path, &job.hash, job.size)? {
+            return Err(LauncherError::Custom(format!(
+                "File verification failed for {}: size or hash mismatch.",
+                tmp_path.display()
+            )));
+        }
+
+        if let Some(parent) = job.path.parent() {
+            tokio::fs::create_dir_all(parent).await.ok();
+        }
+        if tokio::fs::metadata(&job.path).await.is_ok() {
+            let _ = tokio::fs::remove_file(&job.path).await;
+        }
+        tokio::fs::rename(&tmp_path, &job.path).await?;
+
+        Ok::<(), LauncherError>(())
+    }
+    .await;
+
+    if result.is_err() {
+        bytes_downloaded.fetch_sub(bytes_added_this_attempt, Ordering::Relaxed);
     }
 
-    let final_size = tokio::fs::metadata(&job.path).await?.len();
-    if !verify_file(&job.path, &job.hash, final_size)? {
-        return Err(LauncherError::Custom(format!(
-            "File verification failed for {}: size or hash mismatch.",
-            job.path.display()
-        )));
-    }
-
-    Ok(())
+    result
 }
 
-fn verify_file(path: &std::path::Path, expected_hash: &str, actual_size: u64) -> Result<bool, LauncherError> {
+fn verify_file(path: &std::path::Path, expected_hash: &str, expected_size: u64) -> Result<bool, LauncherError> {
     if !expected_hash.is_empty() {
         // If a hash is provided, verify the file against the hash.
         let mut file = std::fs::File::open(path)?;
@@ -670,20 +721,12 @@ fn verify_file(path: &std::path::Path, expected_hash: &str, actual_size: u64) ->
         let actual_hash_str = format!("{:x}", actual_hash);
         Ok(actual_hash_str.to_lowercase() == expected_hash.to_lowercase())
     } else {
-        // If no hash is provided, verify the file against its expected size.
-        // This is for older assets that don't have a hash.
-        let job = DownloadJob {
-            url: "".to_string(),
-            fallback_url: None,
-            path: path.to_path_buf(),
-            size: actual_size, // Use the actual size for comparison
-            hash: "".to_string(),
-        };
-
-        if job.size > 0 {
-            Ok(actual_size == job.size)
+        // If no hash is provided, fall back to size check when available.
+        if expected_size > 0 {
+            let actual_size = std::fs::metadata(path)?.len();
+            Ok(actual_size == expected_size)
         } else {
-            // If size is 0, we can't validate, so we assume it's fine.
+            // If expected size is 0, we can't validate, assume ok.
             Ok(true)
         }
     }
