@@ -1,13 +1,12 @@
+use crate::{load_config, save_config, LauncherError};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use crate::{LauncherError, load_config, save_config};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-
 
 // 查找Java安装路径
 
@@ -18,8 +17,8 @@ pub async fn find_java_installations_command() -> Result<Vec<String>, LauncherEr
     {
         let program_files =
             std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\\Program Files".into());
-        let program_files_x86 =
-            std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\\Program Files (x86)".into());
+        let program_files_x86 = std::env::var("ProgramFiles(x86)")
+            .unwrap_or_else(|_| r"C:\\Program Files (x86)".into());
 
         // 检查常见Java安装路径
         let java_dirs = vec![
@@ -81,7 +80,10 @@ pub async fn set_java_path_command(path: String) -> Result<(), LauncherError> {
 
     // 验证路径是否有效
     if !PathBuf::from(&normalized_path).exists() {
-        return Err(LauncherError::Custom(format!("Java路径不存在: {}", normalized_path)));
+        return Err(LauncherError::Custom(format!(
+            "Java路径不存在: {}",
+            normalized_path
+        )));
     }
 
     let mut config = load_config()?;
@@ -89,7 +91,6 @@ pub async fn set_java_path_command(path: String) -> Result<(), LauncherError> {
     save_config(&config)?;
     Ok(())
 }
-
 
 pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
     let java_exe = PathBuf::from(&path);
@@ -105,8 +106,10 @@ pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
             Ok(out) => {
                 // 检查stderr中是否包含"java version"或"openjdk version"字符串
                 let stderr_str = String::from_utf8_lossy(&out.stderr);
-                Ok(out.status.success() && (stderr_str.contains("java version") || stderr_str.contains("openjdk version")))
-            },
+                Ok(out.status.success()
+                    && (stderr_str.contains("java version")
+                        || stderr_str.contains("openjdk version")))
+            }
             Err(_) => Ok(false),
         }
     } else if path.to_lowercase() == "java" {
@@ -119,12 +122,13 @@ pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
         match output {
             Ok(out) => {
                 let stderr_str = String::from_utf8_lossy(&out.stderr);
-                Ok(out.status.success() && (stderr_str.contains("java version") || stderr_str.contains("openjdk version")))
-            },
+                Ok(out.status.success()
+                    && (stderr_str.contains("java version")
+                        || stderr_str.contains("openjdk version")))
+            }
             Err(_) => Ok(false),
         }
-    }
-    else {
+    } else {
         Ok(false)
     }
 }

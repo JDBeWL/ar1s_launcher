@@ -1,7 +1,5 @@
 use crate::errors::LauncherError;
 
-// 控制器层仅作为 #[tauri::command] 入口，调用 services::java 业务函数
-
 #[tauri::command]
 pub async fn find_java_installations_command() -> Result<Vec<String>, LauncherError> {
     crate::services::java::find_java_installations_command().await

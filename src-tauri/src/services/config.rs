@@ -9,7 +9,7 @@ use crate::models::{GameConfig, GameDirInfo};
 /// 加载配置文件
 pub fn load_config() -> Result<GameConfig, LauncherError> {
     let config_path = get_config_path()?;
-    
+
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)?;
         let config: GameConfig = serde_json::from_str(&content)?;
@@ -17,18 +17,26 @@ pub fn load_config() -> Result<GameConfig, LauncherError> {
     } else {
         // 获取可执行文件路径并确保其存在
         let exe_path = std::env::current_exe()?;
-        let exe_dir = exe_path.parent()
+        let exe_dir = exe_path
+            .parent()
             .ok_or_else(|| LauncherError::Custom("无法获取可执行文件目录".to_string()))?;
-        
+
         // 创建路径变量并确保所有权
         let mc_dir = exe_dir.join(".minecraft");
         let mc_dir_str = mc_dir.to_string_lossy().into_owned();
-        
+
         // 创建目录结构
         if !mc_dir.exists() {
             fs::create_dir_all(&mc_dir)?;
             // 创建必要的子目录
-            let sub_dirs = ["versions", "libraries", "assets", "saves", "resourcepacks", "logs"];
+            let sub_dirs = [
+                "versions",
+                "libraries",
+                "assets",
+                "saves",
+                "resourcepacks",
+                "logs",
+            ];
             for dir in sub_dirs {
                 fs::create_dir_all(mc_dir.join(dir))?;
             }
@@ -48,7 +56,7 @@ pub fn load_config() -> Result<GameConfig, LauncherError> {
             uuid: None,
             max_memory: crate::models::default_max_memory(),
         };
-        
+
         // 保存配置
         save_config(&config)?;
 
@@ -66,9 +74,10 @@ pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
 /// 获取配置文件路径
 fn get_config_path() -> Result<PathBuf, LauncherError> {
     let exe_path = std::env::current_exe()?;
-    let exe_dir = exe_path.parent()
+    let exe_dir = exe_path
+        .parent()
         .ok_or_else(|| LauncherError::Custom("无法获取可执行文件目录".to_string()))?;
-    
+
     Ok(exe_dir.join("ar1s.json"))
 }
 
@@ -86,7 +95,10 @@ pub async fn load_config_key(key: String) -> Result<Option<String>, LauncherErro
         "username" => Ok(config.username),
         "uuid" => Ok(config.uuid),
         "maxMemory" => Ok(Some(config.max_memory.to_string())),
-        _ => Err(LauncherError::Custom(format!("Unknown config key: {}", key))),
+        _ => Err(LauncherError::Custom(format!(
+            "Unknown config key: {}",
+            key
+        ))),
     }
 }
 
@@ -95,15 +107,44 @@ pub async fn save_config_key(key: String, value: String) -> Result<(), LauncherE
     match key.as_str() {
         "javaPath" => config.java_path = Some(value),
         "gameDir" => config.game_dir = value,
-        "versionIsolation" => config.version_isolation = value.parse().map_err(|_| LauncherError::Custom("Invalid boolean value for versionIsolation".to_string()))?,
-        "downloadThreads" => config.download_threads = value.parse().map_err(|_| LauncherError::Custom("Invalid u8 value for downloadThreads".to_string()))?,
+        "versionIsolation" => {
+            config.version_isolation = value.parse().map_err(|_| {
+                LauncherError::Custom("Invalid boolean value for versionIsolation".to_string())
+            })?
+        }
+        "downloadThreads" => {
+            config.download_threads = value.parse().map_err(|_| {
+                LauncherError::Custom("Invalid u8 value for downloadThreads".to_string())
+            })?
+        }
         "language" => config.language = Some(value),
-        "isolateSaves" => config.isolate_saves = value.parse().map_err(|_| LauncherError::Custom("Invalid boolean value for isolateSaves".to_string()))?,
-        "isolateResourcepacks" => config.isolate_resourcepacks = value.parse().map_err(|_| LauncherError::Custom("Invalid boolean value for isolateResourcepacks".to_string()))?,
-        "isolateLogs" => config.isolate_logs = value.parse().map_err(|_| LauncherError::Custom("Invalid boolean value for isolateLogs".to_string()))?,
+        "isolateSaves" => {
+            config.isolate_saves = value.parse().map_err(|_| {
+                LauncherError::Custom("Invalid boolean value for isolateSaves".to_string())
+            })?
+        }
+        "isolateResourcepacks" => {
+            config.isolate_resourcepacks = value.parse().map_err(|_| {
+                LauncherError::Custom("Invalid boolean value for isolateResourcepacks".to_string())
+            })?
+        }
+        "isolateLogs" => {
+            config.isolate_logs = value.parse().map_err(|_| {
+                LauncherError::Custom("Invalid boolean value for isolateLogs".to_string())
+            })?
+        }
         // Removed username and uuid to avoid duplication with auth service
-        "maxMemory" => config.max_memory = value.parse().map_err(|_| LauncherError::Custom("Invalid u32 value for maxMemory".to_string()))?,
-        _ => return Err(LauncherError::Custom(format!("Unknown or restricted config key: {}", key))),
+        "maxMemory" => {
+            config.max_memory = value
+                .parse()
+                .map_err(|_| LauncherError::Custom("Invalid u32 value for maxMemory".to_string()))?
+        }
+        _ => {
+            return Err(LauncherError::Custom(format!(
+                "Unknown or restricted config key: {}",
+                key
+            )))
+        }
     }
     save_config(&config)?;
     Ok(())
@@ -177,7 +218,10 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
     let mut missing_files = Vec::new();
 
     if !version_json_path.exists() {
-        missing_files.push(format!("版本JSON文件不存在: {}", version_json_path.display()));
+        missing_files.push(format!(
+            "版本JSON文件不存在: {}",
+            version_json_path.display()
+        ));
         return Ok(missing_files);
     }
 
@@ -188,17 +232,26 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
 
     let main_game_jar_path = version_dir.join(format!("{}.jar", &version_id));
     if !main_game_jar_path.exists() {
-        missing_files.push(format!("主游戏JAR文件不存在: {}", main_game_jar_path.display()));
+        missing_files.push(format!(
+            "主游戏JAR文件不存在: {}",
+            main_game_jar_path.display()
+        ));
     }
 
     if let Some(libraries) = version_json["libraries"].as_array() {
         for lib in libraries {
             if let Some(natives) = lib.get("natives") {
                 if let Some(os_classifier) = natives.get(std::env::consts::OS) {
-                    if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("classifiers")).and_then(|c| c.get(os_classifier.as_str().unwrap_or(""))) {
-                        let lib_path = libraries_base_dir.join(artifact["path"].as_str().unwrap_or(""));
+                    if let Some(artifact) = lib
+                        .get("downloads")
+                        .and_then(|d| d.get("classifiers"))
+                        .and_then(|c| c.get(os_classifier.as_str().unwrap_or("")))
+                    {
+                        let lib_path =
+                            libraries_base_dir.join(artifact["path"].as_str().unwrap_or(""));
                         if !lib_path.exists() {
-                            missing_files.push(format!("Natives库文件不存在: {}", lib_path.display()));
+                            missing_files
+                                .push(format!("Natives库文件不存在: {}", lib_path.display()));
                         }
                     }
                 }
@@ -216,9 +269,16 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
                             }
                         }
                     }
-                    if !allowed { continue; }
+                    if !allowed {
+                        continue;
+                    }
                 }
-                if let Some(path) = lib.get("downloads").and_then(|d| d.get("artifact")).and_then(|a| a.get("path")).and_then(|p| p.as_str()) {
+                if let Some(path) = lib
+                    .get("downloads")
+                    .and_then(|d| d.get("artifact"))
+                    .and_then(|a| a.get("path"))
+                    .and_then(|p| p.as_str())
+                {
                     let lib_path = libraries_base_dir.join(path);
                     if !lib_path.exists() {
                         missing_files.push(format!("库文件不存在: {}", lib_path.display()));

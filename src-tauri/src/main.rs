@@ -1,16 +1,19 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use chrono::Local;
 use fern::Dispatch;
 use log::LevelFilter;
 use std::fs;
-use chrono::Local;
 
 fn setup_logger() -> Result<(), fern::InitError> {
     // Ensure the logs directory exists
     fs::create_dir_all("logs")?;
 
-    let log_file = format!("logs/ar1s_launcher_{}.log", Local::now().format("%Y-%m-%d_%H-%M-%S"));
+    let log_file = format!(
+        "logs/ar1s_launcher_{}.log",
+        Local::now().format("%Y-%m-%d_%H-%M-%S")
+    );
 
     Dispatch::new()
         .format(|out, message, record| {

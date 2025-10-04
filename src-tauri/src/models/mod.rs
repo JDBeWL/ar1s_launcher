@@ -100,8 +100,7 @@ pub struct DownloadProgress {
 }
 
 // 下载任务
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DownloadJob {
     pub url: String,
     pub fallback_url: Option<String>,
