@@ -67,7 +67,9 @@ fn main() {
             ar1s_launcher_lib::controllers::auth_controller::set_saved_username,
             ar1s_launcher_lib::controllers::auth_controller::get_saved_uuid,
             ar1s_launcher_lib::controllers::auth_controller::set_saved_uuid,
-            ar1s_launcher_lib::controllers::config_controller::get_total_memory
+            ar1s_launcher_lib::controllers::config_controller::get_total_memory,
+            ar1s_launcher_lib::controllers::instance_controller::create_instance,
+            ar1s_launcher_lib::controllers::forge_controller::get_forge_versions
         ])
         .setup(|_| {
             log::info!("[DEBUG] Tauri应用初始化完成");

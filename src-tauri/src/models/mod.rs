@@ -36,6 +36,7 @@ pub struct GameConfig {
     pub uuid: Option<String>,
     #[serde(default = "default_max_memory")]
     pub max_memory: u32,
+    pub download_mirror: Option<String>,
 }
 
 // 游戏目录信息
@@ -107,4 +108,20 @@ pub struct DownloadJob {
     pub path: PathBuf,
     pub size: u64,
     pub hash: String,
+}
+
+// 实例配置
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InstanceConfig {
+    pub display_name: String,
+    pub minecraft_version: String,
+    pub created_at: String,
+}
+
+// Forge版本
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ForgeVersion {
+    pub version: String,
+    pub mcversion: String,
+    pub build: i32,
 }

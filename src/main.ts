@@ -77,6 +77,7 @@ const router = createRouter({
     { path: '/', component: () => import('./views/HomeView.vue') },
     { path: '/download', component: () => import('./views/DownloadView.vue') },
     { path: '/settings', component: () => import('./views/SettingsView.vue') },
+    { path: '/instance-manager', component: () => import('./views/InstanceManagerView.vue') },
   ],
 })
 

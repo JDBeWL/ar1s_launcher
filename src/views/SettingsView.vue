@@ -125,10 +125,15 @@ watch(versionIsolation, async (newValue) => {
   }
 });
 
+watch(() => settingsStore.downloadMirror, async () => {
+  await settingsStore.saveDownloadMirror();
+});
+
 // 在组件挂载时加载所有设置
 onMounted(async () => {
   await settingsStore.loadSystemMemory();
   await settingsStore.loadMaxMemory();
+  await settingsStore.loadDownloadMirror();
   await loadGameDir();
   await loadJavaPath();
   await findJavaInstallations();
@@ -160,7 +165,7 @@ onMounted(async () => {
           label="版本隔离"
         ></v-switch>
 
-        <v-row align="center" class="mt-4">
+        <v-row align="center">
           <v-col cols="8">
             <v-slider
               v-model="settingsStore.maxMemory"
@@ -208,11 +213,19 @@ onMounted(async () => {
           @end="saveDownloadThreads"
         ></v-slider>
 
+        <div class="mt-6">
+          <div class="text-subtitle-1 font-weight-medium">下载源</div>
+          <v-radio-group v-model="settingsStore.downloadMirror" inline>
+            <v-radio label="官方源" value="official"></v-radio>
+            <v-radio label="BMCL 镜像" value="bmcl"></v-radio>
+          </v-radio-group>
+        </div>
+
         <v-combobox
           v-model="javaPath"
           :items="javaInstallations.map(p => formatJavaPath(p))"
           label="Java 路径"
-          class="mt-8"
+          class="mt-2"
           :loading="loadingJava"
           persistent-hint
           hint="选择或输入一个Java路径"

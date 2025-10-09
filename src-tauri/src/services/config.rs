@@ -55,6 +55,7 @@ pub fn load_config() -> Result<GameConfig, LauncherError> {
             username: None,
             uuid: None,
             max_memory: crate::models::default_max_memory(),
+            download_mirror: Some("bmcl".to_string()),
         };
 
         // 保存配置
@@ -95,6 +96,7 @@ pub async fn load_config_key(key: String) -> Result<Option<String>, LauncherErro
         "username" => Ok(config.username),
         "uuid" => Ok(config.uuid),
         "maxMemory" => Ok(Some(config.max_memory.to_string())),
+        "downloadMirror" => Ok(config.download_mirror),
         _ => Err(LauncherError::Custom(format!(
             "Unknown config key: {}",
             key
@@ -139,6 +141,7 @@ pub async fn save_config_key(key: String, value: String) -> Result<(), LauncherE
                 .parse()
                 .map_err(|_| LauncherError::Custom("Invalid u32 value for maxMemory".to_string()))?
         }
+        "downloadMirror" => config.download_mirror = Some(value),
         _ => {
             return Err(LauncherError::Custom(format!(
                 "Unknown or restricted config key: {}",

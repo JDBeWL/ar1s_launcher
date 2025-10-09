@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useDownloadStore } from '@/stores/downloadStore';
+import { useSettingsStore } from '@/stores/settings';
 
 // SVG图标
 const grassBlockIcon = '/icons/grass_block.svg';
@@ -9,10 +10,10 @@ const dirtPathIcon = '/icons/dirt_path.svg';
 
 // 使用全局下载状态
 const downloadStore = useDownloadStore();
+const settingsStore = useSettingsStore();
 
 // --- State ---
 const allVersions = ref<Array<any>>([]);
-const downloadSource = ref('bmcl'); // Default to BMCL
 const loading = ref(false);
 const searchQuery = ref('');
 const versionType = ref('release');
@@ -64,7 +65,7 @@ async function fetchVersions() {
 
 // Start a download
 async function startDownload(versionId: string) {
-  await downloadStore.startDownload(versionId, downloadSource.value);
+  await downloadStore.startDownload(versionId, settingsStore.downloadMirror);
 }
 
 // Cancel a download
@@ -108,6 +109,7 @@ const totalPages = computed(() => {
 // --- Lifecycle Hooks ---
 
 onMounted(async () => {
+  await settingsStore.loadDownloadMirror();
   await fetchVersions();
 });
 </script>
@@ -163,15 +165,8 @@ onMounted(async () => {
         </v-row>
         
         <!-- Download Source / Progress Bar -->
-        <v-row class="mt-4" :style="{ minHeight: '80px' }">
-          <v-col v-if="!isDownloading">
-            <v-card-subtitle>下载源</v-card-subtitle>
-            <v-radio-group v-model="downloadSource" inline hide-details>
-              <v-radio label="官方源" value="official"></v-radio>
-              <v-radio label="BMCL 镜像" value="bmcl"></v-radio>
-            </v-radio-group>
-          </v-col>
-          <v-col v-else>
+        <v-row class="mt-4" :style="{ minHeight: '5px' }">
+          <v-col v-if="isDownloading">
             <v-card-subtitle>下载任务已开始</v-card-subtitle>
             <v-btn
               variant="text"

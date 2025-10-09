@@ -64,6 +64,7 @@ onUnmounted(() => {
       <v-list nav>
         <v-list-item prepend-icon="mdi-rocket-launch" title="启动" to="/" rounded="lg"></v-list-item>
         <v-list-item prepend-icon="mdi-download" title="下载" to="/download" rounded="lg"></v-list-item>
+        <v-list-item prepend-icon="mdi-layers-outline" title="实例" to="/instance-manager" rounded="lg"></v-list-item>
       </v-list>
 
       <template v-slot:append>

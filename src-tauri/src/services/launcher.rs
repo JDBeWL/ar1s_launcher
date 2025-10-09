@@ -67,7 +67,126 @@ pub async fn launch_minecraft(
     }
 
     let version_json_str = fs::read_to_string(&version_json_path)?;
-    let version_json: serde_json::Value = serde_json::from_str(&version_json_str)?;
+    let mut version_json: serde_json::Value = serde_json::from_str(&version_json_str)?;
+
+    // 如果版本声明了 inheritsFrom，递归加载并合并父版本的字段（子级优先）
+    if let Some(mut parent_id) = version_json.get("inheritsFrom").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+        let versions_base = game_dir.join("versions");
+        // 循环处理多层继承
+        while !parent_id.is_empty() {
+            let parent_json_path = versions_base.join(&parent_id).join(format!("{}.json", &parent_id));
+            if !parent_json_path.exists() {
+                // 父 json 不存在，停止合并
+                break;
+            }
+            let parent_str = fs::read_to_string(&parent_json_path)?;
+            let parent_json: serde_json::Value = serde_json::from_str(&parent_str)?;
+
+            // 将父的缺失字段合并到当前 version_json（不覆盖已存在字段），对 libraries 做去重合并
+            // 先处理 libraries
+            if let Some(parent_libs) = parent_json.get("libraries").and_then(|v| v.as_array()) {
+                let mut merged_libs: Vec<serde_json::Value> = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+
+                if let Some(cur_libs) = version_json.get("libraries").and_then(|v| v.as_array()) {
+                    for lib in cur_libs {
+                        if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
+                            seen.insert(name.to_string());
+                        }
+                        merged_libs.push(lib.clone());
+                    }
+                }
+
+                for lib in parent_libs {
+                    if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
+                        if seen.contains(name) {
+                            continue;
+                        }
+                    }
+                    merged_libs.push(lib.clone());
+                }
+
+                if !merged_libs.is_empty() {
+                    version_json["libraries"] = serde_json::Value::Array(merged_libs);
+                }
+            }
+
+            // 合并 arguments.game：如果子级缺失则直接补充；如果子级存在则把父级中子级没有的项按父级顺序合并到子级前面（去重）
+            if let Some(parent_args) = parent_json.get("arguments") {
+                // 如果子级没有 arguments，则直接复制整个父级 arguments
+                if version_json.get("arguments").is_none() {
+                    version_json["arguments"] = parent_args.clone();
+                } else {
+                    // 尝试从父级获取 game 数组
+                    let parent_game_opt = parent_args.get("game").and_then(|g| g.as_array()).cloned();
+                    if let Some(parent_game_arr) = parent_game_opt {
+                        // 子级没有 game 数组 -> 直接使用父级的
+                        if version_json.get("arguments").and_then(|a| a.get("game")).is_none() {
+                            version_json["arguments"]["game"] = serde_json::Value::Array(parent_game_arr);
+                        } else if let Some(child_game_arr) = version_json.get("arguments").and_then(|a| a.get("game")).and_then(|g| g.as_array()).cloned() {
+                            // 子级存在 game 数组 -> 合并父级中子级没有的项，按父级顺序放在前面
+                            let mut merged: Vec<serde_json::Value> = Vec::new();
+                            for p in parent_game_arr {
+                                if !child_game_arr.contains(&p) {
+                                    merged.push(p);
+                                }
+                            }
+                            for c in child_game_arr {
+                                merged.push(c);
+                            }
+                            version_json["arguments"]["game"] = serde_json::Value::Array(merged);
+                        }
+                    }
+                }
+            } else if let Some(parent_mc_args) = parent_json.get("minecraftArguments") {
+                // 父级使用旧式 minecraftArguments，转换为数组并合并到子级 game（如果子级没有则直接写入）
+                if let Some(mc_args_str) = parent_mc_args.as_str() {
+                    let parts: Vec<serde_json::Value> = mc_args_str
+                        .split(' ')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| serde_json::Value::String(s.to_string()))
+                        .collect();
+
+                    if version_json.get("arguments").is_none() {
+                        let mut args_obj = serde_json::Map::new();
+                        args_obj.insert("game".to_string(), serde_json::Value::Array(parts));
+                        version_json["arguments"] = serde_json::Value::Object(args_obj);
+                    } else if let Some(child_game_arr) = version_json.get("arguments").and_then(|a| a.get("game")).and_then(|g| g.as_array()).cloned() {
+                        // 合并父级 minecraftArguments 的每一项（按顺序）到子级前面，避免重复
+                        let mut merged: Vec<serde_json::Value> = Vec::new();
+                        for p in parts {
+                            if !child_game_arr.contains(&p) {
+                                merged.push(p);
+                            }
+                        }
+                        for c in child_game_arr {
+                            merged.push(c);
+                        }
+                        version_json["arguments"]["game"] = serde_json::Value::Array(merged);
+                    } else if version_json.get("arguments").and_then(|a| a.get("game")).is_none() {
+                        // 子级存在 arguments 但没有 game
+                        version_json["arguments"]["game"] = serde_json::Value::Array(parts);
+                    }
+                }
+            }
+
+            // 合并其他顶层缺失字段（不覆盖已有）
+            if let Some(obj) = parent_json.as_object() {
+                for (k, v) in obj.iter() {
+                    if !version_json.get(k).is_some() {
+                        version_json[k] = v.clone();
+                    }
+                }
+            }
+
+            // 处理下一层继承（如果父还有 inheritsFrom）
+            if let Some(next_parent) = parent_json.get("inheritsFrom").and_then(|v| v.as_str()) {
+                parent_id = next_parent.to_string();
+            } else {
+                break;
+            }
+        }
+    }
 
     let (libraries_base_dir, assets_base_dir) =
         (game_dir.join("libraries"), game_dir.join("assets"));
@@ -163,8 +282,9 @@ pub async fn launch_minecraft(
 
                         for i in 0..archive.len() {
                             let mut file = archive.by_index(i)?;
-                            let outpath = natives_dir.join(file.name());
-
+                            // 只取条目最后的文件名，避免将库解压到嵌套路径中，确保所有本机库位于 natives 根目录
+                            // 使用 owned String 来避免后续对 zip 条目进行可变借用时的借用冲突
+                            let entry_name = file.name().to_string();
                             // 检查是否需要排除
                             if let Some(extract_rules) = lib.get("extract") {
                                 if let Some(exclude) =
@@ -172,26 +292,50 @@ pub async fn launch_minecraft(
                                 {
                                     if exclude
                                         .iter()
-                                        .any(|v| file.name().starts_with(v.as_str().unwrap_or("")))
+                                        .any(|v| entry_name.starts_with(v.as_str().unwrap_or("")))
                                     {
                                         continue;
                                     }
                                 }
                             }
 
-                            if (*file.name()).ends_with('/') {
-                                fs::create_dir_all(&outpath)?;
-                            } else {
-                                if let Some(p) = outpath.parent() {
-                                    if !p.exists() {
-                                        fs::create_dir_all(&p)?;
+                            // 跳过文件夹条目
+                            if entry_name.ends_with('/') {
+                                continue;
+                            }
+
+                            // 取出最后一段文件名，避免嵌套目录（例如 some/path/native.dll -> native.dll）
+                            let file_stem = std::path::Path::new(&entry_name)
+                                .file_name()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or(entry_name.as_str());
+
+                            let outpath = natives_dir.join(file_stem);
+
+                            if let Some(p) = outpath.parent() {
+                                if !p.exists() {
+                                    fs::create_dir_all(&p)?;
+                                }
+                            }
+                            let mut outfile = fs::File::create(&outpath)?;
+                            io::copy(&mut file, &mut outfile)?;
+                            emit(
+                                "log-debug",
+                                format!("解压Natives文件: {} -> {}", entry_name, outpath.display()),
+                            );
+                        }
+                        // 列出 natives 目录内容，便于排查缺失的本机库
+                        if natives_dir.exists() {
+                            if let Ok(entries) = fs::read_dir(&natives_dir) {
+                                let mut names = vec![];
+                                for e in entries.flatten() {
+                                    if let Ok(fname) = e.file_name().into_string() {
+                                        names.push(fname);
                                     }
                                 }
-                                let mut outfile = fs::File::create(&outpath)?;
-                                io::copy(&mut file, &mut outfile)?;
                                 emit(
                                     "log-debug",
-                                    format!("解压Natives文件: {}", outpath.display()),
+                                    format!("natives 目录内容: [{}]", names.join(", ")),
                                 );
                             }
                         }
@@ -294,7 +438,7 @@ pub async fn launch_minecraft(
             .replace("${assets_index_name}", assets_index)
             .replace("${auth_uuid}", &uuid)
             .replace("${auth_access_token}", "0")
-            .replace("${user_type}", "legacy")
+            .replace("${user_type}", "mojang")
             .replace(
                 "${version_type}",
                 version_json["type"].as_str().unwrap_or("release"),
@@ -386,9 +530,13 @@ pub async fn launch_minecraft(
     };
     emit("log-debug", format!("使用的Java路径: {}", java_path));
 
+    // 在 JVM 启动参数中设置内存和本机库路径（同时设置 org.lwjgl.librarypath）
+    let lwjgl_lib_path = natives_dir.to_string_lossy().to_string();
     let mut final_args = vec![
         format!("-Xmx{}M", options.memory.unwrap_or(2048)),
-        format!("-Djava.library.path={}", natives_dir.to_string_lossy()),
+        format!("-Djava.library.path={}", lwjgl_lib_path),
+        // 显式设置 LWJGL 的 librarypath，部分情况下 LWJGL 会优先读取这个属性
+        format!("-Dorg.lwjgl.librarypath={}", lwjgl_lib_path),
     ];
     final_args.extend(jvm_args);
     final_args.push("-cp".to_string());
@@ -414,13 +562,42 @@ pub async fn launch_minecraft(
         command.creation_flags(0x08000000);
     }
 
+    // 在真正启动前输出本机库路径 & natives 目录细节，便于排查加载问题
+    emit(
+        "log-debug",
+        format!("java.library.path: {}", lwjgl_lib_path),
+    );
+    emit(
+        "log-debug",
+        format!("org.lwjgl.librarypath: {}", lwjgl_lib_path),
+    );
+
+    // 列出 natives 目录下的文件（包含绝对路径和大小）
+    if natives_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&natives_dir) {
+            let mut details = vec![];
+            for e in entries.flatten() {
+                let p = e.path();
+                if let Ok(meta) = fs::metadata(&p) {
+                    details.push(format!("{} ({} bytes)", p.display(), meta.len()));
+                } else {
+                    details.push(format!("{} (metadata error)", p.display()));
+                }
+            }
+            emit(
+                "log-debug",
+                format!("natives 目录详细内容: [{}]", details.join(", ")),
+            );
+        }
+    }
+
     emit("log-debug", format!("最终启动命令: {:?}", command));
     window.emit("launch-command", format!("{:?}", command))?;
 
     // 启动游戏进程但不等待它结束
     let child = command
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()?;
 
     emit("log-debug", format!("游戏已启动，PID: {:?}", child.id()));
@@ -431,17 +608,47 @@ pub async fn launch_minecraft(
         format!("游戏已启动，PID: {}", child.id()),
     )?;
 
-    // 在后台线程中监控游戏进程，不阻塞主线程
+    // 在后台线程中监控游戏进程输出并在退出后收集 stdout/stderr，不阻塞主线程
     let window_clone = window.clone();
     std::thread::spawn(move || {
         match child.wait_with_output() {
             Ok(output) => {
                 let status = output.status;
+
+                // Emit captured stdout if present
+                if !output.stdout.is_empty() {
+                    let stdout_str = String::from_utf8_lossy(&output.stdout).to_string();
+                    let _ = window_clone.emit("log-debug", format!("游戏 stdout:\n{}", stdout_str));
+                }
+
+                // Emit captured stderr if present (treat as error-level)
+                if !output.stderr.is_empty() {
+                    let stderr_str = String::from_utf8_lossy(&output.stderr).to_string();
+                    let _ = window_clone.emit("log-error", format!("游戏 stderr:\n{}", stderr_str));
+                }
+
                 let _ = window_clone.emit(
                     "log-debug",
                     format!("游戏进程退出，状态码: {:?}", status.code()),
                 );
-                // 发送游戏退出事件到前端
+
+                // If exit code is non-zero, send a minecraft-error event containing stderr (and stdout) so the UI that listens
+                // to `minecraft-error` can show the actual Java error output.
+                if status.code().unwrap_or(-1) != 0 {
+                    let mut combined = String::new();
+                    if !output.stdout.is_empty() {
+                        combined.push_str("[stdout]\n");
+                        combined.push_str(&String::from_utf8_lossy(&output.stdout));
+                        combined.push_str("\n");
+                    }
+                    if !output.stderr.is_empty() {
+                        combined.push_str("[stderr]\n");
+                        combined.push_str(&String::from_utf8_lossy(&output.stderr));
+                    }
+                    let _ = window_clone.emit("minecraft-error", format!("游戏以非零退出 (code={:?})，输出:\n{}", status.code(), combined));
+                }
+
+                // 发送游戏退出事件到前端，包含退出码
                 let _ = window_clone.emit(
                     "minecraft-exited",
                     format!("游戏已退出，状态码: {:?}", status.code()),
