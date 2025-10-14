@@ -371,23 +371,35 @@ pub async fn launch_minecraft(
                 }
             }
 
-            if let Some(path) = lib["downloads"]["artifact"]["path"].as_str() {
+            if let Some(path) = lib["downloads"].get("artifact").and_then(|a| a.get("path")).and_then(|p| p.as_str()) {
                 let lib_path = libraries_base_dir.join(path);
-                emit(
-                    "log-debug",
-                    format!("添加到Classpath的库: {}", lib_path.display()),
-                );
+                emit("log-debug", format!("添加到Classpath的库: {}", lib_path.display()));
                 if !lib_path.exists() {
-                    emit(
-                        "log-error",
-                        format!("Classpath中的库文件不存在: {}", lib_path.display()),
-                    );
-                    return Err(LauncherError::Custom(format!(
-                        "Classpath中的库文件不存在: {}",
-                        lib_path.display()
-                    )));
+                    emit("log-error", format!("Classpath中的库文件不存在: {}", lib_path.display()));
+                    return Err(LauncherError::Custom(format!("Classpath中的库文件不存在: {}", lib_path.display())));
                 }
                 classpath.push(lib_path);
+            } else if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
+                // 回退：根据 maven 坐标 group:artifact:version 构建本地路径
+                let parts: Vec<&str> = name.split(':').collect();
+                if parts.len() >= 3 {
+                    let group = parts[0].replace('.', "/");
+                    let artifact = parts[1];
+                    let version = parts[2];
+                    let candidate = libraries_base_dir
+                        .join(&group)
+                        .join(artifact)
+                        .join(version)
+                        .join(format!("{}-{}.jar", artifact, version));
+                    emit("log-debug", format!("尝试回退解析库路径: {}", candidate.display()));
+                    if candidate.exists() {
+                        classpath.push(candidate);
+                    } else {
+                        emit("log-error", format!("库文件缺失（maven 回退也未找到）: name={}，期望路径: {}", name, candidate.display()));
+                    }
+                } else {
+                    emit("log-error", format!("库条目缺少 downloads.artifact.path，且 name 非法: {:?}", lib));
+                }
             }
         }
     }
@@ -407,12 +419,7 @@ pub async fn launch_minecraft(
         )));
     }
     classpath.push(main_game_jar_path);
-    let classpath_str = classpath
-        .iter()
-        .map(|p| p.to_string_lossy())
-        .collect::<Vec<_>>()
-        .join(if cfg!(windows) { ";" } else { ":" });
-    emit("log-debug", format!("最终Classpath: {}", classpath_str));
+
 
     // --- 3. 获取主类和参数 ---
     let main_class = version_json["mainClass"]
@@ -422,6 +429,131 @@ pub async fn launch_minecraft(
         .as_str()
         .unwrap_or(&options.version);
     let assets_dir = assets_base_dir;
+
+    // 预检：当 mainClass 为 LaunchWrapper 时，确保 Classpath 中包含 launchwrapper 库；若缺失尝试自动自愈
+    if main_class == "net.minecraft.launchwrapper.Launch" {
+        let has_launchwrapper = classpath.iter().any(|p| {
+            let s = p.to_string_lossy();
+            s.contains("net/minecraft/launchwrapper") || s.contains("launchwrapper-")
+        });
+        if !has_launchwrapper {
+            emit("log-debug", "预检：Classpath 未包含 LaunchWrapper，尝试在 libraries 目录自动查找".to_string());
+
+            // 递归扫描 libraries_base_dir，寻找任意 launchwrapper-*.jar
+            fn find_launchwrapper_jar(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+                if let Ok(read_dir) = std::fs::read_dir(dir) {
+                    for entry in read_dir.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            if let Some(found) = find_launchwrapper_jar(&path) {
+                                return Some(found);
+                            }
+                        } else {
+                            let name = entry.file_name().to_string_lossy().to_lowercase();
+                            if name.starts_with("launchwrapper-") && name.ends_with(".jar") {
+                                return Some(path);
+                            }
+                        }
+                    }
+                }
+                None
+            }
+
+            if let Some(jar) = find_launchwrapper_jar(&libraries_base_dir) {
+                emit("log-debug", format!("自动自愈：发现 LaunchWrapper 库，加入 Classpath: {}", jar.display()));
+                classpath.push(jar);
+            } else {
+                emit(
+                    "log-error",
+                    "预检失败：Classpath 未包含 LaunchWrapper 库（net.minecraft:launchwrapper），且在 libraries 中未找到可用 JAR".to_string(),
+                );
+                return Err(LauncherError::Custom(
+                    "预检失败：缺少 LaunchWrapper 库。请重新运行 Forge 安装或手动补齐 libraries/net/minecraft/launchwrapper/* 并在版本 JSON 的 libraries 中声明 net.minecraft:launchwrapper:1.12（且包含 downloads.artifact.path）".to_string()
+                ));
+            }
+        }
+    }
+
+    // 预检：补齐 jopt-simple（旧版 Forge/FML 需要）
+    if main_class == "net.minecraft.launchwrapper.Launch" {
+        let has_jopt = classpath.iter().any(|p| {
+            let s = p.to_string_lossy();
+            s.contains("jopt-simple") || s.contains("joptsimple")
+        });
+        if !has_jopt {
+            emit("log-debug", "预检：Classpath 未包含 jopt-simple，尝试在 libraries 目录自动查找".to_string());
+
+            fn find_jopt_jar(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+                if let Ok(read_dir) = std::fs::read_dir(dir) {
+                    for entry in read_dir.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            if let Some(found) = find_jopt_jar(&path) {
+                                return Some(found);
+                            }
+                        } else {
+                            let name = entry.file_name().to_string_lossy().to_lowercase();
+                            if (name.contains("jopt-simple") || name.contains("joptsimple")) && name.ends_with(".jar") {
+                                return Some(path);
+                            }
+                        }
+                    }
+                }
+                None
+            }
+
+            if let Some(jar) = find_jopt_jar(&libraries_base_dir) {
+                emit("log-debug", format!("自动自愈：发现 jopt-simple 库，加入 Classpath: {}", jar.display()));
+                classpath.push(jar);
+            } else {
+                emit("log-error", "预检失败：缺少 jopt-simple 库（net.sf.jopt-simple:jopt-simple）。".to_string());
+                // 保留继续启动以便输出更直观的错误；如需严格可在此返回 Err
+            }
+        }
+    }
+
+    // 预检：补齐 Forge/FML（确保 FMLTweaker 可加载）
+    if main_class == "net.minecraft.launchwrapper.Launch" {
+        let has_forge_fml = classpath.iter().any(|p| {
+            let s = p.to_string_lossy().to_lowercase();
+            s.contains("minecraftforge") || s.contains("forge-") || s.contains("/fml/") || s.contains("\\fml\\")
+        });
+
+        if !has_forge_fml {
+            emit("log-debug", "预检：Classpath 未包含 Forge/FML，尝试在 libraries 目录自动查找 forge JAR".to_string());
+
+            fn find_forge_jar(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+                if let Ok(read_dir) = std::fs::read_dir(dir) {
+                    for entry in read_dir.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            if let Some(found) = find_forge_jar(&path) {
+                                return Some(found);
+                            }
+                        } else {
+                            let name = entry.file_name().to_string_lossy().to_lowercase();
+                            let full = path.to_string_lossy().to_lowercase();
+                            // 兼容常见旧版命名与目录结构
+                            if (name.starts_with("forge-") || full.contains("net\\minecraftforge\\forge") || full.contains("net/minecraftforge/forge"))
+                                && name.ends_with(".jar")
+                            {
+                                return Some(path);
+                            }
+                        }
+                    }
+                }
+                None
+            }
+
+            if let Some(jar) = find_forge_jar(&libraries_base_dir) {
+                emit("log-debug", format!("自动自愈：发现 Forge 库，加入 Classpath: {}", jar.display()));
+                classpath.push(jar);
+            } else {
+                emit("log-error", "预检失败：未在 libraries 中找到 Forge/FML 相关 JAR，可能安装不完整。".to_string());
+                // 不立刻返回，让后续错误输出更明确
+            }
+        }
+    }
 
     // 替换通用占位符的辅助函数
     let replace_placeholders = |arg: &str| -> String {
@@ -500,6 +632,47 @@ pub async fn launch_minecraft(
         game_args_vec = mc_args.split(' ').map(replace_placeholders).collect();
     }
 
+    // 若缺少 tweakClass，基于版本自动补齐（仅在 LaunchWrapper 主类下，且检测到 Forge/FML 存在时）
+    let has_tweak_class_flag = game_args_vec.iter().any(|a| a == "--tweakClass");
+    if main_class == "net.minecraft.launchwrapper.Launch" && !has_tweak_class_flag {
+        // 检测是否存在 Forge/FML 相关库（双重判断：libraries 声明 + 已构建的 classpath 路径）
+        let forge_in_libraries = version_json
+            .get("libraries")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter().any(|lib| {
+                    lib.get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|name| name.contains("net.minecraftforge") || name.contains("cpw.mods"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+
+        let forge_in_classpath = classpath.iter().any(|p| {
+            let s = p.to_string_lossy().to_lowercase();
+            s.contains("minecraftforge") || s.contains("forge-") || s.contains("/fml/") || s.contains("\\fml\\")
+        });
+
+        let has_forge = forge_in_libraries || forge_in_classpath;
+
+        if has_forge {
+            // 从版本 id 推断基础 MC 版本（通常形如 "1.12.2-forge-..."）
+            let base_ver = options.version.split("-forge").next().unwrap_or(&options.version);
+            let tweaker = if base_ver.starts_with("1.7.10") {
+                "cpw.mods.fml.common.launcher.FMLTweaker"
+            } else {
+                "net.minecraftforge.fml.common.launcher.FMLTweaker"
+            };
+            emit("log-debug", format!("自动补齐 tweakClass: {}", tweaker));
+            // 插入到参数最前，确保优先被处理
+            game_args_vec.insert(0, tweaker.to_string());
+            game_args_vec.insert(0, "--tweakClass".to_string());
+        } else {
+            emit("log-debug", "跳过自动补齐 tweakClass：未检测到 Forge/FML 库，避免 ClassNotFound".to_string());
+        }
+    }
+
     // --- 4. 组装Java启动参数 ---
     let java_path = {
         // 1. 首先尝试使用配置中的Java路径
@@ -537,8 +710,19 @@ pub async fn launch_minecraft(
         format!("-Djava.library.path={}", lwjgl_lib_path),
         // 显式设置 LWJGL 的 librarypath，部分情况下 LWJGL 会优先读取这个属性
         format!("-Dorg.lwjgl.librarypath={}", lwjgl_lib_path),
+        // 统一编码以避免中文环境下日志乱码
+        "-Dfile.encoding=UTF-8".to_string(),
     ];
     final_args.extend(jvm_args);
+
+    // 在可能动态补充了库（如 LaunchWrapper）之后，重新计算最终 Classpath
+    let classpath_str = classpath
+        .iter()
+        .map(|p| p.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(if cfg!(windows) { ";" } else { ":" });
+    emit("log-debug", format!("最终Classpath: {}", classpath_str));
+
     final_args.push("-cp".to_string());
     final_args.push(classpath_str);
     final_args.push(main_class.to_string());

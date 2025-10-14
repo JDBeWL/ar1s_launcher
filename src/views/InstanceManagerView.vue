@@ -7,7 +7,8 @@
 
     <v-window v-model="tab">
       <v-window-item value="create">
-        <v-container>
+        <!-- 使用与ModLoaderInstallView.vue相同的响应式布局 -->
+        <v-container class="py-6" fluid>
           <v-row justify="center">
             <v-col cols="12" md="10" lg="8">
               <v-card class="mt-4">

@@ -150,8 +150,27 @@ watch(username, (newName) => {
 <template>
   <v-container>
     <v-row>
+      <!-- 将游戏设置（用户账号）移到左侧列的顶部 -->
       <v-col cols="12" md="8">
-        <v-card>
+        <v-card class="mt-4">
+          <v-card-title>游戏设置</v-card-title>
+          <v-card-text>
+            
+            <v-text-field
+              v-model="username"
+              label="用户名"
+            ></v-text-field>
+
+
+            <v-switch
+              v-model="offlineMode"
+              label="离线模式"
+            ></v-switch>
+          </v-card-text>
+        </v-card>
+
+        <!-- 版本选择卡片 -->
+        <v-card class="mt-4">
           <v-card-title>版本选择</v-card-title>
           <v-card-text>
             <v-select
@@ -200,25 +219,9 @@ watch(username, (newName) => {
             </div>
           </v-card-text>
         </v-card>
-
-        <v-card class="mt-4">
-          <v-card-title>游戏设置</v-card-title>
-          <v-card-text>
-            
-            <v-text-field
-              v-model="username"
-              label="用户名"
-            ></v-text-field>
-
-
-            <v-switch
-              v-model="offlineMode"
-              label="离线模式"
-            ></v-switch>
-          </v-card-text>
-        </v-card>
       </v-col>
 
+      <!-- 启动游戏按钮保持在右侧 -->
       <v-col cols="12" md="4">
         <v-card>
           <v-card-title>启动游戏</v-card-title>
