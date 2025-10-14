@@ -70,11 +70,17 @@ pub async fn launch_minecraft(
     let mut version_json: serde_json::Value = serde_json::from_str(&version_json_str)?;
 
     // 如果版本声明了 inheritsFrom，递归加载并合并父版本的字段（子级优先）
-    if let Some(mut parent_id) = version_json.get("inheritsFrom").and_then(|v| v.as_str()).map(|s| s.to_string()) {
+    if let Some(mut parent_id) = version_json
+        .get("inheritsFrom")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+    {
         let versions_base = game_dir.join("versions");
         // 循环处理多层继承
         while !parent_id.is_empty() {
-            let parent_json_path = versions_base.join(&parent_id).join(format!("{}.json", &parent_id));
+            let parent_json_path = versions_base
+                .join(&parent_id)
+                .join(format!("{}.json", &parent_id));
             if !parent_json_path.exists() {
                 // 父 json 不存在，停止合并
                 break;
@@ -118,12 +124,23 @@ pub async fn launch_minecraft(
                     version_json["arguments"] = parent_args.clone();
                 } else {
                     // 尝试从父级获取 game 数组
-                    let parent_game_opt = parent_args.get("game").and_then(|g| g.as_array()).cloned();
+                    let parent_game_opt =
+                        parent_args.get("game").and_then(|g| g.as_array()).cloned();
                     if let Some(parent_game_arr) = parent_game_opt {
                         // 子级没有 game 数组 -> 直接使用父级的
-                        if version_json.get("arguments").and_then(|a| a.get("game")).is_none() {
-                            version_json["arguments"]["game"] = serde_json::Value::Array(parent_game_arr);
-                        } else if let Some(child_game_arr) = version_json.get("arguments").and_then(|a| a.get("game")).and_then(|g| g.as_array()).cloned() {
+                        if version_json
+                            .get("arguments")
+                            .and_then(|a| a.get("game"))
+                            .is_none()
+                        {
+                            version_json["arguments"]["game"] =
+                                serde_json::Value::Array(parent_game_arr);
+                        } else if let Some(child_game_arr) = version_json
+                            .get("arguments")
+                            .and_then(|a| a.get("game"))
+                            .and_then(|g| g.as_array())
+                            .cloned()
+                        {
                             // 子级存在 game 数组 -> 合并父级中子级没有的项，按父级顺序放在前面
                             let mut merged: Vec<serde_json::Value> = Vec::new();
                             for p in parent_game_arr {
@@ -151,7 +168,12 @@ pub async fn launch_minecraft(
                         let mut args_obj = serde_json::Map::new();
                         args_obj.insert("game".to_string(), serde_json::Value::Array(parts));
                         version_json["arguments"] = serde_json::Value::Object(args_obj);
-                    } else if let Some(child_game_arr) = version_json.get("arguments").and_then(|a| a.get("game")).and_then(|g| g.as_array()).cloned() {
+                    } else if let Some(child_game_arr) = version_json
+                        .get("arguments")
+                        .and_then(|a| a.get("game"))
+                        .and_then(|g| g.as_array())
+                        .cloned()
+                    {
                         // 合并父级 minecraftArguments 的每一项（按顺序）到子级前面，避免重复
                         let mut merged: Vec<serde_json::Value> = Vec::new();
                         for p in parts {
@@ -163,7 +185,11 @@ pub async fn launch_minecraft(
                             merged.push(c);
                         }
                         version_json["arguments"]["game"] = serde_json::Value::Array(merged);
-                    } else if version_json.get("arguments").and_then(|a| a.get("game")).is_none() {
+                    } else if version_json
+                        .get("arguments")
+                        .and_then(|a| a.get("game"))
+                        .is_none()
+                    {
                         // 子级存在 arguments 但没有 game
                         version_json["arguments"]["game"] = serde_json::Value::Array(parts);
                     }
@@ -371,12 +397,25 @@ pub async fn launch_minecraft(
                 }
             }
 
-            if let Some(path) = lib["downloads"].get("artifact").and_then(|a| a.get("path")).and_then(|p| p.as_str()) {
+            if let Some(path) = lib["downloads"]
+                .get("artifact")
+                .and_then(|a| a.get("path"))
+                .and_then(|p| p.as_str())
+            {
                 let lib_path = libraries_base_dir.join(path);
-                emit("log-debug", format!("添加到Classpath的库: {}", lib_path.display()));
+                emit(
+                    "log-debug",
+                    format!("添加到Classpath的库: {}", lib_path.display()),
+                );
                 if !lib_path.exists() {
-                    emit("log-error", format!("Classpath中的库文件不存在: {}", lib_path.display()));
-                    return Err(LauncherError::Custom(format!("Classpath中的库文件不存在: {}", lib_path.display())));
+                    emit(
+                        "log-error",
+                        format!("Classpath中的库文件不存在: {}", lib_path.display()),
+                    );
+                    return Err(LauncherError::Custom(format!(
+                        "Classpath中的库文件不存在: {}",
+                        lib_path.display()
+                    )));
                 }
                 classpath.push(lib_path);
             } else if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
@@ -391,14 +430,30 @@ pub async fn launch_minecraft(
                         .join(artifact)
                         .join(version)
                         .join(format!("{}-{}.jar", artifact, version));
-                    emit("log-debug", format!("尝试回退解析库路径: {}", candidate.display()));
+                    emit(
+                        "log-debug",
+                        format!("尝试回退解析库路径: {}", candidate.display()),
+                    );
                     if candidate.exists() {
                         classpath.push(candidate);
                     } else {
-                        emit("log-error", format!("库文件缺失（maven 回退也未找到）: name={}，期望路径: {}", name, candidate.display()));
+                        emit(
+                            "log-error",
+                            format!(
+                                "库文件缺失（maven 回退也未找到）: name={}，期望路径: {}",
+                                name,
+                                candidate.display()
+                            ),
+                        );
                     }
                 } else {
-                    emit("log-error", format!("库条目缺少 downloads.artifact.path，且 name 非法: {:?}", lib));
+                    emit(
+                        "log-error",
+                        format!(
+                            "库条目缺少 downloads.artifact.path，且 name 非法: {:?}",
+                            lib
+                        ),
+                    );
                 }
             }
         }
@@ -420,7 +475,6 @@ pub async fn launch_minecraft(
     }
     classpath.push(main_game_jar_path);
 
-
     // --- 3. 获取主类和参数 ---
     let main_class = version_json["mainClass"]
         .as_str()
@@ -437,7 +491,10 @@ pub async fn launch_minecraft(
             s.contains("net/minecraft/launchwrapper") || s.contains("launchwrapper-")
         });
         if !has_launchwrapper {
-            emit("log-debug", "预检：Classpath 未包含 LaunchWrapper，尝试在 libraries 目录自动查找".to_string());
+            emit(
+                "log-debug",
+                "预检：Classpath 未包含 LaunchWrapper，尝试在 libraries 目录自动查找".to_string(),
+            );
 
             // 递归扫描 libraries_base_dir，寻找任意 launchwrapper-*.jar
             fn find_launchwrapper_jar(dir: &std::path::Path) -> Option<std::path::PathBuf> {
@@ -460,7 +517,13 @@ pub async fn launch_minecraft(
             }
 
             if let Some(jar) = find_launchwrapper_jar(&libraries_base_dir) {
-                emit("log-debug", format!("自动自愈：发现 LaunchWrapper 库，加入 Classpath: {}", jar.display()));
+                emit(
+                    "log-debug",
+                    format!(
+                        "自动自愈：发现 LaunchWrapper 库，加入 Classpath: {}",
+                        jar.display()
+                    ),
+                );
                 classpath.push(jar);
             } else {
                 emit(
@@ -481,7 +544,10 @@ pub async fn launch_minecraft(
             s.contains("jopt-simple") || s.contains("joptsimple")
         });
         if !has_jopt {
-            emit("log-debug", "预检：Classpath 未包含 jopt-simple，尝试在 libraries 目录自动查找".to_string());
+            emit(
+                "log-debug",
+                "预检：Classpath 未包含 jopt-simple，尝试在 libraries 目录自动查找".to_string(),
+            );
 
             fn find_jopt_jar(dir: &std::path::Path) -> Option<std::path::PathBuf> {
                 if let Ok(read_dir) = std::fs::read_dir(dir) {
@@ -493,7 +559,9 @@ pub async fn launch_minecraft(
                             }
                         } else {
                             let name = entry.file_name().to_string_lossy().to_lowercase();
-                            if (name.contains("jopt-simple") || name.contains("joptsimple")) && name.ends_with(".jar") {
+                            if (name.contains("jopt-simple") || name.contains("joptsimple"))
+                                && name.ends_with(".jar")
+                            {
                                 return Some(path);
                             }
                         }
@@ -503,10 +571,19 @@ pub async fn launch_minecraft(
             }
 
             if let Some(jar) = find_jopt_jar(&libraries_base_dir) {
-                emit("log-debug", format!("自动自愈：发现 jopt-simple 库，加入 Classpath: {}", jar.display()));
+                emit(
+                    "log-debug",
+                    format!(
+                        "自动自愈：发现 jopt-simple 库，加入 Classpath: {}",
+                        jar.display()
+                    ),
+                );
                 classpath.push(jar);
             } else {
-                emit("log-error", "预检失败：缺少 jopt-simple 库（net.sf.jopt-simple:jopt-simple）。".to_string());
+                emit(
+                    "log-error",
+                    "预检失败：缺少 jopt-simple 库（net.sf.jopt-simple:jopt-simple）。".to_string(),
+                );
                 // 保留继续启动以便输出更直观的错误；如需严格可在此返回 Err
             }
         }
@@ -516,11 +593,18 @@ pub async fn launch_minecraft(
     if main_class == "net.minecraft.launchwrapper.Launch" {
         let has_forge_fml = classpath.iter().any(|p| {
             let s = p.to_string_lossy().to_lowercase();
-            s.contains("minecraftforge") || s.contains("forge-") || s.contains("/fml/") || s.contains("\\fml\\")
+            s.contains("minecraftforge")
+                || s.contains("forge-")
+                || s.contains("/fml/")
+                || s.contains("\\fml\\")
         });
 
         if !has_forge_fml {
-            emit("log-debug", "预检：Classpath 未包含 Forge/FML，尝试在 libraries 目录自动查找 forge JAR".to_string());
+            emit(
+                "log-debug",
+                "预检：Classpath 未包含 Forge/FML，尝试在 libraries 目录自动查找 forge JAR"
+                    .to_string(),
+            );
 
             fn find_forge_jar(dir: &std::path::Path) -> Option<std::path::PathBuf> {
                 if let Ok(read_dir) = std::fs::read_dir(dir) {
@@ -534,7 +618,9 @@ pub async fn launch_minecraft(
                             let name = entry.file_name().to_string_lossy().to_lowercase();
                             let full = path.to_string_lossy().to_lowercase();
                             // 兼容常见旧版命名与目录结构
-                            if (name.starts_with("forge-") || full.contains("net\\minecraftforge\\forge") || full.contains("net/minecraftforge/forge"))
+                            if (name.starts_with("forge-")
+                                || full.contains("net\\minecraftforge\\forge")
+                                || full.contains("net/minecraftforge/forge"))
                                 && name.ends_with(".jar")
                             {
                                 return Some(path);
@@ -546,10 +632,17 @@ pub async fn launch_minecraft(
             }
 
             if let Some(jar) = find_forge_jar(&libraries_base_dir) {
-                emit("log-debug", format!("自动自愈：发现 Forge 库，加入 Classpath: {}", jar.display()));
+                emit(
+                    "log-debug",
+                    format!("自动自愈：发现 Forge 库，加入 Classpath: {}", jar.display()),
+                );
                 classpath.push(jar);
             } else {
-                emit("log-error", "预检失败：未在 libraries 中找到 Forge/FML 相关 JAR，可能安装不完整。".to_string());
+                emit(
+                    "log-error",
+                    "预检失败：未在 libraries 中找到 Forge/FML 相关 JAR，可能安装不完整。"
+                        .to_string(),
+                );
                 // 不立刻返回，让后续错误输出更明确
             }
         }
@@ -643,7 +736,9 @@ pub async fn launch_minecraft(
                 arr.iter().any(|lib| {
                     lib.get("name")
                         .and_then(|n| n.as_str())
-                        .map(|name| name.contains("net.minecraftforge") || name.contains("cpw.mods"))
+                        .map(|name| {
+                            name.contains("net.minecraftforge") || name.contains("cpw.mods")
+                        })
                         .unwrap_or(false)
                 })
             })
@@ -651,14 +746,21 @@ pub async fn launch_minecraft(
 
         let forge_in_classpath = classpath.iter().any(|p| {
             let s = p.to_string_lossy().to_lowercase();
-            s.contains("minecraftforge") || s.contains("forge-") || s.contains("/fml/") || s.contains("\\fml\\")
+            s.contains("minecraftforge")
+                || s.contains("forge-")
+                || s.contains("/fml/")
+                || s.contains("\\fml\\")
         });
 
         let has_forge = forge_in_libraries || forge_in_classpath;
 
         if has_forge {
             // 从版本 id 推断基础 MC 版本（通常形如 "1.12.2-forge-..."）
-            let base_ver = options.version.split("-forge").next().unwrap_or(&options.version);
+            let base_ver = options
+                .version
+                .split("-forge")
+                .next()
+                .unwrap_or(&options.version);
             let tweaker = if base_ver.starts_with("1.7.10") {
                 "cpw.mods.fml.common.launcher.FMLTweaker"
             } else {
@@ -669,7 +771,10 @@ pub async fn launch_minecraft(
             game_args_vec.insert(0, tweaker.to_string());
             game_args_vec.insert(0, "--tweakClass".to_string());
         } else {
-            emit("log-debug", "跳过自动补齐 tweakClass：未检测到 Forge/FML 库，避免 ClassNotFound".to_string());
+            emit(
+                "log-debug",
+                "跳过自动补齐 tweakClass：未检测到 Forge/FML 库，避免 ClassNotFound".to_string(),
+            );
         }
     }
 
@@ -708,10 +813,10 @@ pub async fn launch_minecraft(
     let mut final_args = vec![
         format!("-Xmx{}M", options.memory.unwrap_or(2048)),
         format!("-Djava.library.path={}", lwjgl_lib_path),
-        // 显式设置 LWJGL 的 librarypath，部分情况下 LWJGL 会优先读取这个属性
         format!("-Dorg.lwjgl.librarypath={}", lwjgl_lib_path),
-        // 统一编码以避免中文环境下日志乱码
         "-Dfile.encoding=UTF-8".to_string(),
+        // 解决旧版 Forge (LWJGL 2) 在 Java 8 上由于 OpenAL 引发的 UnsatisfiedLinkError
+        "-Dorg.lwjgl.openal.mapping.use=false".to_string(),
     ];
     final_args.extend(jvm_args);
 
@@ -746,7 +851,7 @@ pub async fn launch_minecraft(
         command.creation_flags(0x08000000);
     }
 
-    // 在真正启动前输出本机库路径 & natives 目录细节，便于排查加载问题
+    // 排查加载问题
     emit(
         "log-debug",
         format!("java.library.path: {}", lwjgl_lib_path),
@@ -829,7 +934,14 @@ pub async fn launch_minecraft(
                         combined.push_str("[stderr]\n");
                         combined.push_str(&String::from_utf8_lossy(&output.stderr));
                     }
-                    let _ = window_clone.emit("minecraft-error", format!("游戏以非零退出 (code={:?})，输出:\n{}", status.code(), combined));
+                    let _ = window_clone.emit(
+                        "minecraft-error",
+                        format!(
+                            "游戏以非零退出 (code={:?})，输出:\n{}",
+                            status.code(),
+                            combined
+                        ),
+                    );
                 }
 
                 // 发送游戏退出事件到前端，包含退出码
