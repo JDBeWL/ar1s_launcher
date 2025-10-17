@@ -9,6 +9,11 @@ use std::path::PathBuf;
 use std::process::Command;
 use zip::ZipArchive;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 const BMCL_API_BASE_URL: &str = "https://bmclapi2.bangbang93.com";
 
 /// Manually installs old Forge versions by extracting and copying files
@@ -235,14 +240,15 @@ pub async fn get_forge_versions(
 
 /// Installs a specific version of Forge into a given instance directory.
 pub async fn install_forge(
-    _instance_path: PathBuf,
+    instance_path: PathBuf,
     forge_version: ForgeVersion,
 ) -> Result<(), LauncherError> {
-    // 1. Get Java path from config
+    // 1. Get Java path and game directory from config
     let app_config = config::load_config()?;
     let java_path = app_config
         .java_path
         .ok_or_else(|| LauncherError::Custom("未设置Java路径，无法安装Forge.".to_string()))?;
+    let game_dir = std::path::PathBuf::from(&app_config.game_dir);
 
     // 2. Construct installer URL and download it
     // 使用不带时间戳的稳定下载 URL，避免镜像返回异常的 304
@@ -258,120 +264,501 @@ pub async fn install_forge(
     let installer_path = temp_dir.join(&installer_filename);
     println!("Forge: 准备下载安装器: {}", installer_url);
 
-    // 使用与 download.rs 一致的默认请求头，避免 CDN 因 UA/编码异常返回 304
+    // 模拟真实浏览器请求，避免被服务器拒绝或返回502错误
     let mut default_headers = reqwest::header::HeaderMap::new();
+
+    // 使用常见的Chrome浏览器User-Agent
     default_headers.insert(
         reqwest::header::USER_AGENT,
         reqwest::header::HeaderValue::from_static(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ar1s-Launcher/1.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         ),
+    );
+
+    // 添加完整的浏览器请求头
+    default_headers.insert(
+        reqwest::header::ACCEPT,
+        reqwest::header::HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"),
     );
     default_headers.insert(
         reqwest::header::ACCEPT_ENCODING,
-        reqwest::header::HeaderValue::from_static("identity"),
+        reqwest::header::HeaderValue::from_static("gzip, deflate, br"),
     );
     default_headers.insert(
-        reqwest::header::ACCEPT,
-        reqwest::header::HeaderValue::from_static("*/*"),
+        reqwest::header::ACCEPT_LANGUAGE,
+        reqwest::header::HeaderValue::from_static("zh-CN,zh;q=0.9,en;q=0.8"),
     );
-    let client = Client::builder().default_headers(default_headers).build()?;
-    let mut response = client
-        .get(&installer_url)
-        .header(reqwest::header::CACHE_CONTROL, "no-cache")
-        .send()
-        .await?;
-    println!("Forge: 安装器下载响应状态: {}", response.status());
+    default_headers.insert(
+        "sec-ch-ua",
+        reqwest::header::HeaderValue::from_static(
+            "\"Chromium\";v=\"120\", \"Not?A_Brand\";v=\"99\"",
+        ),
+    );
+    default_headers.insert(
+        "sec-ch-ua-mobile",
+        reqwest::header::HeaderValue::from_static("?0"),
+    );
+    default_headers.insert(
+        "sec-ch-ua-platform",
+        reqwest::header::HeaderValue::from_static("\"Windows\""),
+    );
+    default_headers.insert(
+        reqwest::header::UPGRADE_INSECURE_REQUESTS,
+        reqwest::header::HeaderValue::from_static("1"),
+    );
 
-    // 若 304 或非成功，尝试多源重试（无 t 的 bmcl 下载、bmcl Maven、Forge 官方 Maven）
-    if response.status() == StatusCode::NOT_MODIFIED || !response.status().is_success() {
-        let mut tried_urls = vec![installer_url.clone()];
+    // 添加缓存控制头
+    default_headers.insert(
+        reqwest::header::CACHE_CONTROL,
+        reqwest::header::HeaderValue::from_static("no-cache"),
+    );
+    default_headers.insert(
+        reqwest::header::PRAGMA,
+        reqwest::header::HeaderValue::from_static("no-cache"),
+    );
 
-        // 1) 不带 t 的 bmcl 下载地址
-        let alt_url = format!(
-            "https://bmclapi2.bangbang93.com/forge/download/{}",
-            forge_version.build
-        );
-        tried_urls.push(alt_url.clone());
-        let mut retry = client
-            .get(&alt_url)
-            .header(reqwest::header::CACHE_CONTROL, "no-cache, no-store")
-            .header(reqwest::header::PRAGMA, "no-cache")
-            .send()
-            .await?;
-        if retry.status().is_success() && retry.status() != StatusCode::NOT_MODIFIED {
-            response = retry;
-        } else {
-            // 2) bmcl 镜像 Maven 路径
-            let maven_path = format!(
-                "{mc}-{ver}",
-                mc = forge_version.mcversion,
-                ver = forge_version.version
-            );
-            let bmcl_maven = format!(
-                "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/{path}/forge-{path}-installer.jar",
-                path = maven_path
-            );
-            tried_urls.push(bmcl_maven.clone());
-            retry = client
-                .get(&bmcl_maven)
-                .header(reqwest::header::CACHE_CONTROL, "no-cache, no-store")
-                .header(reqwest::header::PRAGMA, "no-cache")
-                .send()
-                .await?;
-            if retry.status().is_success() && retry.status() != StatusCode::NOT_MODIFIED {
-                response = retry;
-            } else {
-                // 3) Forge 官方 Maven
-                let forge_maven = format!(
-                    "https://maven.minecraftforge.net/net/minecraftforge/forge/{path}/forge-{path}-installer.jar",
-                    path = maven_path
+    // 构建更健壮的HTTP客户端，处理TLS连接问题
+    let client = Client::builder()
+        .default_headers(default_headers)
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .tcp_keepalive(Some(std::time::Duration::from_secs(60)))
+        .pool_idle_timeout(Some(std::time::Duration::from_secs(90)))
+        .https_only(false) // 允许HTTP回退
+        .http1_title_case_headers() // 使用标题大小写头部
+        .http1_allow_obsolete_multiline_headers_in_responses(true)
+        .build()
+        .map_err(|e| LauncherError::Custom(format!("创建HTTP客户端失败: {}", e)))?;
+
+    println!("Forge: 开始下载安装器: {}", installer_url);
+
+    // 初始请求也添加重试机制，处理网络连接问题
+    let mut response;
+    let mut initial_retry_count = 0;
+    let max_initial_retries = 3;
+    let mut tried_urls = vec![installer_url.clone()];
+    let mut current_url = installer_url.clone();
+
+    loop {
+        initial_retry_count += 1;
+        let result = client.get(&current_url).send().await;
+
+        match result {
+            Ok(resp) => {
+                response = resp;
+                println!("Forge: 安装器下载响应状态: {}", response.status());
+                break;
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                println!(
+                    "Forge: 初始请求第{}次失败: {}",
+                    initial_retry_count, error_msg
                 );
-                tried_urls.push(forge_maven.clone());
-                retry = client
-                    .get(&forge_maven)
-                    .header(reqwest::header::CACHE_CONTROL, "no-cache, no-store")
-                    .header(reqwest::header::PRAGMA, "no-cache")
-                    .send()
-                    .await?;
-                if retry.status().is_success() && retry.status() != StatusCode::NOT_MODIFIED {
-                    response = retry;
+
+                // 检查是否是网络连接问题
+                if error_msg.contains("error sending request")
+                    || error_msg.contains("connection")
+                    || error_msg.contains("dns")
+                {
+                    println!("Forge: 检测到网络连接问题，等待后重试");
+
+                    if initial_retry_count >= max_initial_retries {
+                        println!("Forge: bmclapi连接失败，回退到MinecraftForge官网下载");
+                        
+                        // 回退到Forge官方Maven下载
+                        let maven_path = format!(
+                            "{mc}-{ver}",
+                            mc = forge_version.mcversion,
+                            ver = forge_version.version
+                        );
+                        let forge_official_url = format!(
+                            "https://maven.minecraftforge.net/net/minecraftforge/forge/{path}/forge-{path}-installer.jar",
+                            path = maven_path
+                        );
+                        
+                        println!("Forge: 尝试官方源: {}", forge_official_url);
+                        tried_urls.push(forge_official_url.clone());
+                        
+                        // 重置重试计数并切换到官方源
+                        initial_retry_count = 0;
+                        current_url = forge_official_url;
+                        continue;
+                    }
+
+                    // 等待2秒后重试
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
                 } else {
+                    // 其他错误直接返回
                     return Err(LauncherError::Custom(format!(
-                        "下载Forge安装器失败: 多源均未成功（状态 {}）。尝试的 URL: {}",
-                        retry.status(),
-                        tried_urls.join(", ")
+                        "下载Forge安装器失败: {}",
+                        error_msg
                     )));
                 }
             }
         }
     }
 
-    // Add robust validation to ensure the download is a valid file
+    // 记录详细的响应头信息用于调试
+    println!("Forge: 响应头信息:");
+    for (name, value) in response.headers() {
+        let name_str = name.as_str();
+        if let Ok(value_str) = value.to_str() {
+            println!("  {}: {}", name_str, value_str);
+        }
+    }
+
+    // 处理重定向和失败重试逻辑
+    if response.status() == StatusCode::NOT_MODIFIED || !response.status().is_success() {
+        // tried_urls已经在前面初始化，包含初始URL和可能的回退URL
+        let mut current_response = response;
+
+        // 1) 首先检查是否是重定向响应，并对重定向后的URL进行多次重试
+        let mut redirect_processed = false;
+        if current_response.status().is_redirection() {
+            // 提前提取重定向URL，避免借用问题
+            let redirect_url =
+                if let Some(location) = current_response.headers().get(reqwest::header::LOCATION) {
+                    if let Ok(url) = location.to_str() {
+                        Some(url.to_string())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+            if let Some(redirect_url) = redirect_url {
+                println!("Forge: 检测到重定向到: {}", redirect_url);
+                tried_urls.push(redirect_url.clone());
+
+                // 对重定向后的URL进行最多5次重试，添加指数退避
+                for retry_count in 1..=5 {
+                    println!("Forge: 重定向URL重试第{}次", retry_count);
+
+                    // 添加重试延迟（指数退避）
+                    if retry_count > 1 {
+                        let delay_seconds = std::cmp::min(2u64.pow(retry_count as u32 - 1), 10);
+                        println!("Forge: 等待 {} 秒后重试", delay_seconds);
+                        tokio::time::sleep(std::time::Duration::from_secs(delay_seconds)).await;
+                    }
+
+                    let result = client
+                        .get(&redirect_url)
+                        .header(reqwest::header::CACHE_CONTROL, "no-cache, no-store")
+                        .header(reqwest::header::PRAGMA, "no-cache")
+                        .send()
+                        .await;
+
+                    match result {
+                        Ok(redirect_response) => {
+                            if redirect_response.status().is_success() {
+                                current_response = redirect_response;
+                                redirect_processed = true;
+                                println!("Forge: 重定向下载成功（第{}次重试）", retry_count);
+                                break;
+                            } else {
+                                let status = redirect_response.status();
+                                println!(
+                                    "Forge: 重定向URL第{}次重试失败，状态: {}",
+                                    retry_count, status
+                                );
+                                current_response = redirect_response;
+
+                                // 如果是502错误，特别处理
+                                if status == StatusCode::BAD_GATEWAY {
+                                    println!(
+                                        "Forge: 检测到502 Bad Gateway错误，可能需要等待服务器恢复"
+                                    );
+                                }
+
+                                // 如果是最后一次重试仍然失败，继续尝试其他源
+                                if retry_count == 5 {
+                                    println!("Forge: 重定向URL重试5次均失败，尝试其他下载源");
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let error_msg = e.to_string();
+                            println!(
+                                "Forge: 重定向URL第{}次重试网络错误: {}",
+                                retry_count, error_msg
+                            );
+
+                            // 检查是否是连接被重置的错误
+                            if error_msg.contains("forcibly closed by the remote host")
+                                || error_msg.contains("connection reset")
+                                || error_msg.contains("tls strategy failed")
+                            {
+                                println!("Forge: 检测到连接被重置或TLS失败，可能是服务器限制，等待后重试");
+                            }
+
+                            // 如果是最后一次重试仍然失败，继续尝试其他源
+                            if retry_count == 5 {
+                                println!("Forge: 重定向URL重试5次均失败，尝试其他下载源");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2) 如果重定向失败或不是重定向，尝试多源重试
+        if !redirect_processed && !current_response.status().is_success() {
+            let sources = vec![
+                // 源1: 标准bmcl下载地址（带重试）
+                format!(
+                    "https://bmclapi2.bangbang93.com/forge/download/{}",
+                    forge_version.build
+                ),
+                // 源2: bmcl Maven镜像
+                {
+                    let maven_path = format!(
+                        "{mc}-{ver}",
+                        mc = forge_version.mcversion,
+                        ver = forge_version.version
+                    );
+                    format!(
+                        "https://bmclapi2.bangbang93.com/maven/net/minecraftforge/forge/{path}/forge-{path}-installer.jar",
+                        path = maven_path
+                    )
+                },
+                // 源3: Forge官方Maven
+                {
+                    let maven_path = format!(
+                        "{mc}-{ver}",
+                        mc = forge_version.mcversion,
+                        ver = forge_version.version
+                    );
+                    format!(
+                        "https://maven.minecraftforge.net/net/minecraftforge/forge/{path}/forge-{path}-installer.jar",
+                        path = maven_path
+                    )
+                },
+                // 源4: 备用bmcl下载地址（不带时间戳）
+                format!(
+                    "https://bmclapi2.bangbang93.com/forge/download/{}?format=jar",
+                    forge_version.build
+                ),
+            ];
+
+            for (index, source_url) in sources.iter().enumerate() {
+                if tried_urls.contains(source_url) {
+                    continue; // 跳过已经尝试过的URL
+                }
+
+                println!("Forge: 尝试源 {}: {}", index + 1, source_url);
+                tried_urls.push(source_url.clone());
+
+                // 对每个源进行最多3次重试，添加指数退避
+                let mut retry_success = false;
+                for retry_count in 1..=3 {
+                    println!("Forge: 源 {} 第{}次重试", index + 1, retry_count);
+
+                    // 添加重试延迟（指数退避）
+                    if retry_count > 1 {
+                        let delay_seconds = std::cmp::min(2u64.pow(retry_count as u32 - 1), 8);
+                        println!("Forge: 等待 {} 秒后重试", delay_seconds);
+                        tokio::time::sleep(std::time::Duration::from_secs(delay_seconds)).await;
+                    }
+
+                    let result = client
+                        .get(source_url)
+                        .header(reqwest::header::CACHE_CONTROL, "no-cache, no-store")
+                        .header(reqwest::header::PRAGMA, "no-cache")
+                        .send()
+                        .await;
+
+                    match result {
+                        Ok(retry_response) => {
+                            // 验证响应内容是否为有效的JAR文件
+                            if retry_response.status().is_success() {
+                                // 检查Content-Type确保不是HTML页面
+                                if let Some(content_type) =
+                                    retry_response.headers().get(reqwest::header::CONTENT_TYPE)
+                                {
+                                    let content_type_str =
+                                        content_type.to_str().unwrap_or("").to_lowercase();
+                                    if content_type_str.contains("text/html")
+                                        || content_type_str.contains("application/json")
+                                    {
+                                        println!(
+                                            "Forge: 源 {} 返回了HTML/JSON内容，跳过",
+                                            index + 1
+                                        );
+                                        continue; // 继续下一次重试
+                                    }
+                                }
+
+                                // 检查Content-Length确保文件大小合理
+                                if let Some(content_length) = retry_response
+                                    .headers()
+                                    .get(reqwest::header::CONTENT_LENGTH)
+                                {
+                                    if let Ok(length_str) = content_length.to_str() {
+                                        if let Ok(file_size) = length_str.parse::<u64>() {
+                                            if file_size < 1024 {
+                                                println!(
+                                                    "Forge: 源 {} 文件大小异常（{}字节），跳过",
+                                                    index + 1,
+                                                    file_size
+                                                );
+                                                continue; // 继续下一次重试
+                                            }
+                                        }
+                                    }
+                                }
+
+                                current_response = retry_response;
+                                retry_success = true;
+                                println!(
+                                    "Forge: 源 {} 下载成功（第{}次重试）",
+                                    index + 1,
+                                    retry_count
+                                );
+                                break;
+                            } else {
+                                let status = retry_response.status();
+                                println!(
+                                    "Forge: 源 {} 第{}次重试失败，状态: {}",
+                                    index + 1,
+                                    retry_count,
+                                    status
+                                );
+                                current_response = retry_response;
+
+                                // 如果是502错误，特别处理
+                                if status == StatusCode::BAD_GATEWAY {
+                                    println!(
+                                        "Forge: 检测到502 Bad Gateway错误，可能需要等待服务器恢复"
+                                    );
+                                }
+
+                                // 如果是最后一次重试仍然失败，继续尝试下一个源
+                                if retry_count == 3 {
+                                    println!("Forge: 源 {} 重试3次均失败，尝试下一个源", index + 1);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let error_msg = e.to_string();
+                            println!(
+                                "Forge: 源 {} 第{}次重试网络错误: {}",
+                                index + 1,
+                                retry_count,
+                                error_msg
+                            );
+
+                            // 检查是否是连接被重置的错误
+                            if error_msg.contains("forcibly closed by the remote host")
+                                || error_msg.contains("connection reset")
+                                || error_msg.contains("tls strategy failed")
+                            {
+                                println!("Forge: 检测到连接被重置或TLS失败，可能是服务器限制");
+                            }
+
+                            // 如果是最后一次重试仍然失败，继续尝试下一个源
+                            if retry_count == 3 {
+                                println!("Forge: 源 {} 重试3次均失败，尝试下一个源", index + 1);
+                            }
+                        }
+                    }
+                }
+
+                if retry_success {
+                    break;
+                }
+            }
+        }
+
+        // 3) 如果所有源都失败，返回详细错误信息
+        if !current_response.status().is_success() {
+            cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
+            return Err(LauncherError::Custom(format!(
+                "下载Forge安装器失败: 最终状态 {}。已尝试的URL: {}",
+                current_response.status(),
+                tried_urls.join(", ")
+            )));
+        }
+
+        // 更新最终的response变量
+        response = current_response;
+    }
+
+    // 验证下载的文件内容
     if !response.status().is_success() {
+        cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
         return Err(LauncherError::Custom(format!(
             "下载Forge安装器失败: 服务器返回错误状态 {}。已尝试 bmcl 下载与 Maven 源。",
             response.status()
         )));
     }
 
+    // 检查响应头确保是有效的JAR文件
     if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
-        if content_type.to_str().unwrap_or("").contains("text/html") {
+        let content_type_str = content_type.to_str().unwrap_or("").to_lowercase();
+        if content_type_str.contains("text/html") || content_type_str.contains("application/json") {
+            cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
             return Err(LauncherError::Custom(format!(
-                "下载Forge安装器失败: 期望获取一个文件，但服务器返回了一个HTML页面。请检查URL是否正确: {}",
-                installer_url
+                "下载Forge安装器失败: 期望获取JAR文件，但服务器返回了{}内容。URL: {}",
+                content_type_str, current_url
             )));
         }
     }
 
+    // 检查文件大小
+    if let Some(content_length) = response.headers().get(reqwest::header::CONTENT_LENGTH) {
+        if let Ok(length_str) = content_length.to_str() {
+            if let Ok(file_size) = length_str.parse::<u64>() {
+                if file_size < 1024 {
+                    cleanup_installation(
+                        &instance_path,
+                        &game_dir,
+                        &forge_version,
+                        &installer_path,
+                    );
+                    return Err(LauncherError::Custom(format!(
+                        "下载Forge安装器失败: 文件大小异常（{}字节），可能下载了错误文件",
+                        file_size
+                    )));
+                }
+                println!("Forge: 安装器文件大小: {} 字节", file_size);
+            }
+        }
+    }
+
     let installer_bytes = response.bytes().await?;
-    fs::write(&installer_path, installer_bytes)?;
-    println!("Forge: 安装器已保存到: {}", installer_path.display());
+
+    // 验证下载的字节是否为有效的JAR文件（检查ZIP文件头）
+    if installer_bytes.len() >= 4 {
+        let header = &installer_bytes[0..4];
+        if header != [0x50, 0x4B, 0x03, 0x04] {
+            // ZIP文件头
+            cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
+            return Err(LauncherError::Custom(
+                "下载Forge安装器失败: 文件不是有效的JAR/ZIP格式".to_string(),
+            ));
+        }
+    } else {
+        cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
+        return Err(LauncherError::Custom(
+            "下载Forge安装器失败: 文件大小过小，无法验证格式".to_string(),
+        ));
+    }
+
+    fs::write(&installer_path, &installer_bytes)?;
+    println!(
+        "Forge: 安装器已保存到: {} ({} 字节)",
+        installer_path.display(),
+        installer_bytes.len()
+    );
 
     // 3. Run the installer（设置工作目录为全局游戏目录，打印日志并捕获详细输出）
-    let game_dir = std::path::PathBuf::from(&app_config.game_dir);
     println!("Forge: Java路径: {}", java_path);
     println!("Forge: 工作目录: {}", game_dir.display());
     println!("Forge: 安装器路径: {}", installer_path.display());
+    println!("Forge: 实例目录: {}", instance_path.display());
 
     // 在游戏目录创建占位的 launcher_profiles.json（若不存在），满足 Forge 安装器检查
     let launcher_profiles = game_dir.join("launcher_profiles.json");
@@ -396,12 +783,16 @@ pub async fn install_forge(
 
     // 尝试方式 A：新版本 Forge 安装器（使用 --installClient）
     println!("Forge: 尝试使用新版本安装方式（--installClient）");
-    let output = Command::new(&java_path)
-        .current_dir(&game_dir)
+    let mut cmd = Command::new(&java_path);
+    cmd.current_dir(&game_dir)
         .arg("-jar")
         .arg(&installer_path)
-        .arg("--installClient")
-        .output()?;
+        .arg("--installClient");
+    
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    
+    let output = cmd.output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -416,14 +807,18 @@ pub async fn install_forge(
 
         // 尝试方式 B1：旧版本 Forge 安装器（使用 headless 模式 + --installClient 目录）
         println!("Forge: 尝试使用 headless 模式 + --installClient 目录参数");
-        let mut output_old = Command::new(&java_path)
-            .current_dir(&game_dir)
+        let mut cmd_old = Command::new(&java_path);
+        cmd_old.current_dir(&game_dir)
             .arg("-Djava.awt.headless=true")
             .arg("-jar")
             .arg(&installer_path)
             .arg("--installClient")
-            .arg(game_dir.to_str().unwrap_or("."))
-            .output()?;
+            .arg(game_dir.to_str().unwrap_or("."));
+        
+        #[cfg(windows)]
+        cmd_old.creation_flags(CREATE_NO_WINDOW);
+        
+        let mut output_old = cmd_old.output()?;
 
         let mut stdout_old = String::from_utf8_lossy(&output_old.stdout)
             .trim()
@@ -438,12 +833,16 @@ pub async fn install_forge(
                 || stderr_old.contains("UnrecognizedOptionException"))
         {
             println!("Forge: 尝试使用 headless 模式（无参数）");
-            output_old = Command::new(&java_path)
-                .current_dir(&game_dir)
+            let mut cmd_old2 = Command::new(&java_path);
+            cmd_old2.current_dir(&game_dir)
                 .arg("-Djava.awt.headless=true")
                 .arg("-jar")
-                .arg(&installer_path)
-                .output()?;
+                .arg(&installer_path);
+            
+            #[cfg(windows)]
+            cmd_old2.creation_flags(CREATE_NO_WINDOW);
+            
+            output_old = cmd_old2.output()?;
 
             stdout_old = String::from_utf8_lossy(&output_old.stdout)
                 .trim()
@@ -474,8 +873,8 @@ pub async fn install_forge(
                 "Forge: 旧版本安装器执行失败\nstdout:\n{}\nstderr:\n{}",
                 stdout_old, stderr_old
             );
-            // Clean up the installer file before returning the error
-            let _ = fs::remove_file(&installer_path);
+            // Clean up the installer file and installation artifacts before returning the error
+            cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
             return Err(LauncherError::Custom(format!(
                 "Forge安装失败（旧版本安装器）。Java路径: {}。stdout: {}。stderr: {}",
                 java_path,
@@ -522,5 +921,78 @@ pub async fn install_forge(
     // 4. Clean up the installer file
     fs::remove_file(&installer_path)?;
 
+    // 5. 安装成功后清理版本文件夹（高版本Forge不需要这些文件夹）
+    let version_id = format!(
+        "{}-forge-{}",
+        forge_version.mcversion, forge_version.version
+    );
+    let version_dir = game_dir.join("versions").join(&version_id);
+
+    if version_dir.exists() {
+        println!("Forge: 安装成功，清理版本文件夹: {}", version_dir.display());
+        if let Err(e) = fs::remove_dir_all(&version_dir) {
+            println!("Forge: 清理版本文件夹失败: {}，但安装继续", e);
+        } else {
+            println!("Forge: 版本文件夹清理完成");
+        }
+    }
+
+    // 6. 清理临时安装器文件（确保即使前面的清理失败也继续清理）
+    if installer_path.exists() {
+        if let Err(e) = fs::remove_file(&installer_path) {
+            println!("Forge: 清理安装器文件失败: {}，但安装继续", e);
+        } else {
+            println!("Forge: 临时安装器文件清理完成");
+        }
+    }
+
     Ok(())
+}
+
+/// 清理安装过程中创建的文件和目录
+fn cleanup_installation(
+    instance_path: &PathBuf,
+    game_dir: &PathBuf,
+    forge_version: &ForgeVersion,
+    installer_path: &PathBuf,
+) {
+    println!("Forge: 开始清理安装过程中的文件和目录");
+
+    // 1. 清理版本文件夹
+    let version_id = format!(
+        "{}-forge-{}",
+        forge_version.mcversion, forge_version.version
+    );
+    let version_dir = game_dir.join("versions").join(&version_id);
+
+    if version_dir.exists() {
+        println!("Forge: 清理版本文件夹: {}", version_dir.display());
+        if let Err(e) = fs::remove_dir_all(&version_dir) {
+            println!("Forge: 清理版本文件夹失败: {}", e);
+        } else {
+            println!("Forge: 版本文件夹清理完成");
+        }
+    }
+
+    // 2. 清理实例目录（如果创建了）
+    if instance_path.exists() {
+        println!("Forge: 清理实例目录: {}", instance_path.display());
+        if let Err(e) = fs::remove_dir_all(instance_path) {
+            println!("Forge: 清理实例目录失败: {}", e);
+        } else {
+            println!("Forge: 实例目录清理完成");
+        }
+    }
+
+    // 3. 清理临时安装器文件
+    if installer_path.exists() {
+        println!("Forge: 清理临时安装器文件: {}", installer_path.display());
+        if let Err(e) = fs::remove_file(installer_path) {
+            println!("Forge: 清理安装器文件失败: {}", e);
+        } else {
+            println!("Forge: 临时安装器文件清理完成");
+        }
+    }
+
+    println!("Forge: 清理完成");
 }

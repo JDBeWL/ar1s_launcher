@@ -152,7 +152,7 @@ watch(username, (newName) => {
     <v-row>
       <!-- 将游戏设置（用户账号）移到左侧列的顶部 -->
       <v-col cols="12" md="8">
-        <v-card class="mt-4">
+        <v-card>
           <v-card-title>游戏设置</v-card-title>
           <v-card-text>
             

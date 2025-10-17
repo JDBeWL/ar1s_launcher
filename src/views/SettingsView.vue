@@ -150,7 +150,7 @@ onMounted(async () => {
 <template>
   <v-container>
     <v-card>
-      <v-card-title>设置</v-card-title>
+      <v-card-title class="mt-2">设置</v-card-title>
       <v-card-text>
         <v-text-field
           v-model="gameDir"
@@ -163,6 +163,7 @@ onMounted(async () => {
         <v-switch
           v-model="versionIsolation"
           label="版本隔离"
+          color="primary"
         ></v-switch>
 
         <v-row align="center">

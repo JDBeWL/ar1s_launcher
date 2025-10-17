@@ -4,6 +4,54 @@ use crate::services::{config, download, forge};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
+use serde::Serialize;
+use tauri::Emitter;
+
+#[derive(Clone, Serialize)]
+struct InstallProgress {
+    progress: u8,
+    message: String,
+    indeterminate: bool,
+}
+
+/// 清理实例创建过程中创建的文件和目录
+fn cleanup_instance_creation(
+    game_dir: &PathBuf,
+    instance_name: &str,
+    _base_version_id: &str,
+) {
+    println!("Instance: 开始清理实例创建过程中的文件和目录");
+
+    // 1. 清理实例目录
+    let instance_dir = game_dir.join("versions").join(instance_name);
+    if instance_dir.exists() {
+        println!("Instance: 清理实例目录: {}", instance_dir.display());
+        if let Err(e) = fs::remove_dir_all(&instance_dir) {
+            println!("Instance: 清理实例目录失败: {}", e);
+        } else {
+            println!("Instance: 实例目录清理完成");
+        }
+    }
+
+    // 2. 清理可能创建的临时文件
+    let instance_json = game_dir.join("versions").join(instance_name).join(format!("{}.json", instance_name));
+    if instance_json.exists() {
+        println!("Instance: 清理实例JSON文件: {}", instance_json.display());
+        if let Err(e) = fs::remove_file(&instance_json) {
+            println!("Instance: 清理实例JSON文件失败: {}", e);
+        }
+    }
+
+    let instance_jar = game_dir.join("versions").join(instance_name).join(format!("{}.jar", instance_name));
+    if instance_jar.exists() {
+        println!("Instance: 清理实例JAR文件: {}", instance_jar.display());
+        if let Err(e) = fs::remove_file(&instance_jar) {
+            println!("Instance: 清理实例JAR文件失败: {}", e);
+        }
+    }
+
+    println!("Instance: 清理完成");
+}
 
 // Helper function to copy a directory recursively
 fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), std::io::Error> {
@@ -33,6 +81,15 @@ pub async fn create_instance(
     let source_dir = versions_dir.join(&base_version_id);
     let dest_dir = versions_dir.join(&new_instance_name);
 
+    // 发送进度更新
+    let send_progress = |progress: u8, message: &str, indeterminate: bool| {
+        let _ = window.emit("instance-install-progress", InstallProgress {
+            progress,
+            message: message.to_string(),
+            indeterminate,
+        });
+    };
+
     // 1. Check if the destination instance name already exists
     if dest_dir.exists() {
         return Err(LauncherError::Custom(format!(
@@ -41,46 +98,95 @@ pub async fn create_instance(
         )));
     }
 
+    send_progress(5, "检查基础版本...", false);
+
     // 2. Check if the base version exists, if not, download it.
     if !source_dir.exists() {
-        download::process_and_download_version(base_version_id.clone(), config.download_mirror.clone(), window).await?;
+        send_progress(10, "下载基础版本...", true);
+        if let Err(e) = download::process_and_download_version(base_version_id.clone(), config.download_mirror.clone(), window).await {
+            // 基础版本下载失败，此时实例目录尚未创建，不需要清理
+            return Err(e);
+        }
     }
     
     if !source_dir.exists() {
+        // 基础版本下载失败，此时实例目录尚未创建，不需要清理
         return Err(LauncherError::Custom(format!(
             "基础版本 '{}' 下载失败或未找到.",
             base_version_id
         )));
     }
 
+    send_progress(30, "复制基础文件...", false);
+    
     // 3. Copy the entire directory
-    copy_dir_all(&source_dir, &dest_dir)?;
+    if let Err(e) = copy_dir_all(&source_dir, &dest_dir) {
+        cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+        return Err(e.into());
+    }
 
+    send_progress(40, "重命名配置文件...", false);
+    
     // 4. Rename the .json and .jar files
     let old_json_path = dest_dir.join(format!("{}.json", base_version_id));
     let new_json_path = dest_dir.join(format!("{}.json", new_instance_name));
-    fs::rename(&old_json_path, &new_json_path)?;
+    if let Err(e) = fs::rename(&old_json_path, &new_json_path) {
+        cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+        return Err(e.into());
+    }
 
     let old_jar_path = dest_dir.join(format!("{}.jar", base_version_id));
     if old_jar_path.exists() {
         let new_jar_path = dest_dir.join(format!("{}.jar", new_instance_name));
-        fs::rename(&old_jar_path, &new_jar_path)?;
+        if let Err(e) = fs::rename(&old_jar_path, &new_jar_path) {
+            cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+            return Err(e.into());
+        }
     }
 
+    send_progress(50, "更新配置文件...", false);
+    
     // 5. Modify the 'id' field in the new JSON file
-    let json_str = fs::read_to_string(&new_json_path)?;
-    let mut json: Value = serde_json::from_str(&json_str)?;
+    let json_str = match fs::read_to_string(&new_json_path) {
+        Ok(s) => s,
+        Err(e) => {
+            cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+            return Err(e.into());
+        }
+    };
+    
+    let mut json: Value = match serde_json::from_str(&json_str) {
+        Ok(j) => j,
+        Err(e) => {
+            cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+            return Err(e.into());
+        }
+    };
 
     if let Some(id_field) = json.get_mut("id") {
         *id_field = Value::String(new_instance_name.clone());
     }
 
-    let modified_json_str = serde_json::to_string_pretty(&json)?;
-    fs::write(&new_json_path, modified_json_str)?;
+    let modified_json_str = match serde_json::to_string_pretty(&json) {
+        Ok(s) => s,
+        Err(e) => {
+            cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+            return Err(e.into());
+        }
+    };
+    
+    if let Err(e) = fs::write(&new_json_path, modified_json_str) {
+        cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+        return Err(e.into());
+    }
 
     // 6. Install Forge if requested
     if let Some(forge_version) = forge_version {
-        forge::install_forge(dest_dir.clone(), forge_version.clone()).await?;
+        send_progress(60, "安装Forge加载器...", true);
+        if let Err(e) = forge::install_forge(dest_dir.clone(), forge_version.clone()).await {
+            cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+            return Err(e);
+        }
 
         // After Forge installer runs it usually creates a version entry like
         // `{mcversion}-forge-{forge_version}` under game_dir/versions.
@@ -127,10 +233,34 @@ pub async fn create_instance(
         let instance_json_path = dest_dir.join(format!("{}.json", new_instance_name));
 
         if forge_json_path.exists() && base_json_path.exists() {
-            let base_str = fs::read_to_string(&base_json_path)?;
-            let forge_str = fs::read_to_string(&forge_json_path)?;
-            let base_json: Value = serde_json::from_str(&base_str)?;
-            let forge_json: Value = serde_json::from_str(&forge_str)?;
+            let base_str = match fs::read_to_string(&base_json_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                    return Err(e.into());
+                }
+            };
+            let forge_str = match fs::read_to_string(&forge_json_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                    return Err(e.into());
+                }
+            };
+            let base_json: Value = match serde_json::from_str(&base_str) {
+                Ok(j) => j,
+                Err(e) => {
+                    cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                    return Err(e.into());
+                }
+            };
+            let forge_json: Value = match serde_json::from_str(&forge_str) {
+                Ok(j) => j,
+                Err(e) => {
+                    cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                    return Err(e.into());
+                }
+            };
 
             // Start merged as forge_json, then fill missing fields from base_json
             let mut merged = forge_json.clone();
@@ -213,8 +343,17 @@ pub async fn create_instance(
             }
 
             // Finally, write merged json to instance json path
-            let merged_str = serde_json::to_string_pretty(&merged)?;
-            fs::write(&instance_json_path, merged_str)?;
+            let merged_str = match serde_json::to_string_pretty(&merged) {
+                Ok(s) => s,
+                Err(e) => {
+                    cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                    return Err(e.into());
+                }
+            };
+            if let Err(e) = fs::write(&instance_json_path, merged_str) {
+                cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                return Err(e.into());
+            }
 
             // After writing merged JSON, ensure required files (client, libraries, natives, assets) are downloaded
             // Build download jobs from merged manifest and run download_all_files
@@ -389,6 +528,7 @@ pub async fn create_instance(
 
                 // Finally run download for remaining jobs (libraries, client, assets objects)
                 if !jobs.is_empty() {
+                    send_progress(70, "下载游戏文件...", true);
                     let _ = download::download_all_files(jobs.clone(), window, jobs.len() as u64, config.download_mirror.clone()).await;
                 }
             }
@@ -398,5 +538,7 @@ pub async fn create_instance(
         }
     }
 
+    send_progress(100, "安装完成！", false);
+    
     Ok(())
 }
