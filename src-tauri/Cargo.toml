@@ -44,4 +44,5 @@ directories = "4"
 lazy_static = "1"
 regex = "1"
 sysinfo = "0.30.13"
+opener = "0.6"
 

@@ -150,28 +150,16 @@ watch(username, (newName) => {
 <template>
   <v-container>
     <v-row>
-      <!-- 将游戏设置（用户账号）移到左侧列的顶部 -->
-      <v-col cols="12" md="8">
-        <v-card>
-          <v-card-title>游戏设置</v-card-title>
-          <v-card-text>
-            
-            <v-text-field
-              v-model="username"
-              label="用户名"
-            ></v-text-field>
-
-
-            <v-switch
-              v-model="offlineMode"
-              label="离线模式"
-            ></v-switch>
-          </v-card-text>
-        </v-card>
-
+      <!-- 左侧：版本选择和设置区域 -->
+      <v-col cols="12" md="7" lg="8">
         <!-- 版本选择卡片 -->
-        <v-card class="mt-4">
-          <v-card-title>版本选择</v-card-title>
+        <v-card class="mb-4">
+          <v-card-title class="d-flex align-center">
+            <v-icon start>mdi-play-circle</v-icon>
+            版本选择
+            <v-spacer></v-spacer>
+            <v-btn variant="text" icon="mdi-refresh" @click="loadInstalledVersions" :loading="loading"></v-btn>
+          </v-card-title>
           <v-card-text>
             <v-select
               v-model="selectedVersion"
@@ -188,44 +176,61 @@ watch(username, (newName) => {
               class="mb-4"
               closable
             >
-              <p>检测到以下文件缺失，请前往下载页面下载：</p>
-              <ul>
-                <li v-for="file in missingFiles" :key="file">{{ file }}</li>
-              </ul>
+              <div class="d-flex align-center">
+                <span>检测到游戏文件缺失，请前往下载页面下载</span>
+              </div>
             </v-alert>
 
-            <div class="d-flex justify-end mt-2">
+            <div class="d-flex justify-end">
               <v-btn
-                size="small"
-                variant="text"
-                color="primary"
-                prepend-icon="mdi-refresh"
-                @click="loadInstalledVersions"
-                :loading="loading"
-              >
-                刷新版本列表
-              </v-btn>
-              
-              <v-btn
-                size="small"
                 variant="text"
                 color="primary"
                 prepend-icon="mdi-download"
                 to="/download"
-                class="ml-2"
+                size="small"
               >
                 下载新版本
               </v-btn>
             </div>
           </v-card-text>
         </v-card>
+
+        <!-- 游戏设置卡片 -->
+        <v-card>
+          <v-card-title>
+            <v-icon start>mdi-cog</v-icon>
+            游戏设置
+          </v-card-title>
+          <v-card-text>
+            <v-row>
+              <v-col cols="12" sm="6">
+                <v-text-field
+                  v-model="username"
+                  label="用户名"
+                  hide-details
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" sm="6">
+                <v-switch
+                  v-model="offlineMode"
+                  label="离线模式"
+                  color="primary"
+                  hide-details
+                ></v-switch>
+              </v-col>
+            </v-row>
+          </v-card-text>
+        </v-card>
       </v-col>
 
-      <!-- 启动游戏按钮保持在右侧 -->
-      <v-col cols="12" md="4">
-        <v-card>
-          <v-card-title>启动游戏</v-card-title>
-          <v-card-text>
+      <!-- 右侧：启动游戏和快速导航 -->
+      <v-col cols="12" md="5" lg="4">
+        <!-- 启动游戏卡片 -->
+        <v-card class="mb-4">
+          <v-card-title class="text-center">
+            启动游戏
+          </v-card-title>
+          <v-card-text class="text-center">
             <v-btn
               block
               color="primary"
@@ -233,12 +238,59 @@ watch(username, (newName) => {
               :loading="loading"
               :disabled="!selectedVersion || missingFiles.length > 0"
               @click="launchGame"
+              class="mb-2"
             >
+              <v-icon start>mdi-play</v-icon>
               启动 Minecraft
             </v-btn>
+            
+            <div class="text-caption text-medium-emphasis">
+              <v-icon size="16" class="mr-1">mdi-information</v-icon>
+              {{ !selectedVersion ? '请先选择游戏版本' : missingFiles.length > 0 ? '需要下载缺失文件' : '准备就绪' }}
+            </div>
+          </v-card-text>
+        </v-card>
+
+        <!-- 快速导航卡片 -->
+        <v-card>
+          <v-card-title>快速导航</v-card-title>
+          <v-card-text>
+            <v-list density="compact">
+              <v-list-item to="/add-instance" prepend-icon="mdi-plus">
+                <v-list-item-title>添加实例</v-list-item-title>
+              </v-list-item>
+              <v-list-item to="/instance-manager" prepend-icon="mdi-folder">
+                <v-list-item-title>实例管理</v-list-item-title>
+              </v-list-item>
+              <v-list-item to="/download" prepend-icon="mdi-download">
+                <v-list-item-title>下载中心</v-list-item-title>
+              </v-list-item>
+            </v-list>
           </v-card-text>
         </v-card>
       </v-col>
     </v-row>
   </v-container>
 </template>
+
+<style scoped>
+/* 响应式布局调整 */
+@media (max-width: 960px) {
+  .v-container {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 800px) {
+  .v-col-md-5,
+  .v-col-md-7 {
+    flex: 0 0 100%;
+    max-width: 100%;
+  }
+}
+
+/* 深色模式适配 */
+:deep(.v-theme--dark) .v-card {
+  background-color: #1e1e1e;
+}
+</style>

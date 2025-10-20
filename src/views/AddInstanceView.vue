@@ -1,103 +1,105 @@
 <template>
-    <v-container fluid>
-        <v-row justify="center">
-            <v-col cols="12" md="5" lg="8">
-                <v-card>
-                    <v-card-title class="mt-2">添加新实例</v-card-title>
-                    <v-card-text>
-                        <!-- 安装方式选择 -->
-                        <v-row class="mb-4">
-                            <v-col cols="12" class="d-flex align-center">
-                                <div class="d-flex align-center" style="width: 100%;">
-                                    <div class="install-type-tab flex-grow-1 text-center py-3 cursor-pointer"
-                                        :class="{ 'install-type-active': installType === 'custom' }"
-                                        @click="installType = 'custom'">
-                                        自定义安装
-                                    </div>
-                                    <div class="install-type-divider"></div>
-                                    <div class="install-type-tab flex-grow-1 text-center py-3 cursor-pointer"
-                                        :class="{ 'install-type-active': installType === 'online' }"
-                                        @click="installType = 'online'">
-                                        从互联网安装
-                                    </div>
-                                </div>
-                            </v-col>
-                        </v-row>
-
-                        <!-- 自定义安装内容 -->
-                        <div v-if="installType === 'custom'">
-                            <v-row>
-                                <v-col cols="12">
-                                    <v-text-field v-model="instanceName" label="实例名称" :placeholder="defaultInstanceName"
-                                        hide-details></v-text-field>
-                                </v-col>
-                            </v-row>
-
-                            <!-- 搜索游戏版本 -->
-                            <v-row no-gutters class="align-center mt-4 mb-4">
-                                <v-col class="flex-grow-1 pr-2">
-                                    <v-text-field v-model="searchVersion" label="搜索版本" prepend-inner-icon="mdi-magnify"
-                                        clearable hide-details></v-text-field>
-                                </v-col>
-                                <v-col class="shrink" style="max-width: 150px;">
-                                    <v-select v-model="versionTypeFilter" label="版本类型" :items="versionTypes"
-                                        hide-details></v-select>
-                                </v-col>
-                            </v-row>
-
-                            <!-- 游戏版本和Mod加载器选择 -->
-                            <v-row no-gutters class="align-center mb-4">
-                                <v-col class="shrink pr-2" style="max-width: 200px;">
-                                    <v-select v-model="selectedVersion" :items="filteredVersions" item-title="id"
-                                        item-value="id" label="游戏版本" :loading="loadingVersions" hide-details
-                                        return-object></v-select>
-                                </v-col>
-                                <v-col class="shrink pr-2" style="max-width: 200px;">
-                                    <v-select v-model="selectedModLoaderType" :items="modLoaderTypes" label="Mod加载器"
-                                        :disabled="!selectedVersion" hide-details></v-select>
-                                </v-col>
-                                <v-col class="shrink" style="max-width: 700px;">
-                                    <v-select v-model="selectedModLoaderVersion" :items="modLoaderVersions"
-                                        item-title="version" item-value="version" label="Mod加载器版本"
-                                        :loading="loadingModLoaderVersions"
-                                        :disabled="!selectedModLoaderType || selectedModLoaderType === 'None'"
-                                        placeholder="请先选择Mod加载器" hide-details return-object></v-select>
-                                </v-col>
-                            </v-row>
-
-                            <!-- 进度条 -->
-                            <v-row v-if="showProgress" class="mt-4">
-                                <v-col cols="12">
-                                    <div class="d-flex align-center justify-space-between mb-2">
-                                        <span class="text-caption">{{ progressText }}</span>
-                                        <span class="text-caption font-weight-medium">{{ progressValue }}%</span>
-                                    </div>
-                                    <v-progress-linear v-model="progressValue" color="primary" height="8"
-                                        :indeterminate="progressIndeterminate"></v-progress-linear>
-                                </v-col>
-                            </v-row>
-
-                            <!-- 开始安装按钮 -->
-                            <v-row class="mt-4">
-                                <v-col cols="12" class="text-right">
-                                    <v-btn color="primary" size="large" @click="createInstance"
-                                        :disabled="!selectedVersion || installing" :loading="installing">
-                                        开始安装
-                                    </v-btn>
-                                </v-col>
-                            </v-row>
+    <v-container>
+        <v-card>
+            <v-card-title class="d-flex mt-2 align-center">
+                添加新实例
+            </v-card-title>
+            <v-card-text>
+                <!-- 安装方式选择 -->
+                <v-row class="mb-4">
+                    <v-col cols="12" class="d-flex align-center">
+                        <div class="d-flex align-center" style="width: 100%;">
+                            <div class="install-type-tab flex-grow-1 text-center py-3 cursor-pointer"
+                                :class="{ 'install-type-active': installType === 'custom' }"
+                                @click="installType = 'custom'">
+                                自定义安装
+                            </div>
+                            <div class="install-type-divider"></div>
+                            <div class="install-type-tab flex-grow-1 text-center py-3 cursor-pointer"
+                                :class="{ 'install-type-active': installType === 'online' }"
+                                @click="installType = 'online'">
+                                从互联网安装
+                            </div>
                         </div>
+                    </v-col>
+                </v-row>
 
-                        <!-- 从互联网安装内容 -->
-                        <div v-if="installType === 'online'">
-                            <v-alert type="info" class="mb-4">
-                                从互联网安装功能正在开发中...
-                            </v-alert>
-                        </div>
-                    </v-card-text>
-                </v-card>
-            </v-col>
-        </v-row>
+                <!-- 自定义安装内容 -->
+                <div v-if="installType === 'custom'">
+                    <v-row>
+                        <v-col cols="12">
+                            <v-text-field v-model="instanceName" label="实例名称" :placeholder="defaultInstanceName"
+                                hide-details></v-text-field>
+                        </v-col>
+                    </v-row>
+
+                    <!-- 搜索游戏版本 -->
+                    <v-row no-gutters class="align-center mt-4 mb-4">
+                        <v-col class="flex-grow-1 pr-2">
+                            <v-text-field v-model="searchVersion" label="搜索版本" prepend-inner-icon="mdi-magnify"
+                                clearable hide-details></v-text-field>
+                        </v-col>
+                        <v-col class="shrink pr-2" style="max-width: 150px;">
+                            <v-select v-model="versionTypeFilter" label="版本类型" :items="versionTypes"
+                                hide-details></v-select>
+                        </v-col>
+                        <v-col class="shrink" style="max-width: 180px;">
+                            <v-select v-model="sortOrder" label="排序方式" :items="sortOptions"
+                                hide-details></v-select>
+                        </v-col>
+                    </v-row>
+
+                    <!-- 游戏版本和Mod加载器选择 -->
+                    <v-row no-gutters class="align-center mb-4">
+                        <v-col class="shrink pr-2" style="max-width: 200px;">
+                            <v-select v-model="selectedVersion" :items="filteredVersions" item-title="id"
+                                item-value="id" label="游戏版本" :loading="loadingVersions" hide-details
+                                return-object></v-select>
+                        </v-col>
+                        <v-col class="shrink pr-2" style="max-width: 200px;">
+                            <v-select v-model="selectedModLoaderType" :items="modLoaderTypes" label="Mod加载器"
+                                :disabled="!selectedVersion" hide-details></v-select>
+                        </v-col>
+                        <v-col class="shrink" style="max-width: 1000px;">
+                            <v-select v-model="selectedModLoaderVersion" :items="modLoaderVersions"
+                                item-title="version" item-value="version" label="Mod加载器版本"
+                                :loading="loadingModLoaderVersions"
+                                :disabled="!selectedModLoaderType || selectedModLoaderType === 'None'"
+                                placeholder="请先选择Mod加载器" hide-details return-object></v-select>
+                        </v-col>
+                    </v-row>
+
+                    <!-- 进度条 -->
+                    <v-row v-if="showProgress" class="mt-4">
+                        <v-col cols="12">
+                            <div class="d-flex align-center justify-space-between mb-2">
+                                <span class="text-caption">{{ progressText }}</span>
+                                <span class="text-caption font-weight-medium">{{ progressValue }}%</span>
+                            </div>
+                            <v-progress-linear v-model="progressValue" color="primary" height="8"
+                                :indeterminate="progressIndeterminate"></v-progress-linear>
+                        </v-col>
+                    </v-row>
+
+                    <!-- 开始安装按钮 -->
+                    <v-row class="mt-4">
+                        <v-col cols="12" class="text-right">
+                            <v-btn color="primary" size="large" @click="createInstance"
+                                :disabled="!selectedVersion || installing" :loading="installing">
+                                开始安装
+                            </v-btn>
+                        </v-col>
+                    </v-row>
+                </div>
+
+                <!-- 从互联网安装内容 -->
+                <div v-if="installType === 'online'">
+                    <v-alert type="info" class="mb-4">
+                        从互联网安装功能正在开发中...
+                    </v-alert>
+                </div>
+            </v-card-text>
+        </v-card>
     </v-container>
 </template>
 
@@ -121,11 +123,19 @@ const loadingVersions = ref(false);
 const selectedVersion = ref<MinecraftVersion | null>(null);
 const searchVersion = ref('');
 const versionTypeFilter = ref('release');
+const sortOrder = ref('newest');
 
 const versionTypes = [
     { title: '正式版', value: 'release' },
     { title: '快照版', value: 'snapshot' },
     { title: '全部', value: 'all' }
+];
+
+const sortOptions = [
+    { title: '最新优先', value: 'newest' },
+    { title: '最旧优先', value: 'oldest' },
+    { title: 'A-Z', value: 'az' },
+    { title: 'Z-A', value: 'za' }
 ];
 
 const instanceName = ref('');
@@ -143,11 +153,23 @@ const loadingModLoaderVersions = ref(false);
 const selectedModLoaderVersion = ref<string | null>(null);
 
 const filteredVersions = computed(() => {
-    return versions.value.filter(version => {
+    let filtered = versions.value.filter(version => {
         const typeMatch = versionTypeFilter.value === 'all' || version.type === versionTypeFilter.value;
         const searchMatch = !searchVersion.value || version.id.toLowerCase().includes(searchVersion.value.toLowerCase());
         return typeMatch && searchMatch;
     });
+
+    if (sortOrder.value === 'newest') {
+        filtered.sort((a, b) => new Date(b.releaseTime).getTime() - new Date(a.releaseTime).getTime());
+    } else if (sortOrder.value === 'oldest') {
+        filtered.sort((a, b) => new Date(a.releaseTime).getTime() - new Date(b.releaseTime).getTime());
+    } else if (sortOrder.value === 'az') {
+        filtered.sort((a, b) => a.id.localeCompare(b.id));
+    } else if (sortOrder.value === 'za') {
+        filtered.sort((a, b) => b.id.localeCompare(a.id));
+    }
+    
+    return filtered;
 });
 
 const defaultInstanceName = computed(() => {
@@ -315,5 +337,35 @@ watch(selectedModLoaderType, () => {
     height: 24px;
     background-color: rgba(var(--v-theme-on-surface), 0.12);
     margin: 0 8px;
+}
+
+/* 移动端适配 */
+@media (max-width: 600px) {
+    .install-type-tab {
+        font-size: 0.85rem;
+        padding: 10px 6px;
+    }
+    
+    .install-type-divider {
+        height: 18px;
+        margin: 0 4px;
+    }
+}
+
+/* 深色模式适配 */
+:deep(.v-theme--dark) .install-type-tab {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+:deep(.v-theme--dark) .install-type-tab:hover {
+    box-shadow: 0 2px 4px -1px rgba(255, 255, 255, 0.1);
+}
+
+:deep(.v-theme--dark) .install-type-active {
+    color: rgb(var(--v-theme-primary));
+}
+
+:deep(.v-theme--dark) .install-type-divider {
+    background-color: rgba(255, 255, 255, 0.12);
 }
 </style>

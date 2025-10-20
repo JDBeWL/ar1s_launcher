@@ -506,3 +506,147 @@ pub async fn create_instance(
     
     Ok(())
 }
+
+// 获取实例列表
+pub async fn get_instances() -> Result<Vec<crate::controllers::instance_controller::InstanceInfo>, LauncherError> {
+    let config = config::load_config()?;
+    let game_dir = PathBuf::from(config.game_dir);
+    let versions_dir = game_dir.join("versions");
+    
+    let mut instances = Vec::new();
+    
+    if versions_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&versions_dir) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        let instance_name = entry.file_name().to_string_lossy().to_string();
+                        let instance_path = entry.path();
+                        
+                        // 检查是否存在对应的 JSON 文件
+                        let json_path = instance_path.join(format!("{}.json", instance_name));
+                        if json_path.exists() {
+                            if let Ok(json_content) = fs::read_to_string(&json_path) {
+                                if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&json_content) {
+                                    let version = json_value.get("id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or(&instance_name)
+                                        .to_string();
+                                    
+                                    let created_time = entry.metadata()
+                                        .ok()
+                                        .and_then(|meta| meta.created().ok())
+                                        .map(|time| {
+                                            time.duration_since(std::time::UNIX_EPOCH)
+                                                .map(|dur| dur.as_secs().to_string())
+                                                .unwrap_or_default()
+                                        });
+                                    
+                                    instances.push(crate::controllers::instance_controller::InstanceInfo {
+                                        id: instance_name.clone(),
+                                        name: instance_name,
+                                        version,
+                                        path: instance_path.to_string_lossy().to_string(),
+                                        created_time,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(instances)
+}
+
+// 删除实例
+pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError> {
+    let config = config::load_config()?;
+    let game_dir = PathBuf::from(config.game_dir);
+    let instance_dir = game_dir.join("versions").join(&instance_name);
+    
+    if !instance_dir.exists() {
+        return Err(LauncherError::Custom(format!("实例 '{}' 不存在", instance_name)));
+    }
+    
+    // 删除实例目录
+    fs::remove_dir_all(&instance_dir)
+        .map_err(|e| LauncherError::Custom(format!("删除实例失败: {}", e)))?;
+    
+    Ok(())
+}
+
+// 重命名实例
+pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), LauncherError> {
+    let config = config::load_config()?;
+    let game_dir = PathBuf::from(config.game_dir);
+    let versions_dir = game_dir.join("versions");
+    
+    let old_dir = versions_dir.join(&old_name);
+    let new_dir = versions_dir.join(&new_name);
+    
+    if !old_dir.exists() {
+        return Err(LauncherError::Custom(format!("实例 '{}' 不存在", old_name)));
+    }
+    
+    if new_dir.exists() {
+        return Err(LauncherError::Custom(format!("实例 '{}' 已存在", new_name)));
+    }
+    
+    // 重命名目录
+    fs::rename(&old_dir, &new_dir)
+        .map_err(|e| LauncherError::Custom(format!("重命名实例失败: {}", e)))?;
+    
+    // 重命名 JSON 文件
+    let old_json = new_dir.join(format!("{}.json", old_name));
+    let new_json = new_dir.join(format!("{}.json", new_name));
+    
+    if old_json.exists() {
+        fs::rename(&old_json, &new_json)
+            .map_err(|e| LauncherError::Custom(format!("重命名 JSON 文件失败: {}", e)))?;
+        
+        // 更新 JSON 文件中的 id 字段
+        if let Ok(json_content) = fs::read_to_string(&new_json) {
+            if let Ok(mut json_value) = serde_json::from_str::<serde_json::Value>(&json_content) {
+                if let Some(id_field) = json_value.get_mut("id") {
+                    *id_field = serde_json::Value::String(new_name.clone());
+                }
+                
+                if let Ok(updated_json) = serde_json::to_string_pretty(&json_value) {
+                    fs::write(&new_json, updated_json)
+                        .map_err(|e| LauncherError::Custom(format!("更新 JSON 文件失败: {}", e)))?;
+                }
+            }
+        }
+    }
+    
+    // 重命名 JAR 文件（如果存在）
+    let old_jar = new_dir.join(format!("{}.jar", old_name));
+    let new_jar = new_dir.join(format!("{}.jar", new_name));
+    
+    if old_jar.exists() {
+        fs::rename(&old_jar, &new_jar)
+            .map_err(|e| LauncherError::Custom(format!("重命名 JAR 文件失败: {}", e)))?;
+    }
+    
+    Ok(())
+}
+
+// 打开实例文件夹
+pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherError> {
+    let config = config::load_config()?;
+    let game_dir = PathBuf::from(config.game_dir);
+    let instance_dir = game_dir.join("versions").join(&instance_name);
+    
+    if !instance_dir.exists() {
+        return Err(LauncherError::Custom(format!("实例 '{}' 不存在", instance_name)));
+    }
+    
+    // 使用系统默认程序打开文件夹
+    opener::open(&instance_dir)
+        .map_err(|e| LauncherError::Custom(format!("打开文件夹失败: {}", e)))?;
+    
+    Ok(())
+}

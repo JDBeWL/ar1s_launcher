@@ -568,8 +568,20 @@ pub async fn download_all_files(
             let mut job_succeeded = false;
 
             // The download logic now handles file verification and resuming.
-            const MAX_JOB_RETRIES: usize = 3;
+            const MAX_JOB_RETRIES: usize = 5;
             for retry in 0..MAX_JOB_RETRIES {
+                // 在重试时尝试切换到官方源
+                let current_url = if retry >= 2 && job.url.contains("bmclapi2.bangbang93.com") {
+                    // 第3次重试开始，如果当前是镜像源，切换到官方源
+                    if let Some(fallback_url) = &job.fallback_url {
+                        println!("DEBUG: Switching to official source for: {}", job.url);
+                        fallback_url.as_str()
+                    } else {
+                        &job.url
+                    }
+                } else {
+                    &job.url
+                };
                 if !state.load(Ordering::SeqCst) {
                     break;
                 }
@@ -579,11 +591,12 @@ pub async fn download_all_files(
                 } else {
                     format!("retry {}/{}", retry, MAX_JOB_RETRIES - 1)
                 };
-                println!("DEBUG: Downloading file: {} ({})", job.url, attempt_str);
+                println!("DEBUG: Downloading file: {} ({})", current_url, attempt_str);
 
                 match download_file(
                     http.clone(),
                     &job,
+                    current_url,
                     &state,
                     &bytes_downloaded,
                     &bytes_since_last,
@@ -599,7 +612,7 @@ pub async fn download_all_files(
                     Err(e) => {
                         println!(
                             "ERROR: Download failed: {} ({}) - {}",
-                            job.url, attempt_str, e
+                            current_url, attempt_str, e
                         );
                         current_job_error = Some(e);
                         if retry < MAX_JOB_RETRIES - 1 {
@@ -712,6 +725,7 @@ pub async fn download_all_files(
 async fn download_file(
     http: std::sync::Arc<reqwest::Client>,
     job: &DownloadJob,
+    url: &str,
     state: &Arc<AtomicBool>,
     bytes_downloaded: &Arc<AtomicU64>,
     bytes_since_last: &Arc<AtomicU64>,
@@ -733,10 +747,10 @@ async fn download_file(
         tokio::fs::remove_file(&job.path).await?; // 清理损坏的文件
     }
 
-    // 2. 尝试从主 URL 下载（复用共享客户端）
+    // 2. 尝试从指定 URL 下载（复用共享客户端）
     match download_chunk(
         http.clone(),
-        &job.url,
+        url,
         job,
         state,
         bytes_downloaded,

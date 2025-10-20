@@ -70,6 +70,10 @@ fn main() {
             ar1s_launcher_lib::controllers::auth_controller::set_saved_uuid,
             ar1s_launcher_lib::controllers::config_controller::get_total_memory,
             ar1s_launcher_lib::controllers::instance_controller::create_instance,
+            ar1s_launcher_lib::controllers::instance_controller::get_instances,
+            ar1s_launcher_lib::controllers::instance_controller::delete_instance,
+            ar1s_launcher_lib::controllers::instance_controller::rename_instance,
+            ar1s_launcher_lib::controllers::instance_controller::open_instance_folder,
             ar1s_launcher_lib::controllers::forge_controller::get_forge_versions
         ])
         .setup(|_| {
