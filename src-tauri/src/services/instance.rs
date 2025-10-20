@@ -1,9 +1,10 @@
 use crate::errors::LauncherError;
 use crate::models::{ForgeVersion, DownloadJob};
 use crate::services::{config, download, forge};
+use crate::utils::file_utils;
 use serde_json::Value;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use serde::Serialize;
 use tauri::Emitter;
 
@@ -14,59 +15,7 @@ struct InstallProgress {
     indeterminate: bool,
 }
 
-/// 清理实例创建过程中创建的文件和目录
-fn cleanup_instance_creation(
-    game_dir: &PathBuf,
-    instance_name: &str,
-    _base_version_id: &str,
-) {
-    println!("Instance: 开始清理实例创建过程中的文件和目录");
-
-    // 1. 清理实例目录
-    let instance_dir = game_dir.join("versions").join(instance_name);
-    if instance_dir.exists() {
-        println!("Instance: 清理实例目录: {}", instance_dir.display());
-        if let Err(e) = fs::remove_dir_all(&instance_dir) {
-            println!("Instance: 清理实例目录失败: {}", e);
-        } else {
-            println!("Instance: 实例目录清理完成");
-        }
-    }
-
-    // 2. 清理可能创建的临时文件
-    let instance_json = game_dir.join("versions").join(instance_name).join(format!("{}.json", instance_name));
-    if instance_json.exists() {
-        println!("Instance: 清理实例JSON文件: {}", instance_json.display());
-        if let Err(e) = fs::remove_file(&instance_json) {
-            println!("Instance: 清理实例JSON文件失败: {}", e);
-        }
-    }
-
-    let instance_jar = game_dir.join("versions").join(instance_name).join(format!("{}.jar", instance_name));
-    if instance_jar.exists() {
-        println!("Instance: 清理实例JAR文件: {}", instance_jar.display());
-        if let Err(e) = fs::remove_file(&instance_jar) {
-            println!("Instance: 清理实例JAR文件失败: {}", e);
-        }
-    }
-
-    println!("Instance: 清理完成");
-}
-
-// Helper function to copy a directory recursively
-fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), std::io::Error> {
-    fs::create_dir_all(&dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        if ty.is_dir() {
-            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
-        } else {
-            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
-        }
-    }
-    Ok(())
-}
+// 使用共享模块中的函数
 
 pub async fn create_instance(
     new_instance_name: String,
@@ -90,7 +39,7 @@ pub async fn create_instance(
         });
     };
 
-    // 1. Check if the destination instance name already exists
+    // 1. 检查实例是否已存在
     if dest_dir.exists() {
         return Err(LauncherError::Custom(format!(
             "名为 '{}' 的实例已存在.",
@@ -100,7 +49,7 @@ pub async fn create_instance(
 
     send_progress(5, "检查基础版本...", false);
 
-    // 2. Check if the base version exists, if not, download it.
+    // 2. 检查基础版本是否存在，如果不存在则下载
     if !source_dir.exists() {
         send_progress(10, "下载基础版本...", true);
         if let Err(e) = download::process_and_download_version(base_version_id.clone(), config.download_mirror.clone(), window).await {
@@ -119,19 +68,19 @@ pub async fn create_instance(
 
     send_progress(30, "复制基础文件...", false);
     
-    // 3. Copy the entire directory
-    if let Err(e) = copy_dir_all(&source_dir, &dest_dir) {
-        cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+    // 3. 复制整个目录
+    if let Err(e) = file_utils::copy_dir_all(&source_dir, &dest_dir) {
+        file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
         return Err(e.into());
     }
 
     send_progress(40, "重命名配置文件...", false);
     
-    // 4. Rename the .json and .jar files
+    // 4. 重命名 .json 和 .jar 文件
     let old_json_path = dest_dir.join(format!("{}.json", base_version_id));
     let new_json_path = dest_dir.join(format!("{}.json", new_instance_name));
     if let Err(e) = fs::rename(&old_json_path, &new_json_path) {
-        cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+        file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
         return Err(e.into());
     }
 
@@ -139,18 +88,18 @@ pub async fn create_instance(
     if old_jar_path.exists() {
         let new_jar_path = dest_dir.join(format!("{}.jar", new_instance_name));
         if let Err(e) = fs::rename(&old_jar_path, &new_jar_path) {
-            cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+            file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
             return Err(e.into());
         }
     }
 
     send_progress(50, "更新配置文件...", false);
     
-    // 5. Modify the 'id' field in the new JSON file
+    // 5. 修改新 JSON 文件中的 'id' 字段
     let json_str = match fs::read_to_string(&new_json_path) {
         Ok(s) => s,
         Err(e) => {
-            cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+            file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
             return Err(e.into());
         }
     };
@@ -158,7 +107,7 @@ pub async fn create_instance(
     let mut json: Value = match serde_json::from_str(&json_str) {
         Ok(j) => j,
         Err(e) => {
-            cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+            file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
             return Err(e.into());
         }
     };
@@ -170,47 +119,47 @@ pub async fn create_instance(
     let modified_json_str = match serde_json::to_string_pretty(&json) {
         Ok(s) => s,
         Err(e) => {
-            cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+            file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
             return Err(e.into());
         }
     };
     
     if let Err(e) = fs::write(&new_json_path, modified_json_str) {
-        cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+        file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
         return Err(e.into());
     }
 
-    // 6. Install Forge if requested
+    // 6. 如果请求了 Forge，则安装 Forge
     if let Some(forge_version) = forge_version {
         send_progress(60, "安装Forge加载器...", true);
         if let Err(e) = forge::install_forge(dest_dir.clone(), forge_version.clone()).await {
-            cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+            file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
             return Err(e);
         }
 
-        // After Forge installer runs it usually creates a version entry like
-        // `{mcversion}-forge-{forge_version}` under game_dir/versions.
-        // Try to merge the Forge version json with the base (vanilla) json
-        // following the rules described in the UI: Forge fields preferred,
-        // libraries de-duplicated by group:artifact:version, id set to instance name.
+        // Forge 安装程序运行后，通常会在 game_dir/versions 下创建一个版本条目，
+        // 如 `{mcversion}-forge-{forge_version}`。
+        // 尝试将 Forge 版本的 JSON 与基础（原版）JSON 合并，
+        // 遵循 UI 中描述的规则：优先使用 Forge 字段，
+        // 按 group:artifact:version 去重库文件，id 设置为实例名称。
 
-        // Try to find actual forge-created directory. Common pattern is
-        // "{mcversion}-forge-{build}" but some installers may write slightly different ids.
-        // We'll scan the versions directory for entries starting with "{mcversion}-forge".
+        // 尝试查找实际的 forge 创建的目录。常见模式是
+        // "{mcversion}-forge-{build}"，但某些安装程序可能会写入稍微不同的 id。
+        // 我们将扫描 versions 目录中以前缀 "{mcversion}-forge" 开头的条目。
         let mut found_forge_id: Option<String> = None;
         if let Ok(entries) = fs::read_dir(game_dir.join("versions")) {
             let prefix = format!("{}-forge", forge_version.mcversion);
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
                     if name == format!("{}-forge-{}", forge_version.mcversion, forge_version.version) {
-                        // exact expected match
+                        // 精确匹配预期
                         found_forge_id = Some(name.to_string());
                         break;
                     }
                 }
             }
             if found_forge_id.is_none() {
-                // fallback: first directory that starts with the prefix
+                // 回退：第一个以前缀开头的目录
                 if let Ok(entries2) = fs::read_dir(game_dir.join("versions")) {
                     for entry in entries2.flatten() {
                         if let Some(name) = entry.file_name().to_str() {
@@ -236,49 +185,49 @@ pub async fn create_instance(
             let base_str = match fs::read_to_string(&base_json_path) {
                 Ok(s) => s,
                 Err(e) => {
-                    cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                    file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
                     return Err(e.into());
                 }
             };
             let forge_str = match fs::read_to_string(&forge_json_path) {
                 Ok(s) => s,
                 Err(e) => {
-                    cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                    file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
                     return Err(e.into());
                 }
             };
             let base_json: Value = match serde_json::from_str(&base_str) {
                 Ok(j) => j,
                 Err(e) => {
-                    cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                    file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
                     return Err(e.into());
                 }
             };
             let forge_json: Value = match serde_json::from_str(&forge_str) {
                 Ok(j) => j,
                 Err(e) => {
-                    cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                    file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
                     return Err(e.into());
                 }
             };
 
-            // Start merged as forge_json, then fill missing fields from base_json
+            // 从 forge_json 开始合并，然后从 base_json 填充缺失的字段
             let mut merged = forge_json.clone();
 
-            // Ensure id is set to instance name
+            // 确保 id 设置为实例名称
             merged["id"] = Value::String(new_instance_name.clone());
 
-            // mainClass: prefer Forge (already in merged if present), otherwise take from base
+            // mainClass：优先使用 Forge（如果已存在于合并中），否则从基础版本获取
             if !merged.get("mainClass").is_some() {
                 if let Some(mc) = base_json.get("mainClass") {
                     merged["mainClass"] = mc.clone();
                 }
             }
 
-            // arguments: prefer Forge. If Forge uses old `minecraftArguments`, convert to `arguments.game` array
+            // arguments：优先使用 Forge。如果 Forge 使用旧的 `minecraftArguments`，则转换为 `arguments.game` 数组
             if merged.get("arguments").is_none() {
                 if let Some(mc_args) = forge_json.get("minecraftArguments").and_then(|v| v.as_str()) {
-                    // split on spaces (same behaviour as launcher)
+                    // 按空格分割（与启动器相同的行为）
                     let parts: Vec<Value> = mc_args
                         .split(' ')
                         .filter(|s| !s.is_empty())
@@ -301,13 +250,13 @@ pub async fn create_instance(
                 }
             }
 
-            // libraries: use Forge as primary, then append base libraries that are missing (dedupe by name)
+            // libraries：以 Forge 为主，然后附加缺失的基础库（按名称去重）
             let mut final_libs: Vec<Value> = Vec::new();
             let mut seen = std::collections::HashSet::new();
 
             if let Some(forge_libs) = forge_json.get("libraries").and_then(|v| v.as_array()) {
                 for lib in forge_libs {
-                    // try to get a unique key: library.name (group:artifact:version)
+                    // 尝试获取唯一键：library.name (group:artifact:version)
                     if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
                         seen.insert(name.to_string());
                     }
@@ -333,7 +282,7 @@ pub async fn create_instance(
                 merged["libraries"] = Value::Array(final_libs);
             }
 
-            // Fill other missing top-level fields from base_json (logging, assetIndex, etc.)
+            // 从 base_json 填充其他缺失的顶级字段（logging、assetIndex 等）
             if let Some(obj) = base_json.as_object() {
                 for (k, v) in obj.iter() {
                     if !merged.get(k).is_some() {
@@ -342,28 +291,28 @@ pub async fn create_instance(
                 }
             }
 
-            // Finally, write merged json to instance json path
+            // 最后，将合并后的 JSON 写入实例 JSON 路径
             let merged_str = match serde_json::to_string_pretty(&merged) {
                 Ok(s) => s,
                 Err(e) => {
-                    cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                    file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
                     return Err(e.into());
                 }
             };
             if let Err(e) = fs::write(&instance_json_path, merged_str) {
-                cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
+                file_utils::cleanup_instance_creation(&game_dir, &new_instance_name, &base_version_id);
                 return Err(e.into());
             }
 
-            // After writing merged JSON, ensure required files (client, libraries, natives, assets) are downloaded
-            // Build download jobs from merged manifest and run download_all_files
-            // Helper closure to collect download jobs
+            // 写入合并的 JSON 后，确保下载所需的文件（客户端、库、原生库、资源）
+            // 从合并的清单构建下载任务并运行 download_all_files
+            // 辅助闭包用于收集下载任务
             let collect_download_jobs = |merged_json: &Value| -> Result<Vec<DownloadJob>, LauncherError> {
                 let mut jobs: Vec<DownloadJob> = Vec::new();
                 let libraries_base_dir = game_dir.join("libraries");
                 let assets_base_dir = game_dir.join("assets");
 
-                // 1) client jar
+                // 1) 客户端 jar
                 if let Some(client) = merged_json.get("downloads").and_then(|d| d.get("client")) {
                     if let Some(url) = client.get("url").and_then(|u| u.as_str()) {
                         let size = client.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
@@ -373,7 +322,7 @@ pub async fn create_instance(
                     }
                 }
 
-                // 2) asset index -> objects
+                // 2) 资源索引 -> 对象
                 if let Some(asset_idx) = merged_json.get("assetIndex") {
                     if let Some(idx_id) = asset_idx.get("id").and_then(|v| v.as_str()) {
                         if let Some(idx_url) = asset_idx.get("url").and_then(|v| v.as_str()) {
@@ -386,16 +335,16 @@ pub async fn create_instance(
                                 hash: asset_idx.get("sha1").and_then(|h| h.as_str()).unwrap_or("").to_string(),
                             });
 
-                            // If index already exists we still want to enqueue individual objects later when calling download_all_files,
-                            // but building the list of objects requires the index file to be present. We'll handle objects download by reading the index after download.
+                            // 如果索引已存在，我们仍然希望在调用 download_all_files 时将单个对象加入队列，
+                            // 但构建对象列表需要索引文件存在。我们将在下载后通过读取索引来处理对象下载。
                         }
                     }
                 }
 
-                // 3) libraries + natives
+                // 3) 库 + 原生库
                 if let Some(libs) = merged_json.get("libraries").and_then(|v| v.as_array()) {
                     for lib in libs {
-                        // rules evaluation (copying logic from download.rs)
+                        // 规则评估（从 download.rs 复制逻辑）
                         let mut should_download = true;
                         if let Some(rules) = lib.get("rules").and_then(|r| r.as_array()) {
                             should_download = false;
@@ -418,7 +367,7 @@ pub async fn create_instance(
                             continue;
                         }
 
-                        // artifact
+                        // 构件
                         if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
                             let path = artifact.get("path").and_then(|p| p.as_str()).map(|s| s.to_string());
                             let url = artifact.get("url").and_then(|u| u.as_str()).map(|s| s.to_string());
@@ -431,14 +380,14 @@ pub async fn create_instance(
                             }
                         }
 
-                        // natives/classifiers
+                        // 原生库/分类器
                         if let Some(natives) = lib.get("natives") {
                             if let Some(natives_map) = natives.as_object() {
                                 let current_os = std::env::consts::OS;
                                 for (os_name, classifier_val) in natives_map.iter() {
                                     let classifier = classifier_val.as_str().unwrap_or("");
                                     if os_name == current_os || lib.get("name").and_then(|n| n.as_str()).map_or(false, |s| s.contains("lwjgl")) {
-                                        // prefer downloads.classifiers
+                                        // 优先使用 downloads.classifiers
                                         if let Some(classifiers) = lib.get("downloads").and_then(|d| d.get("classifiers")) {
                                             if let Some(artifact) = classifiers.get(classifier) {
                                                 if let (Some(path), Some(url)) = (artifact.get("path").and_then(|p| p.as_str()), artifact.get("url").and_then(|u| u.as_str())) {
@@ -451,7 +400,7 @@ pub async fn create_instance(
                                             }
                                         }
 
-                                        // fallback: try classifiers under top-level "classifiers"
+                                        // 回退：尝试顶级 "classifiers" 下的分类器
                                         if let Some(classifiers) = lib.get("classifiers") {
                                             if let Some(artifact) = classifiers.get(classifier) {
                                                 if let (Some(path), Some(url)) = (artifact.get("path").and_then(|p| p.as_str()), artifact.get("url").and_then(|u| u.as_str())) {
@@ -464,7 +413,7 @@ pub async fn create_instance(
                                             }
                                         }
 
-                                        // last resort: derive path from name
+                                        // 最后手段：从名称派生路径
                                         if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
                                             let parts: Vec<&str> = name.split(":").collect();
                                             if parts.len() >= 3 {
@@ -488,10 +437,10 @@ pub async fn create_instance(
                 Ok(jobs)
             };
 
-            // collect and run download jobs
+            // 收集并运行下载任务
             if let Ok(mut jobs) = collect_download_jobs(&merged) {
-                // If asset index job was present, we need to download index first, then expand objects into jobs
-                // Find asset index job(s)
+                // 如果存在资源索引任务，我们需要先下载索引，然后将对象扩展为任务
+                // 查找资源索引任务
                 let mut index_jobs: Vec<DownloadJob> = Vec::new();
                 jobs.retain(|j| {
                     if j.path.to_string_lossy().contains("indexes") {
@@ -502,10 +451,10 @@ pub async fn create_instance(
                     }
                 });
 
-                // First download index files
+                // 首先下载索引文件
                 if !index_jobs.is_empty() {
                     let _ = download::download_all_files(index_jobs.clone(), window, index_jobs.len() as u64, config.download_mirror.clone()).await;
-                    // For each index, parse and enqueue objects
+                    // 对于每个索引，解析并将对象加入队列
                     for idx in index_jobs.iter() {
                         if idx.path.exists() {
                             if let Ok(idx_content) = fs::read_to_string(&idx.path) {
@@ -526,14 +475,29 @@ pub async fn create_instance(
                     }
                 }
 
-                // Finally run download for remaining jobs (libraries, client, assets objects)
+                    // 最后运行剩余任务的下载（库、客户端、资源对象）
                 if !jobs.is_empty() {
-                    send_progress(70, "下载游戏文件...", true);
+                    send_progress(70, "校验并下载缺失游戏文件...", true);
                     let _ = download::download_all_files(jobs.clone(), window, jobs.len() as u64, config.download_mirror.clone()).await;
                 }
             }
+
+            // 清理临时的 forge 版本目录，因为合并后不再需要
+            if let Some(ref fid) = found_forge_id {
+                println!("Forge: 合并完成，清理 Forge 版本文件夹: {}", fid);
+                let version_dir_to_clean = game_dir.join("versions").join(fid);
+                
+                if version_dir_to_clean.exists() {
+                    println!("Forge: 清理版本文件夹: {}", version_dir_to_clean.display());
+                    if let Err(e) = fs::remove_dir_all(&version_dir_to_clean) {
+                        println!("Forge: 清理版本文件夹失败: {}，但安装继续", e);
+                    } else {
+                        println!("Forge: 版本文件夹清理完成");
+                    }
+                }
+            }
         } else {
-            // If forge json doesn't exist yet, just continue without merging
+            // 如果没有找到 forge 版本，则跳过合并
             println!("Forge json not found at {}. Skipping merge.", forge_json_path.display());
         }
     }

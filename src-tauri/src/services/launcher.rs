@@ -921,8 +921,7 @@ pub async fn launch_minecraft(
                     format!("游戏进程退出，状态码: {:?}", status.code()),
                 );
 
-                // If exit code is non-zero, send a minecraft-error event containing stderr (and stdout) so the UI that listens
-                // to `minecraft-error` can show the actual Java error output.
+                // 如果游戏以非零退出码退出，发送错误事件到前端，包含 stdout/stderr 输出
                 if status.code().unwrap_or(-1) != 0 {
                     let mut combined = String::new();
                     if !output.stdout.is_empty() {

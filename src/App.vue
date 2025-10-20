@@ -62,7 +62,7 @@ onUnmounted(() => {
   <v-app>
     <v-navigation-drawer :rail="rail" :mobile-breakpoint="0" rail-width="64">
       <v-list nav>
-        <v-list-item prepend-icon="mdi-rocket-launch" title="启动" to="/" rounded="lg"></v-list-item>
+        <v-list-item prepend-icon="mdi-send" title="启动" to="/" rounded="lg"></v-list-item>
         <v-list-item prepend-icon="mdi-download" title="下载" to="/download" rounded="lg"></v-list-item>
         <v-list-item prepend-icon="mdi-plus" title="添加实例" to="/add-instance" rounded="lg"></v-list-item>
         <v-list-item prepend-icon="mdi-layers-outline" title="实例管理" to="/instance-manager" rounded="lg"></v-list-item>
@@ -163,7 +163,7 @@ onUnmounted(() => {
 }
 
 .v-btn:hover {
-  transform: translateY(-2px);
+  /* transform: translateY(-2px); */
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
@@ -172,12 +172,11 @@ onUnmounted(() => {
   transition: background-color 0.3s ease;
 }
 
-/* 动画过渡效果 */
-.v-application {
-  transition: background-color 0.3s ease;
+/* 导航栏图标间距调整 */
+.v-navigation-drawer:not(.v-navigation-drawer--rail) .v-list-item {
+  padding-inline: 12px !important;
 }
 
-/* Center icon using user's padding suggestion */
 .v-navigation-drawer--rail .v-list-item {
   padding-inline: 12px !important;
 }

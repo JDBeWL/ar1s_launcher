@@ -1,6 +1,7 @@
 use crate::errors::LauncherError;
 use crate::models::ForgeVersion;
 use crate::services::config;
+use crate::utils::file_utils;
 
 use reqwest::{Client, StatusCode};
 use std::fs;
@@ -674,7 +675,7 @@ pub async fn install_forge(
 
         // 3) 如果所有源都失败，返回详细错误信息
         if !current_response.status().is_success() {
-            cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
+            file_utils::cleanup_forge_installation(&instance_path, &game_dir, &forge_version, &installer_path);
             return Err(LauncherError::Custom(format!(
                 "下载Forge安装器失败: 最终状态 {}。已尝试的URL: {}",
                 current_response.status(),
@@ -688,7 +689,7 @@ pub async fn install_forge(
 
     // 验证下载的文件内容
     if !response.status().is_success() {
-        cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
+        file_utils::cleanup_forge_installation(&instance_path, &game_dir, &forge_version, &installer_path);
         return Err(LauncherError::Custom(format!(
             "下载Forge安装器失败: 服务器返回错误状态 {}。已尝试 bmcl 下载与 Maven 源。",
             response.status()
@@ -699,7 +700,7 @@ pub async fn install_forge(
     if let Some(content_type) = response.headers().get(reqwest::header::CONTENT_TYPE) {
         let content_type_str = content_type.to_str().unwrap_or("").to_lowercase();
         if content_type_str.contains("text/html") || content_type_str.contains("application/json") {
-            cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
+            file_utils::cleanup_forge_installation(&instance_path, &game_dir, &forge_version, &installer_path);
             return Err(LauncherError::Custom(format!(
                 "下载Forge安装器失败: 期望获取JAR文件，但服务器返回了{}内容。URL: {}",
                 content_type_str, current_url
@@ -712,7 +713,7 @@ pub async fn install_forge(
         if let Ok(length_str) = content_length.to_str() {
             if let Ok(file_size) = length_str.parse::<u64>() {
                 if file_size < 1024 {
-                    cleanup_installation(
+                    file_utils::cleanup_forge_installation(
                         &instance_path,
                         &game_dir,
                         &forge_version,
@@ -735,13 +736,13 @@ pub async fn install_forge(
         let header = &installer_bytes[0..4];
         if header != [0x50, 0x4B, 0x03, 0x04] {
             // ZIP文件头
-            cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
+            file_utils::cleanup_forge_installation(&instance_path, &game_dir, &forge_version, &installer_path);
             return Err(LauncherError::Custom(
                 "下载Forge安装器失败: 文件不是有效的JAR/ZIP格式".to_string(),
             ));
         }
     } else {
-        cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
+        file_utils::cleanup_forge_installation(&instance_path, &game_dir, &forge_version, &installer_path);
         return Err(LauncherError::Custom(
             "下载Forge安装器失败: 文件大小过小，无法验证格式".to_string(),
         ));
@@ -794,8 +795,11 @@ pub async fn install_forge(
     
     let output = cmd.output()?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    println!("Forge: 新版本安装器 stdout:\n{}", stdout);
+    println!("Forge: 新版本安装器 stderr:\n{}", stderr);
 
     // 检查是否因为不支持 --installClient 参数而失败
     let is_old_installer = !output.status.success()
@@ -820,12 +824,11 @@ pub async fn install_forge(
         
         let mut output_old = cmd_old.output()?;
 
-        let mut stdout_old = String::from_utf8_lossy(&output_old.stdout)
-            .trim()
-            .to_string();
-        let mut stderr_old = String::from_utf8_lossy(&output_old.stderr)
-            .trim()
-            .to_string();
+        let mut stdout_old = String::from_utf8_lossy(&output_old.stdout);
+        let mut stderr_old = String::from_utf8_lossy(&output_old.stderr);
+
+        println!("Forge: 旧版本安装器 (尝试1) stdout:\n{}", stdout_old);
+        println!("Forge: 旧版本安装器 (尝试1) stderr:\n{}", stderr_old);
 
         // 如果还是参数错误，尝试不带 --installClient 参数
         if !output_old.status.success()
@@ -844,12 +847,11 @@ pub async fn install_forge(
             
             output_old = cmd_old2.output()?;
 
-            stdout_old = String::from_utf8_lossy(&output_old.stdout)
-                .trim()
-                .to_string();
-            stderr_old = String::from_utf8_lossy(&output_old.stderr)
-                .trim()
-                .to_string();
+            stdout_old = String::from_utf8_lossy(&output_old.stdout);
+            stderr_old = String::from_utf8_lossy(&output_old.stderr);
+
+            println!("Forge: 旧版本安装器 (尝试2) stdout:\n{}", stdout_old);
+            println!("Forge: 旧版本安装器 (尝试2) stderr:\n{}", stderr_old);
         }
 
         // 检查是否因为 HeadlessException 失败
@@ -859,140 +861,40 @@ pub async fn install_forge(
         if is_headless_error {
             println!("Forge: 检测到 HeadlessException，使用手动安装方式");
             // 使用手动安装
-            match manual_install_old_forge(&installer_path, &game_dir, &forge_version).await {
-                Ok(_) => {
-                    println!("Forge: 手动安装成功");
-                }
-                Err(e) => {
-                    let _ = fs::remove_file(&installer_path);
-                    return Err(e);
-                }
-            }
+            manual_install_old_forge(&installer_path, &game_dir, &forge_version).await?;
+            println!("Forge: 手动安装成功");
         } else if !output_old.status.success() {
-            println!(
-                "Forge: 旧版本安装器执行失败\nstdout:\n{}\nstderr:\n{}",
-                stdout_old, stderr_old
-            );
             // Clean up the installer file and installation artifacts before returning the error
-            cleanup_installation(&instance_path, &game_dir, &forge_version, &installer_path);
+            file_utils::cleanup_forge_installation(&instance_path, &game_dir, &forge_version, &installer_path);
             return Err(LauncherError::Custom(format!(
-                "Forge安装失败（旧版本安装器）。Java路径: {}。stdout: {}。stderr: {}",
-                java_path,
-                if stdout_old.is_empty() {
-                    "<empty>"
-                } else {
-                    &stdout_old
-                },
-                if stderr_old.is_empty() {
-                    "<empty>"
-                } else {
-                    &stderr_old
-                }
+                "Forge安装失败（旧版本安装器）。\nstdout: {}\nstderr: {}",
+                stdout_old, stderr_old
             )));
         } else {
             println!("Forge: 旧版本安装器执行完成");
         }
     } else if !output.status.success() {
         // 新版本安装器执行失败（非参数不支持的其他错误）
-        println!(
-            "Forge: 新版本安装器执行失败\nstdout:\n{}\nstderr:\n{}",
-            stdout, stderr
-        );
-        // Clean up the installer file before returning the error
-        let _ = fs::remove_file(&installer_path);
+        file_utils::cleanup_forge_installation(&instance_path, &game_dir, &forge_version, &installer_path);
         return Err(LauncherError::Custom(format!(
-            "Forge安装失败。Java路径: {}。stdout: {}。stderr: {}",
-            java_path,
-            if stdout.is_empty() {
-                "<empty>"
-            } else {
-                &stdout
-            },
-            if stderr.is_empty() {
-                "<empty>"
-            } else {
-                &stderr
-            }
+            "Forge安装失败。\nstdout: {}\nstderr: {}",
+            stdout, stderr
         )));
     } else {
         println!("Forge: 新版本安装器执行完成");
     }
 
-    // 4. Clean up the installer file
-    fs::remove_file(&installer_path)?;
-
-    // 5. 安装成功后清理版本文件夹（高版本Forge不需要这些文件夹）
-    let version_id = format!(
-        "{}-forge-{}",
-        forge_version.mcversion, forge_version.version
-    );
-    let version_dir = game_dir.join("versions").join(&version_id);
-
-    if version_dir.exists() {
-        println!("Forge: 安装成功，清理版本文件夹: {}", version_dir.display());
-        if let Err(e) = fs::remove_dir_all(&version_dir) {
-            println!("Forge: 清理版本文件夹失败: {}，但安装继续", e);
-        } else {
-            println!("Forge: 版本文件夹清理完成");
-        }
-    }
-
-    // 6. 清理临时安装器文件（确保即使前面的清理失败也继续清理）
+    // 5. 安装器执行完成后，进行清理操作
+    println!("Forge: 安装完成，开始清理临时文件");
+    
+    // 清理临时安装器文件
     if installer_path.exists() {
-        if let Err(e) = fs::remove_file(&installer_path) {
-            println!("Forge: 清理安装器文件失败: {}，但安装继续", e);
-        } else {
-            println!("Forge: 临时安装器文件清理完成");
+        match fs::remove_file(&installer_path) {
+            Ok(_) => println!("Forge: 临时安装器文件清理完成"),
+            Err(e) => println!("Forge: 清理安装器文件失败: {}，但安装继续", e),
         }
+    } else {
+        println!("Forge: 安装器文件已不存在，无需清理");
     }
-
     Ok(())
-}
-
-/// 清理安装过程中创建的文件和目录
-fn cleanup_installation(
-    instance_path: &PathBuf,
-    game_dir: &PathBuf,
-    forge_version: &ForgeVersion,
-    installer_path: &PathBuf,
-) {
-    println!("Forge: 开始清理安装过程中的文件和目录");
-
-    // 1. 清理版本文件夹
-    let version_id = format!(
-        "{}-forge-{}",
-        forge_version.mcversion, forge_version.version
-    );
-    let version_dir = game_dir.join("versions").join(&version_id);
-
-    if version_dir.exists() {
-        println!("Forge: 清理版本文件夹: {}", version_dir.display());
-        if let Err(e) = fs::remove_dir_all(&version_dir) {
-            println!("Forge: 清理版本文件夹失败: {}", e);
-        } else {
-            println!("Forge: 版本文件夹清理完成");
-        }
-    }
-
-    // 2. 清理实例目录（如果创建了）
-    if instance_path.exists() {
-        println!("Forge: 清理实例目录: {}", instance_path.display());
-        if let Err(e) = fs::remove_dir_all(instance_path) {
-            println!("Forge: 清理实例目录失败: {}", e);
-        } else {
-            println!("Forge: 实例目录清理完成");
-        }
-    }
-
-    // 3. 清理临时安装器文件
-    if installer_path.exists() {
-        println!("Forge: 清理临时安装器文件: {}", installer_path.display());
-        if let Err(e) = fs::remove_file(installer_path) {
-            println!("Forge: 清理安装器文件失败: {}", e);
-        } else {
-            println!("Forge: 临时安装器文件清理完成");
-        }
-    }
-
-    println!("Forge: 清理完成");
 }

@@ -1,8 +1,9 @@
 use crate::errors::LauncherError;
 use crate::models::{DownloadJob, VersionManifest};
 use crate::services::config::load_config;
+use crate::utils::file_utils;
 use reqwest;
-use sha1::{Digest, Sha1};
+
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -717,7 +718,7 @@ async fn download_file(
 ) -> Result<(), LauncherError> {
     // 1. 验证文件完整性，如果文件有效则跳过下载
     if job.path.exists() {
-        if verify_file(&job.path, &job.hash, job.size)? {
+        if file_utils::verify_file(&job.path, &job.hash, job.size)? {
             println!(
                 "DEBUG: File already exists and is valid, skipping: {}",
                 job.path.display()
@@ -846,7 +847,7 @@ async fn download_chunk(
             bytes_added_this_attempt += len;
         }
 
-        if !verify_file(&tmp_path, &job.hash, job.size)? {
+        if !file_utils::verify_file(&tmp_path, &job.hash, job.size)? {
             return Err(LauncherError::Custom(format!(
                 "File verification failed for {}: size or hash mismatch.",
                 tmp_path.display()
@@ -872,30 +873,7 @@ async fn download_chunk(
     result
 }
 
-fn verify_file(
-    path: &std::path::Path,
-    expected_hash: &str,
-    expected_size: u64,
-) -> Result<bool, LauncherError> {
-    if !expected_hash.is_empty() {
-        // If a hash is provided, verify the file against the hash.
-        let mut file = std::fs::File::open(path)?;
-        let mut hasher = Sha1::new();
-        std::io::copy(&mut file, &mut hasher)?;
-        let actual_hash = hasher.finalize();
-        let actual_hash_str = format!("{:x}", actual_hash);
-        Ok(actual_hash_str.to_lowercase() == expected_hash.to_lowercase())
-    } else {
-        // If no hash is provided, fall back to size check when available.
-        if expected_size > 0 {
-            let actual_size = std::fs::metadata(path)?.len();
-            Ok(actual_size == expected_size)
-        } else {
-            // If expected size is 0, we can't validate, assume ok.
-            Ok(true)
-        }
-    }
-}
+
 
 async fn fetch_versions(
     client: &reqwest::Client,

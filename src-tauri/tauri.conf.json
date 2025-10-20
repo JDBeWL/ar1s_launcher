@@ -13,9 +13,9 @@
     "windows": [
       {
         "title": "Ar1s Launcher",
-        "width":900,
+        "width":920,
         "height": 650,
-        "minWidth": 900,
+        "minWidth": 920,
         "minHeight": 650,
         "userAgent": "Ar1s Launcher",
         "label": "main",

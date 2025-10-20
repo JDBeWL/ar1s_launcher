@@ -7,7 +7,8 @@ use log::LevelFilter;
 use std::fs;
 
 fn setup_logger() -> Result<(), fern::InitError> {
-    // Ensure the logs directory exists
+    // 创建日志目录
+    log::info!("[DEBUG] 创建日志目录");
     fs::create_dir_all("logs")?;
 
     let log_file = format!(
