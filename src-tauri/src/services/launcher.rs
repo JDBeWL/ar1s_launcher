@@ -8,6 +8,33 @@ use std::process::{Command, Stdio};
 use tauri::Emitter;
 use uuid::Uuid;
 
+/// 通用库文件查找函数
+/// 递归扫描指定目录，查找匹配指定模式的JAR文件
+fn find_library_jar(dir: &std::path::Path, patterns: &[&str]) -> Option<std::path::PathBuf> {
+    if let Ok(read_dir) = std::fs::read_dir(dir) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(found) = find_library_jar(&path, patterns) {
+                    return Some(found);
+                }
+            } else {
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                let full_path = path.to_string_lossy().to_lowercase();
+                
+                // 检查文件名和完整路径是否匹配任何模式
+                for pattern in patterns {
+                    if (name.contains(pattern) || full_path.contains(pattern)) 
+                        && name.ends_with(".jar") {
+                        return Some(path);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn generate_offline_uuid(username: &str) -> String {
     // 首先检查配置中是否已有保存的UUID
     if let Ok(config) = load_config() {
@@ -496,27 +523,8 @@ pub async fn launch_minecraft(
                 "预检：Classpath 未包含 LaunchWrapper，尝试在 libraries 目录自动查找".to_string(),
             );
 
-            // 递归扫描 libraries_base_dir，寻找任意 launchwrapper-*.jar
-            fn find_launchwrapper_jar(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-                if let Ok(read_dir) = std::fs::read_dir(dir) {
-                    for entry in read_dir.flatten() {
-                        let path = entry.path();
-                        if path.is_dir() {
-                            if let Some(found) = find_launchwrapper_jar(&path) {
-                                return Some(found);
-                            }
-                        } else {
-                            let name = entry.file_name().to_string_lossy().to_lowercase();
-                            if name.starts_with("launchwrapper-") && name.ends_with(".jar") {
-                                return Some(path);
-                            }
-                        }
-                    }
-                }
-                None
-            }
-
-            if let Some(jar) = find_launchwrapper_jar(&libraries_base_dir) {
+            // 使用通用查找函数查找launchwrapper库
+            if let Some(jar) = find_library_jar(&libraries_base_dir, &["launchwrapper", "net/minecraft/launchwrapper"]) {
                 emit(
                     "log-debug",
                     format!(
@@ -549,28 +557,8 @@ pub async fn launch_minecraft(
                 "预检：Classpath 未包含 jopt-simple，尝试在 libraries 目录自动查找".to_string(),
             );
 
-            fn find_jopt_jar(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-                if let Ok(read_dir) = std::fs::read_dir(dir) {
-                    for entry in read_dir.flatten() {
-                        let path = entry.path();
-                        if path.is_dir() {
-                            if let Some(found) = find_jopt_jar(&path) {
-                                return Some(found);
-                            }
-                        } else {
-                            let name = entry.file_name().to_string_lossy().to_lowercase();
-                            if (name.contains("jopt-simple") || name.contains("joptsimple"))
-                                && name.ends_with(".jar")
-                            {
-                                return Some(path);
-                            }
-                        }
-                    }
-                }
-                None
-            }
-
-            if let Some(jar) = find_jopt_jar(&libraries_base_dir) {
+            // 使用通用查找函数查找jopt-simple库
+            if let Some(jar) = find_library_jar(&libraries_base_dir, &["jopt-simple", "joptsimple"]) {
                 emit(
                     "log-debug",
                     format!(
@@ -606,32 +594,8 @@ pub async fn launch_minecraft(
                     .to_string(),
             );
 
-            fn find_forge_jar(dir: &std::path::Path) -> Option<std::path::PathBuf> {
-                if let Ok(read_dir) = std::fs::read_dir(dir) {
-                    for entry in read_dir.flatten() {
-                        let path = entry.path();
-                        if path.is_dir() {
-                            if let Some(found) = find_forge_jar(&path) {
-                                return Some(found);
-                            }
-                        } else {
-                            let name = entry.file_name().to_string_lossy().to_lowercase();
-                            let full = path.to_string_lossy().to_lowercase();
-                            // 兼容常见旧版命名与目录结构
-                            if (name.starts_with("forge-")
-                                || full.contains("net\\minecraftforge\\forge")
-                                || full.contains("net/minecraftforge/forge"))
-                                && name.ends_with(".jar")
-                            {
-                                return Some(path);
-                            }
-                        }
-                    }
-                }
-                None
-            }
-
-            if let Some(jar) = find_forge_jar(&libraries_base_dir) {
+            // 使用通用查找函数查找forge库
+            if let Some(jar) = find_library_jar(&libraries_base_dir, &["forge", "minecraftforge", "net/minecraftforge/forge"]) {
                 emit(
                     "log-debug",
                     format!("自动自愈：发现 Forge 库，加入 Classpath: {}", jar.display()),

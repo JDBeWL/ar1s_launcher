@@ -55,6 +55,10 @@ export const useDownloadStore = defineStore('download', () => {
         userHidNotification.value = false
         if (data.status === 'error') {
             downloadError.value = data.error || '下载过程中发生未知错误';
+            // 显示错误提示
+            if (data.error) {
+                alert(`下载失败: ${data.error}`);
+            }
         }
       }
     })

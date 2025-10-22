@@ -26,24 +26,139 @@ pub fn verify_file(
     expected_hash: &str,
     expected_size: u64,
 ) -> Result<bool, LauncherError> {
+    // 检查文件是否存在
+    if !path.exists() {
+        return Ok(false);
+    }
+    
+    // 检查文件大小
+    let actual_size = std::fs::metadata(path)?.len();
+    if expected_size > 0 && actual_size != expected_size {
+        println!("文件大小不匹配: 期望 {} 字节, 实际 {} 字节", expected_size, actual_size);
+        return Ok(false);
+    }
+    
+    // 如果提供了哈希值，验证文件哈希
     if !expected_hash.is_empty() {
-        // 如果提供了哈希值，验证文件哈希
         let mut file = std::fs::File::open(path)?;
         let mut hasher = Sha1::new();
         std::io::copy(&mut file, &mut hasher)?;
         let actual_hash = hasher.finalize();
         let actual_hash_str = format!("{:x}", actual_hash);
-        Ok(actual_hash_str.to_lowercase() == expected_hash.to_lowercase())
-    } else {
-        // 如果没有提供哈希值，回退到大小检查
-        if expected_size > 0 {
-            let actual_size = std::fs::metadata(path)?.len();
-            Ok(actual_size == expected_size)
-        } else {
-            // 如果预期大小为0，无法验证，假设正常
-            Ok(true)
+        let is_valid = actual_hash_str.to_lowercase() == expected_hash.to_lowercase();
+        
+        if !is_valid {
+            println!("文件哈希不匹配: 期望 {}, 实际 {}", expected_hash, actual_hash_str);
         }
+        
+        Ok(is_valid)
+    } else {
+        // 如果没有提供哈希值，只检查大小
+        Ok(true)
     }
+}
+
+/// 增强的文件验证和恢复机制
+pub async fn verify_and_repair_file(
+    job: &crate::models::DownloadJob,
+    client: &reqwest::Client,
+) -> Result<bool, LauncherError> {
+    let path = &job.path;
+    
+    // 1. 检查文件是否存在
+    if !path.exists() {
+        println!("文件不存在，需要下载: {}", path.display());
+        return Ok(false);
+    }
+    
+    // 2. 验证文件完整性
+    if verify_file(path, &job.hash, job.size)? {
+        println!("文件验证通过: {}", path.display());
+        return Ok(true);
+    }
+    
+    // 3. 文件损坏，尝试修复
+    println!("文件损坏，尝试修复: {}", path.display());
+    
+    // 3.1 备份损坏的文件
+    let backup_path = path.with_extension("bak");
+    if let Err(e) = std::fs::copy(path, &backup_path) {
+        println!("备份损坏文件失败: {}", e);
+    }
+    
+    // 3.2 删除损坏的文件
+    if let Err(e) = std::fs::remove_file(path) {
+        println!("删除损坏文件失败: {}", e);
+    }
+    
+    // 3.3 重新下载文件
+    println!("重新下载文件: {}", path.display());
+    
+    // 创建父目录
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    
+    // 下载文件
+    let response = client.get(&job.url).send().await?;
+    if !response.status().is_success() {
+        return Err(LauncherError::Custom(format!(
+            "下载失败: HTTP {}",
+            response.status()
+        )));
+    }
+    
+    let content = response.bytes().await?;
+    std::fs::write(path, &content)?;
+    
+    // 3.4 验证重新下载的文件
+    if verify_file(path, &job.hash, job.size)? {
+        println!("文件修复成功: {}", path.display());
+        // 删除备份文件
+        let _ = std::fs::remove_file(&backup_path);
+        Ok(true)
+    } else {
+        println!("文件修复失败: {}", path.display());
+        // 恢复备份文件
+        if backup_path.exists() {
+            let _ = std::fs::copy(&backup_path, path);
+        }
+        Ok(false)
+    }
+}
+
+/// 批量验证文件完整性
+pub async fn batch_verify_files(
+    jobs: &[crate::models::DownloadJob],
+    client: &reqwest::Client,
+) -> Result<Vec<(String, bool)>, LauncherError> {
+    use tokio::task;
+    
+    let mut tasks = vec![];
+    
+    for job in jobs {
+        let job_clone = job.clone();
+        let client_clone = client.clone();
+        
+        tasks.push(task::spawn(async move {
+            let file_name = job_clone.path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            
+            match verify_and_repair_file(&job_clone, &client_clone).await {
+                Ok(is_valid) => (file_name, is_valid),
+                Err(_) => (file_name, false),
+            }
+        }));
+    }
+    
+    let mut results = vec![];
+    for task in tasks {
+        results.push(task.await?);
+    }
+    
+    Ok(results)
 }
 
 /// 从版本JSON中收集下载任务

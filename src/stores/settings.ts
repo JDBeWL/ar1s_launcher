@@ -6,6 +6,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const maxMemory = ref(4096)
   const totalMemoryMB = ref(0)
   const downloadMirror = ref('bmcl')
+  const javaInstallations = ref<string[]>([])
+  const hasFoundJavaInstallations = ref(false)
 
   async function loadSystemMemory() {
     try {
@@ -54,14 +56,29 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  async function findJavaInstallations() {
+    try {
+      const installations = await invoke('find_java_installations_command')
+      javaInstallations.value = installations as string[]
+      hasFoundJavaInstallations.value = true
+      return javaInstallations.value
+    } catch (err) {
+      console.error('Failed to find Java installations:', err)
+      return []
+    }
+  }
+
   return {
     maxMemory,
     totalMemoryMB,
     downloadMirror,
+    javaInstallations,
+    hasFoundJavaInstallations,
     loadSystemMemory,
     loadMaxMemory,
     saveMaxMemory,
     loadDownloadMirror,
-    saveDownloadMirror
+    saveDownloadMirror,
+    findJavaInstallations
   }
 })

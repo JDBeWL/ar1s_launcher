@@ -259,7 +259,7 @@ watch(username, (newName) => {
               <v-list-item to="/add-instance" prepend-icon="mdi-plus">
                 <v-list-item-title>添加实例</v-list-item-title>
               </v-list-item>
-              <v-list-item to="/instance-manager" prepend-icon="mdi-folder">
+              <v-list-item to="/instance-manager" prepend-icon="mdi-layers-outline">
                 <v-list-item-title>实例管理</v-list-item-title>
               </v-list-item>
               <v-list-item to="/download" prepend-icon="mdi-download">

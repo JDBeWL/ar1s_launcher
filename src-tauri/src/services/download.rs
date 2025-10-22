@@ -4,6 +4,7 @@ use crate::services::config::load_config;
 use crate::utils::file_utils;
 use reqwest;
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -29,6 +30,8 @@ pub async fn process_and_download_version(
     let config = load_config()?;
     let game_dir = PathBuf::from(&config.game_dir);
     let version_dir = game_dir.join("versions").join(&version_id);
+    
+    // 在开始下载前创建版本目录
     fs::create_dir_all(&version_dir)?;
     let (libraries_base_dir, assets_base_dir) =
         (game_dir.join("libraries"), game_dir.join("assets"));
@@ -359,17 +362,29 @@ pub async fn process_and_download_version(
     }
 
     // 执行批量下载
-    download_all_files(downloads.clone(), window, downloads.len() as u64, mirror).await?;
-
-    // 保存版本元数据文件
-    let version_json_path = version_dir.join(format!("{}.json", version_id));
-    fs::write(version_json_path, text)?;
-
-    Ok(())
+    match download_all_files(downloads.clone(), window, downloads.len() as u64, mirror).await {
+        Ok(_) => {
+            // 保存版本元数据文件
+            let version_json_path = version_dir.join(format!("{}.json", version_id));
+            fs::write(version_json_path, text)?;
+            Ok(())
+        }
+        Err(e) => {
+            // 下载失败时清理版本文件夹
+            println!("下载失败，清理版本文件夹: {}", version_dir.display());
+            if version_dir.exists() {
+                if let Err(cleanup_err) = fs::remove_dir_all(&version_dir) {
+                    println!("清理版本文件夹失败: {}", cleanup_err);
+                } else {
+                    println!("版本文件夹清理完成");
+                }
+            }
+            Err(e)
+        }
+    }
 }
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -397,6 +412,8 @@ pub struct DownloadProgress {
     pub bytes_downloaded: u64, // 已下载字节数
     pub total_bytes: u64,      // 总字节数
     pub percent: u8,           // 完成百分比(0-100)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,  // 错误信息
 }
 
 pub async fn download_all_files(
@@ -526,31 +543,21 @@ pub async fn download_all_files(
                     bytes_downloaded: current_bytes,
                     total_bytes: total_size,
                     percent: progress_percent,
+                    error: None,
                 };
                 let _ = window.emit("download-progress", &progress);
             }
         })
     };
 
-    // 创建线程池
+    // 创建并发下载任务
     let semaphore = Arc::new(tokio::sync::Semaphore::new(threads));
     let mut handles = vec![];
 
-    // 在循环前克隆共享状态
-    let state_file_clone = state_file.clone();
-
+    // 使用真正的并发下载：所有任务同时开始，但受限于信号量
     for job in filtered_jobs {
         if !state.load(Ordering::SeqCst) {
             break;
-        }
-
-        // 记录正在进行的下载
-        {
-            let mut state = download_state.lock().await;
-            state
-                .active_downloads
-                .insert(job.url.clone(), job.path.clone());
-            std::fs::write(&state_file_clone, serde_json::to_string(&*state)?)?;
         }
 
         let permit = semaphore.clone().acquire_owned().await.unwrap();
@@ -559,15 +566,24 @@ pub async fn download_all_files(
         let bytes_downloaded = bytes_downloaded.clone();
         let bytes_since_last = bytes_since_last.clone();
         let error_occurred = error_occurred.clone();
-        let job_state_file = state_file.clone();
-        let job_download_state = download_state.clone();
-
+        let download_state = download_state.clone();
+        let state_file = state_file.clone();
         let http = http.clone();
+
         handles.push(async_runtime::spawn(async move {
+            // 记录正在进行的下载
+            {
+                let mut state = download_state.lock().await;
+                state.active_downloads.insert(job.url.clone(), job.path.clone());
+                if let Err(e) = std::fs::write(&state_file, serde_json::to_string(&*state)?) {
+                    println!("WARN: Failed to write state file: {}", e);
+                }
+            }
+
             let mut current_job_error: Option<LauncherError> = None;
             let mut job_succeeded = false;
 
-            // The download logic now handles file verification and resuming.
+            // 下载逻辑现在处理文件验证和恢复
             const MAX_JOB_RETRIES: usize = 5;
             for retry in 0..MAX_JOB_RETRIES {
                 // 在重试时尝试切换到官方源
@@ -624,39 +640,32 @@ pub async fn download_all_files(
                 }
             }
 
-            // 克隆共享状态，以便在下载完成时更新
-            // TODO: 这里应该使用一个结构体来跟踪状态，而不是使用原子类型，以便更好地跟踪状态
-            let state_file_clone = job_state_file;
-            let download_state_clone = job_download_state;
-
-            if job_succeeded {
-                // 记录成功下载
-                let mut state = download_state_clone.lock().await;
-                state.completed_files.push(job.url.clone());
-                state.active_downloads.remove(&job.url);
-                std::fs::write(&state_file_clone, serde_json::to_string(&*state)?)?;
-            } else {
-                // 下载失败
-                if let Some(e) = current_job_error {
-                    // 不取消全局，记录失败
-                    let mut error_guard = error_occurred.lock().await;
-                    if error_guard.is_none() {
-                        *error_guard = Some(e.to_string());
-                    }
-
-                    // 记录失败下载
-                    let mut state = download_state_clone.lock().await;
+            // 更新下载状态
+            {
+                let mut state = download_state.lock().await;
+                if job_succeeded {
+                    state.completed_files.push(job.url.clone());
+                } else {
                     state.failed_files.push(job.url.clone());
-                    state.active_downloads.remove(&job.url);
-                    std::fs::write(&state_file_clone, serde_json::to_string(&*state)?)?;
+                    if let Some(e) = current_job_error {
+                        let mut error_guard = error_occurred.lock().await;
+                        if error_guard.is_none() {
+                            *error_guard = Some(e.to_string());
+                        }
+                    }
+                }
+                state.active_downloads.remove(&job.url);
+                if let Err(e) = std::fs::write(&state_file, serde_json::to_string(&*state)?) {
+                    println!("WARN: Failed to write state file: {}", e);
                 }
             }
+
             drop(permit);
             Ok::<(), LauncherError>(())
         }));
     }
 
-    // 等待所有线程完成
+    // 等待所有任务完成
     for handle in handles {
         let _ = handle.await;
     }
@@ -684,9 +693,38 @@ pub async fn download_all_files(
                 bytes_downloaded: final_bytes,
                 total_bytes,
                 percent: final_percent,
+                error: None,
             },
         );
         return Err(LauncherError::Custom("下载已取消".to_string()));
+    }
+
+    // 检查是否有错误发生
+    let error_message = {
+        let error_guard = error_occurred.lock().await;
+        error_guard.clone()
+    };
+
+    // 如果有错误发生，发送错误事件并返回错误
+    if let Some(error_msg) = error_message {
+        let _ = window.emit(
+            "download-progress",
+            &DownloadProgress {
+                progress: bytes_downloaded.load(Ordering::SeqCst),
+                total: total_size_precomputed,
+                speed: 0.0,
+                status: DownloadStatus::Error,
+                bytes_downloaded: bytes_downloaded.load(Ordering::SeqCst),
+                total_bytes: total_size_precomputed,
+                percent: if total_size_precomputed > 0 {
+                    (bytes_downloaded.load(Ordering::SeqCst) as f64 / total_size_precomputed as f64 * 100.0).round() as u8
+                } else {
+                    0
+                },
+                error: Some(error_msg.clone()),
+            },
+        );
+        return Err(LauncherError::Custom(error_msg));
     }
 
     // 如果有部分失败，发出摘要事件，但不报错，允许整体完成
@@ -716,6 +754,7 @@ pub async fn download_all_files(
             bytes_downloaded: bytes_downloaded.load(Ordering::SeqCst),
             total_bytes: total_size_precomputed,
             percent: 100,
+            error: None,
         },
     );
 
@@ -730,21 +769,32 @@ async fn download_file(
     bytes_downloaded: &Arc<AtomicU64>,
     bytes_since_last: &Arc<AtomicU64>,
 ) -> Result<(), LauncherError> {
-    // 1. 验证文件完整性，如果文件有效则跳过下载
+    // 1. 使用增强的文件验证和恢复机制
     if job.path.exists() {
-        if file_utils::verify_file(&job.path, &job.hash, job.size)? {
-            println!(
-                "DEBUG: File already exists and is valid, skipping: {}",
-                job.path.display()
-            );
-            bytes_downloaded.fetch_add(job.size, Ordering::SeqCst);
-            return Ok(());
+        match file_utils::verify_and_repair_file(job, &http).await {
+            Ok(true) => {
+                println!(
+                    "DEBUG: File already exists and is valid, skipping: {}",
+                    job.path.display()
+                );
+                bytes_downloaded.fetch_add(job.size, Ordering::SeqCst);
+                return Ok(());
+            }
+            Ok(false) => {
+                println!(
+                    "DEBUG: File exists but is invalid, attempting to download: {}",
+                    job.path.display()
+                );
+                // 文件验证失败，继续下载
+            }
+            Err(e) => {
+                println!(
+                    "DEBUG: File verification failed, attempting to download: {} - {}",
+                    job.path.display(), e
+                );
+                // 验证过程出错，继续下载
+            }
         }
-        println!(
-            "DEBUG: File exists but is invalid, removing and re-downloading: {}",
-            job.path.display()
-        );
-        tokio::fs::remove_file(&job.path).await?; // 清理损坏的文件
     }
 
     // 2. 尝试从指定 URL 下载（复用共享客户端）

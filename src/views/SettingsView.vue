@@ -16,7 +16,6 @@ const gameDir = ref('')
 const versionIsolation = ref(true)
 const javaPath = ref('')
 const isJavaPathValid = ref(false)
-const javaInstallations = ref<string[]>([])
 const loadingJava = ref(false)
 const downloadThreads = ref(8);
 
@@ -48,12 +47,11 @@ async function loadJavaPath() {
 async function findJavaInstallations() {
   try {
     loadingJava.value = true;
-    const installations = await invoke('find_java_installations_command');
-    javaInstallations.value = installations as string[];
+    await settingsStore.findJavaInstallations();
     
     // 如果找到了Java安装但还没有设置Java路径，则自动选择第一个
-    if (javaInstallations.value.length > 0 && !javaPath.value) {
-      javaPath.value = javaInstallations.value[0];
+    if (settingsStore.javaInstallations.length > 0 && !javaPath.value) {
+      javaPath.value = settingsStore.javaInstallations[0];
       await setJavaPath(javaPath.value);
     }
     
@@ -136,9 +134,13 @@ onMounted(async () => {
   await settingsStore.loadDownloadMirror();
   await loadGameDir();
   await loadJavaPath();
-  await findJavaInstallations();
   await loadDownloadThreads();
   await loadVersionIsolation();
+  
+  // 只在启动时查找一次Java安装，之后保持状态
+  if (!settingsStore.hasFoundJavaInstallations && settingsStore.javaInstallations.length === 0) {
+    await findJavaInstallations();
+  }
   
   // 监听游戏目录变更事件
   await listen('game-dir-changed', (event) => {
@@ -224,7 +226,7 @@ onMounted(async () => {
 
         <v-combobox
           v-model="javaPath"
-          :items="javaInstallations.map(p => formatJavaPath(p))"
+          :items="settingsStore.javaInstallations.map(p => formatJavaPath(p))"
           label="Java 路径"
           class="mt-2"
           :loading="loadingJava"

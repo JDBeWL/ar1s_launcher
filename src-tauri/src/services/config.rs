@@ -6,6 +6,34 @@ use tauri::Emitter;
 use crate::errors::LauncherError;
 use crate::models::{GameConfig, GameDirInfo};
 
+// 获取保存的用户名
+pub async fn get_saved_username() -> Result<Option<String>, LauncherError> {
+    let config = load_config()?;
+    Ok(config.username)
+}
+
+// 设置保存的用户名
+pub async fn set_saved_username(username: String) -> Result<(), LauncherError> {
+    let mut config = load_config()?;
+    config.username = Some(username);
+    save_config(&config)?;
+    Ok(())
+}
+
+// 获取保存的UUID
+pub async fn get_saved_uuid() -> Result<Option<String>, LauncherError> {
+    let config = load_config()?;
+    Ok(config.uuid)
+}
+
+// 设置保存的UUID
+pub async fn set_saved_uuid(uuid: String) -> Result<(), LauncherError> {
+    let mut config = load_config()?;
+    config.uuid = Some(uuid);
+    save_config(&config)?;
+    Ok(())
+}
+
 /// 加载配置文件
 pub fn load_config() -> Result<GameConfig, LauncherError> {
     let config_path = get_config_path()?;
@@ -82,22 +110,109 @@ fn get_config_path() -> Result<PathBuf, LauncherError> {
     Ok(exe_dir.join("ar1s.json"))
 }
 
+/// 配置键值映射定义
+#[derive(Debug, Clone, Copy)]
+enum ConfigKey {
+    JavaPath,
+    GameDir,
+    VersionIsolation,
+    DownloadThreads,
+    Language,
+    IsolateSaves,
+    IsolateResourcepacks,
+    IsolateLogs,
+    Username,
+    Uuid,
+    MaxMemory,
+    DownloadMirror,
+}
+
+impl ConfigKey {
+    fn from_str(key: &str) -> Option<Self> {
+        match key {
+            "javaPath" => Some(Self::JavaPath),
+            "gameDir" => Some(Self::GameDir),
+            "versionIsolation" => Some(Self::VersionIsolation),
+            "downloadThreads" => Some(Self::DownloadThreads),
+            "language" => Some(Self::Language),
+            "isolateSaves" => Some(Self::IsolateSaves),
+            "isolateResourcepacks" => Some(Self::IsolateResourcepacks),
+            "isolateLogs" => Some(Self::IsolateLogs),
+            "username" => Some(Self::Username),
+            "uuid" => Some(Self::Uuid),
+            "maxMemory" => Some(Self::MaxMemory),
+            "downloadMirror" => Some(Self::DownloadMirror),
+            _ => None,
+        }
+    }
+
+    fn get_value(&self, config: &GameConfig) -> Option<String> {
+        match self {
+            Self::JavaPath => config.java_path.clone(),
+            Self::GameDir => Some(config.game_dir.clone()),
+            Self::VersionIsolation => Some(config.version_isolation.to_string()),
+            Self::DownloadThreads => Some(config.download_threads.to_string()),
+            Self::Language => config.language.clone(),
+            Self::IsolateSaves => Some(config.isolate_saves.to_string()),
+            Self::IsolateResourcepacks => Some(config.isolate_resourcepacks.to_string()),
+            Self::IsolateLogs => Some(config.isolate_logs.to_string()),
+            Self::Username => config.username.clone(),
+            Self::Uuid => config.uuid.clone(),
+            Self::MaxMemory => Some(config.max_memory.to_string()),
+            Self::DownloadMirror => config.download_mirror.clone(),
+        }
+    }
+
+    fn set_value(&self, config: &mut GameConfig, value: String) -> Result<(), LauncherError> {
+        match self {
+            Self::JavaPath => config.java_path = Some(value),
+            Self::GameDir => config.game_dir = value,
+            Self::VersionIsolation => {
+                config.version_isolation = value.parse().map_err(|_| {
+                    LauncherError::Custom("Invalid boolean value for versionIsolation".to_string())
+                })?
+            }
+            Self::DownloadThreads => {
+                config.download_threads = value.parse().map_err(|_| {
+                    LauncherError::Custom("Invalid u8 value for downloadThreads".to_string())
+                })?
+            }
+            Self::Language => config.language = Some(value),
+            Self::IsolateSaves => {
+                config.isolate_saves = value.parse().map_err(|_| {
+                    LauncherError::Custom("Invalid boolean value for isolateSaves".to_string())
+                })?
+            }
+            Self::IsolateResourcepacks => {
+                config.isolate_resourcepacks = value.parse().map_err(|_| {
+                    LauncherError::Custom(
+                        "Invalid boolean value for isolateResourcepacks".to_string(),
+                    )
+                })?
+            }
+            Self::IsolateLogs => {
+                config.isolate_logs = value.parse().map_err(|_| {
+                    LauncherError::Custom("Invalid boolean value for isolateLogs".to_string())
+                })?
+            }
+            Self::Username => config.username = Some(value),
+            Self::Uuid => config.uuid = Some(value),
+            Self::MaxMemory => {
+                config.max_memory = value.parse().map_err(|_| {
+                    LauncherError::Custom("Invalid u32 value for maxMemory".to_string())
+                })?
+            }
+            Self::DownloadMirror => config.download_mirror = Some(value),
+        }
+        Ok(())
+    }
+}
+
 pub async fn load_config_key(key: String) -> Result<Option<String>, LauncherError> {
     let config = load_config()?;
-    match key.as_str() {
-        "javaPath" => Ok(config.java_path),
-        "gameDir" => Ok(Some(config.game_dir)),
-        "versionIsolation" => Ok(Some(config.version_isolation.to_string())),
-        "downloadThreads" => Ok(Some(config.download_threads.to_string())),
-        "language" => Ok(config.language),
-        "isolateSaves" => Ok(Some(config.isolate_saves.to_string())),
-        "isolateResourcepacks" => Ok(Some(config.isolate_resourcepacks.to_string())),
-        "isolateLogs" => Ok(Some(config.isolate_logs.to_string())),
-        "username" => Ok(config.username),
-        "uuid" => Ok(config.uuid),
-        "maxMemory" => Ok(Some(config.max_memory.to_string())),
-        "downloadMirror" => Ok(config.download_mirror),
-        _ => Err(LauncherError::Custom(format!(
+    match ConfigKey::from_str(&key) {
+        Some(config_key) => Ok(config_key.get_value(&config)),
+        None => Err(LauncherError::Custom(format!(
             "Unknown config key: {}",
             key
         ))),
@@ -106,56 +221,39 @@ pub async fn load_config_key(key: String) -> Result<Option<String>, LauncherErro
 
 pub async fn save_config_key(key: String, value: String) -> Result<(), LauncherError> {
     let mut config = load_config()?;
-    match key.as_str() {
-        "javaPath" => config.java_path = Some(value),
-        "gameDir" => config.game_dir = value,
-        "versionIsolation" => {
-            config.version_isolation = value.parse().map_err(|_| {
-                LauncherError::Custom("Invalid boolean value for versionIsolation".to_string())
-            })?
+    match ConfigKey::from_str(&key) {
+        Some(config_key) => {
+            config_key.set_value(&mut config, value)?;
+            save_config(&config)
         }
-        "downloadThreads" => {
-            config.download_threads = value.parse().map_err(|_| {
-                LauncherError::Custom("Invalid u8 value for downloadThreads".to_string())
-            })?
-        }
-        "language" => config.language = Some(value),
-        "isolateSaves" => {
-            config.isolate_saves = value.parse().map_err(|_| {
-                LauncherError::Custom("Invalid boolean value for isolateSaves".to_string())
-            })?
-        }
-        "isolateResourcepacks" => {
-            config.isolate_resourcepacks = value.parse().map_err(|_| {
-                LauncherError::Custom("Invalid boolean value for isolateResourcepacks".to_string())
-            })?
-        }
-        "isolateLogs" => {
-            config.isolate_logs = value.parse().map_err(|_| {
-                LauncherError::Custom("Invalid boolean value for isolateLogs".to_string())
-            })?
-        }
-        // Removed username and uuid to avoid duplication with auth service
-        "maxMemory" => {
-            config.max_memory = value
-                .parse()
-                .map_err(|_| LauncherError::Custom("Invalid u32 value for maxMemory".to_string()))?
-        }
-        "downloadMirror" => config.download_mirror = Some(value),
-        _ => {
-            return Err(LauncherError::Custom(format!(
-                "Unknown or restricted config key: {}",
-                key
-            )))
-        }
+        None => Err(LauncherError::Custom(format!(
+            "Unknown config key: {}",
+            key
+        ))),
     }
-    save_config(&config)?;
-    Ok(())
+}
+
+/// 通用配置获取函数
+fn get_config_value<T, F>(getter: F) -> Result<T, LauncherError>
+where
+    F: FnOnce(&GameConfig) -> T,
+{
+    let config = load_config()?;
+    Ok(getter(&config))
+}
+
+/// 通用配置设置函数
+async fn set_config_value<T, F>(setter: F) -> Result<(), LauncherError>
+where
+    F: FnOnce(&mut GameConfig) -> T,
+{
+    let mut config = load_config()?;
+    setter(&mut config);
+    save_config(&config)
 }
 
 pub fn get_game_dir() -> Result<String, LauncherError> {
-    let config = load_config()?;
-    Ok(config.game_dir)
+    get_config_value(|config| config.game_dir.clone())
 }
 
 pub async fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
@@ -180,36 +278,27 @@ pub async fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
     Ok(GameDirInfo {
         path: game_dir_str,
         versions,
-        total_size: 0, // Note: total_size is not calculated
+        total_size: 0,
     })
 }
 
 pub async fn set_game_dir(path: String, window: &tauri::Window) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
-    config.game_dir = path.clone();
-    save_config(&config)?;
-
+    let path_clone = path.clone();
+    set_config_value(|config| config.game_dir = path_clone).await?;
     window.emit("game-dir-changed", &path)?;
     Ok(())
 }
 
 pub async fn set_version_isolation(enabled: bool) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
-    config.version_isolation = enabled;
-    save_config(&config)?;
-    Ok(())
+    set_config_value(|config| config.version_isolation = enabled).await
 }
 
 pub fn get_download_threads() -> Result<u8, LauncherError> {
-    let config = load_config()?;
-    Ok(config.download_threads)
+    get_config_value(|config| config.download_threads)
 }
 
 pub async fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
-    config.download_threads = threads;
-    save_config(&config)?;
-    Ok(())
+    set_config_value(|config| config.download_threads = threads).await
 }
 
 pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, LauncherError> {
