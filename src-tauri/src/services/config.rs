@@ -5,6 +5,7 @@ use tauri::Emitter;
 
 use crate::errors::LauncherError;
 use crate::models::{GameConfig, GameDirInfo};
+use crate::services::memory::{get_system_memory, recommend_memory_for_game, get_memory_warning_message, is_memory_setting_safe, MemoryStats, MemoryRecommendation, AutoMemoryConfig, auto_set_memory_if_enabled};
 
 // 获取保存的用户名
 pub async fn get_saved_username() -> Result<Option<String>, LauncherError> {
@@ -84,6 +85,7 @@ pub fn load_config() -> Result<GameConfig, LauncherError> {
             uuid: None,
             max_memory: crate::models::default_max_memory(),
             download_mirror: Some("bmcl".to_string()),
+            auto_memory_enabled: false,
         };
 
         // 保存配置
@@ -387,4 +389,64 @@ pub fn get_total_memory() -> u64 {
     let mut sys = System::new();
     sys.refresh_memory();
     sys.total_memory()
+}
+
+/// 获取系统内存统计信息
+pub async fn get_memory_stats() -> Result<MemoryStats, LauncherError> {
+    Ok(get_system_memory())
+}
+
+/// 为指定游戏版本推荐内存设置
+pub async fn recommend_memory(version: String, modded: bool) -> Result<MemoryRecommendation, LauncherError> {
+    Ok(recommend_memory_for_game(&version, modded))
+}
+
+/// 检查内存设置是否安全（只检查最低限制）
+pub async fn validate_memory_setting(memory_mb: u32) -> Result<bool, LauncherError> {
+    is_memory_setting_safe(memory_mb)
+}
+
+/// 检查内存设置是否超过系统90%（用于前端警告）
+pub async fn check_memory_warning(memory_mb: u32) -> Result<Option<String>, LauncherError> {
+    Ok(get_memory_warning_message(memory_mb))
+}
+
+/// 获取自动内存配置
+pub async fn get_auto_memory_config() -> Result<AutoMemoryConfig, LauncherError> {
+    let config = load_config()?;
+    let auto_config = AutoMemoryConfig {
+        enabled: config.auto_memory_enabled,
+        max_limit_mb: 8500, // 整合包优化模组要求的最大限制
+        safety_margin_percent: 20.0, // 保留20%的安全余量
+    };
+    Ok(auto_config)
+}
+
+/// 设置自动内存启用状态
+pub async fn set_auto_memory_enabled(enabled: bool) -> Result<(), LauncherError> {
+    let mut config = load_config()?;
+    config.auto_memory_enabled = enabled;
+    save_config(&config)
+}
+
+/// 自动设置内存（如果启用自动设置）
+pub async fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
+    let config = load_config()?;
+    let auto_config = AutoMemoryConfig {
+        enabled: config.auto_memory_enabled,
+        max_limit_mb: 8500,
+        safety_margin_percent: 20.0,
+    };
+    
+    if !auto_config.enabled {
+        return Ok(None);
+    }
+    
+    let recommended_memory = auto_set_memory_if_enabled(&auto_config);
+    Ok(recommended_memory)
+}
+
+/// 分析内存使用效率
+pub async fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError> {
+    Ok(crate::services::memory::analyze_memory_efficiency(memory_mb))
 }

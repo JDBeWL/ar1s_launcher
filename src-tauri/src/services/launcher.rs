@@ -1,6 +1,7 @@
 use crate::errors::LauncherError;
 use crate::models::*;
 use crate::services::config::{load_config, save_config};
+use crate::services::memory::{optimize_jvm_memory_args, is_memory_setting_safe};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -774,14 +775,26 @@ pub async fn launch_minecraft(
 
     // 在 JVM 启动参数中设置内存和本机库路径（同时设置 org.lwjgl.librarypath）
     let lwjgl_lib_path = natives_dir.to_string_lossy().to_string();
-    let mut final_args = vec![
-        format!("-Xmx{}M", options.memory.unwrap_or(2048)),
+    
+    // 使用智能内存管理
+    let memory_mb = options.memory.unwrap_or(2048);
+    
+    // 检查内存设置是否安全
+    if let Err(e) = is_memory_setting_safe(memory_mb) {
+        emit("log-warning", format!("内存设置警告: {}", e));
+    }
+    
+    // 生成优化的JVM内存参数
+    let mut final_args = optimize_jvm_memory_args(memory_mb, &options.version);
+    
+    // 添加其他必要的JVM参数
+    final_args.extend(vec![
         format!("-Djava.library.path={}", lwjgl_lib_path),
         format!("-Dorg.lwjgl.librarypath={}", lwjgl_lib_path),
         "-Dfile.encoding=UTF-8".to_string(),
         // 解决旧版 Forge (LWJGL 2) 在 Java 8 上由于 OpenAL 引发的 UnsatisfiedLinkError
         "-Dorg.lwjgl.openal.mapping.use=false".to_string(),
-    ];
+    ]);
     final_args.extend(jvm_args);
 
     // 在可能动态补充了库（如 LaunchWrapper）之后，重新计算最终 Classpath

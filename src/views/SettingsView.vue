@@ -18,6 +18,9 @@ const javaPath = ref('')
 const isJavaPathValid = ref(false)
 const loadingJava = ref(false)
 const downloadThreads = ref(8);
+const memoryWarning = ref('');
+const autoMemoryEnabled = ref(false);
+const memoryEfficiency = ref('');
 
 const totalMemoryGB = computed(() => (settingsStore.totalMemoryMB / 1024).toFixed(1));
 
@@ -105,6 +108,68 @@ async function saveDownloadThreads() {
   }
 }
 
+// 检查内存设置是否超过90%并显示警告
+async function checkMemoryWarning() {
+  try {
+    const warning = await invoke('check_memory_warning', { memoryMb: settingsStore.maxMemory });
+    memoryWarning.value = warning || '';
+  } catch (err) {
+    console.error('Failed to check memory warning:', err);
+    memoryWarning.value = '';
+  }
+}
+
+// 加载自动内存设置状态
+async function loadAutoMemoryConfig() {
+  try {
+    const config = await invoke('get_auto_memory_config');
+    autoMemoryEnabled.value = config.enabled;
+  } catch (err) {
+    console.error('Failed to load auto memory config:', err);
+  }
+}
+
+// 切换自动内存设置
+async function toggleAutoMemory() {
+  try {
+    await invoke('set_auto_memory_enabled', { enabled: autoMemoryEnabled.value });
+    
+    // 如果启用自动设置，立即应用推荐的内存
+    if (autoMemoryEnabled.value) {
+      await applyAutoMemory();
+    }
+  } catch (err) {
+    console.error('Failed to toggle auto memory:', err);
+  }
+}
+
+// 应用自动内存推荐
+async function applyAutoMemory() {
+  try {
+    const recommendedMemory = await invoke('auto_set_memory');
+    if (recommendedMemory !== null && recommendedMemory !== undefined) {
+      settingsStore.maxMemory = recommendedMemory;
+      await settingsStore.saveMaxMemory();
+      
+      // 更新内存效率分析
+      await analyzeMemoryEfficiency();
+    }
+  } catch (err) {
+    console.error('Failed to apply auto memory:', err);
+  }
+}
+
+// 分析内存使用效率
+async function analyzeMemoryEfficiency() {
+  try {
+    const efficiency = await invoke('analyze_memory_efficiency', { memoryMb: settingsStore.maxMemory });
+    memoryEfficiency.value = efficiency;
+  } catch (err) {
+    console.error('Failed to analyze memory efficiency:', err);
+    memoryEfficiency.value = '';
+  }
+}
+
 // 加载和保存版本隔离设置
 async function loadVersionIsolation() {
   try {
@@ -127,6 +192,17 @@ watch(() => settingsStore.downloadMirror, async () => {
   await settingsStore.saveDownloadMirror();
 });
 
+// 监听内存设置变化，检查是否超过90%
+watch(() => settingsStore.maxMemory, async (newValue) => {
+  await checkMemoryWarning();
+  await analyzeMemoryEfficiency();
+});
+
+// 监听自动内存设置变化
+watch(autoMemoryEnabled, async (newValue) => {
+  await toggleAutoMemory();
+});
+
 // 在组件挂载时加载所有设置
 onMounted(async () => {
   await settingsStore.loadSystemMemory();
@@ -136,6 +212,8 @@ onMounted(async () => {
   await loadJavaPath();
   await loadDownloadThreads();
   await loadVersionIsolation();
+  await loadAutoMemoryConfig();
+  await analyzeMemoryEfficiency();
   
   // 只在启动时查找一次Java安装，之后保持状态
   if (!settingsStore.hasFoundJavaInstallations && settingsStore.javaInstallations.length === 0) {
@@ -150,103 +228,235 @@ onMounted(async () => {
 </script>
 
 <template>
-  <v-container>
-    <v-card>
-      <v-card-title class="mt-2">设置</v-card-title>
-      <v-card-text>
-        <v-text-field
-          v-model="gameDir"
-          label="游戏目录"
-          append-inner-icon="mdi-folder"
-          @click:append-inner="selectGameDir"
-          readonly
-        ></v-text-field>
-
-        <v-switch
-          v-model="versionIsolation"
-          label="版本隔离"
-          color="primary"
-        ></v-switch>
-
-        <v-row align="center">
-          <v-col cols="8">
-            <v-slider
-              v-model="settingsStore.maxMemory"
-              label="最大内存 (MB)"
-              :min="512"
-              :max="Math.floor(settingsStore.totalMemoryMB * 0.8)"
-              :step="128"
-              thumb-label
-              :hint="`可用范围: 512MB - ${Math.floor(settingsStore.totalMemoryMB * 0.8)}MB (80% of ${settingsStore.totalMemoryMB}MB)`"
-              persistent-hint
-              @end="settingsStore.saveMaxMemory"
-            ></v-slider>
-          </v-col>
-          <v-col cols="4">
+  <v-container class="pa-4">
+    <v-row>
+      <!-- 游戏设置 -->
+      <v-col cols="12" md="6">
+        <v-card class="h-100">
+          <v-card-title class="d-flex align-center">
+            <v-icon class="mr-2">mdi-gamepad-variant</v-icon>
+            游戏设置
+          </v-card-title>
+          <v-card-text class="pa-4">
             <v-text-field
-              v-model.number="settingsStore.maxMemory"
-              type="number"
-              label="内存大小"
-              suffix="MB"
-              :rules="[
-                v => !!v || '必须输入内存大小',
-                v => (v >= 512 && v <= Math.floor(settingsStore.totalMemoryMB * 0.8)) || `必须在512-${Math.floor(settingsStore.totalMemoryMB * 0.8)}MB之间`
-              ]"
-              hide-spin-buttons
-              @change="settingsStore.saveMaxMemory"
+              v-model="gameDir"
+              label="游戏目录"
+              append-inner-icon="mdi-folder"
+              @click:append-inner="selectGameDir"
+              readonly
+              hide-details
+              class="mb-6"
             ></v-text-field>
-          </v-col>
-        </v-row>
-        <div class="text-caption ml-2 mb-4">
-          系统总内存: {{ settingsStore.totalMemoryMB }} MB (约 {{ totalMemoryGB }} GB)
-        </div>
 
+            <v-switch
+              v-model="versionIsolation"
+              label="版本隔离"
+              color="primary"
+              hide-details
+              hint="为每个版本创建独立的文件夹结构"
+              persistent-hint
+            ></v-switch>
+          </v-card-text>
+        </v-card>
+      </v-col>
 
-        <v-slider
-          v-model="downloadThreads"
-          label="下载线程数"
-          class="mt-4"
-          :min="1"
-          :max="16"
-          :step="1"
-          thumb-label
-          show-ticks="always"
-          persistent-hint
-          hint="设置多线程下载时使用的线程数量"
-          @end="saveDownloadThreads"
-        ></v-slider>
+      <!-- 下载设置 -->
+      <v-col cols="12" md="6">
+        <v-card class="h-100">
+          <v-card-title class="d-flex align-center">
+            <v-icon class="mr-2">mdi-download</v-icon>
+            下载设置
+          </v-card-title>
+          <v-card-text class="pa-4">
+            <v-slider
+              v-model="downloadThreads"
+              label="下载线程数"
+              :min="1"
+              :max="16"
+              :step="1"
+              thumb-label
+              show-ticks="always"
+              persistent-hint
+              hint="设置多线程下载时使用的线程数量"
+              @end="saveDownloadThreads"
+              hide-details
+              class="mb-6"
+            ></v-slider>
 
-        <div class="mt-6">
-          <div class="text-subtitle-1 font-weight-medium">下载源</div>
-          <v-radio-group v-model="settingsStore.downloadMirror" inline>
-            <v-radio label="官方源" value="official"></v-radio>
-            <v-radio label="BMCL 镜像" value="bmcl"></v-radio>
-          </v-radio-group>
-        </div>
+            <div>
+              <div class="text-subtitle-2 font-weight-medium mb-3">下载源</div>
+              <v-radio-group v-model="settingsStore.downloadMirror" inline hide-details>
+                <v-radio label="官方源" value="official"></v-radio>
+                <v-radio label="BMCL 镜像" value="bmcl"></v-radio>
+              </v-radio-group>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
 
-        <v-combobox
-          v-model="javaPath"
-          :items="settingsStore.javaInstallations.map(p => formatJavaPath(p))"
-          label="Java 路径"
-          class="mt-2"
-          :loading="loadingJava"
-          persistent-hint
-          hint="选择或输入一个Java路径"
-          @update:model-value="setJavaPath"
-        >
-          <template v-slot:append>
-            <v-btn
-              icon
-              variant="text"
+    <!-- 内存设置 -->
+    <v-row class="mt-4">
+      <v-col cols="12">
+        <v-card>
+          <v-card-title class="d-flex align-center">
+            <v-icon class="mr-2">mdi-memory</v-icon>
+            内存设置
+          </v-card-title>
+          <v-card-text class="pa-4">
+            <!-- 系统内存信息 -->
+            <div class="d-flex align-center justify-space-between mb-6">
+              <div>
+                <div class="text-subtitle-2">系统总内存</div>
+                <div class="text-h6 text-primary">{{ settingsStore.totalMemoryMB }} MB (约 {{ totalMemoryGB }} GB)</div>
+              </div>
+              <v-chip color="primary" variant="outlined">
+                <v-icon start>mdi-information</v-icon>
+                可用内存
+              </v-chip>
+            </div>
+
+            <!-- 自动内存设置 -->
+            <v-switch
+              v-model="autoMemoryEnabled"
+              label="自动设置内存"
+              color="primary"
+              class="mb-6"
+              hide-details
+              hint="根据系统可用内存自动设置最佳内存大小，不超过8500MB"
+              persistent-hint
+            ></v-switch>
+
+            <!-- 手动内存设置 -->
+            <div v-if="!autoMemoryEnabled" class="mb-6">
+              <div class="text-subtitle-2 mb-3">手动设置内存</div>
+              <v-row align="center">
+                <v-col cols="12" sm="8">
+                  <v-slider
+                    v-model="settingsStore.maxMemory"
+                    label="最大内存 (MB)"
+                    :min="512"
+                    :max="settingsStore.totalMemoryMB"
+                    :step="128"
+                    thumb-label
+                    :hint="`可用范围: 512MB - ${settingsStore.totalMemoryMB}MB`"
+                    persistent-hint
+                    @end="settingsStore.saveMaxMemory"
+                    hide-details
+                  ></v-slider>
+                </v-col>
+                <v-col cols="12" sm="4">
+                  <v-text-field
+                    v-model.number="settingsStore.maxMemory"
+                    type="number"
+                    label="内存大小"
+                    suffix="MB"
+                    :rules="[
+                      v => !!v || '必须输入内存大小',
+                      v => (v >= 512 && v <= settingsStore.totalMemoryMB) || `必须在512-${settingsStore.totalMemoryMB}MB之间`
+                    ]"
+                    hide-spin-buttons
+                    @change="settingsStore.saveMaxMemory"
+                    hide-details
+                  ></v-text-field>
+                </v-col>
+              </v-row>
+            </div>
+
+            <!-- 自动内存状态 -->
+            <div v-if="autoMemoryEnabled" class="mb-6">
+              <v-alert
+                type="info"
+                variant="tonal"
+                density="compact"
+                hide-details
+              >
+                <div class="d-flex align-center">
+                  <v-icon class="mr-2">mdi-auto-fix</v-icon>
+                  <span>自动内存设置已启用：当前内存 {{ settingsStore.maxMemory }}MB</span>
+                  <v-btn
+                    size="small"
+                    variant="text"
+                    class="ml-auto"
+                    @click="applyAutoMemory"
+                  >
+                    重新计算
+                  </v-btn>
+                </div>
+              </v-alert>
+            </div>
+
+            <!-- 内存分析信息 -->
+            <div v-if="memoryEfficiency || memoryWarning" class="mb-2">
+              <v-alert
+                v-if="memoryEfficiency"
+                type="info"
+                variant="tonal"
+                density="compact"
+                class="mb-2"
+                hide-details
+              >
+                <v-icon class="mr-2">mdi-chart-line</v-icon>
+                {{ memoryEfficiency }}
+              </v-alert>
+              
+              <v-alert
+                v-if="memoryWarning"
+                type="warning"
+                variant="tonal"
+                density="compact"
+                hide-details
+              >
+                <v-icon class="mr-2">mdi-alert</v-icon>
+                {{ memoryWarning }}
+              </v-alert>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
+
+    <!-- Java设置 -->
+    <v-row class="mt-4">
+      <v-col cols="12">
+        <v-card>
+          <v-card-title class="d-flex align-center">
+            <v-icon class="mr-2">mdi-language-java</v-icon>
+            Java 设置
+          </v-card-title>
+          <v-card-text class="pa-4">
+            <v-combobox
+              v-model="javaPath"
+              :items="settingsStore.javaInstallations.map(p => formatJavaPath(p))"
+              label="Java 路径"
               :loading="loadingJava"
-              @click="findJavaInstallations"
-              title="自动查找Java安装"
+              persistent-hint
+              hint="选择或输入一个Java路径"
+              @update:model-value="setJavaPath"
+              hide-details
             >
-              <v-icon>mdi-refresh</v-icon>
-            </v-btn>
-          </template>
-        </v-combobox>
-      </v-card-text>
-    </v-card>
+              <template v-slot:append>
+                <v-btn
+                  icon
+                  variant="text"
+                  :loading="loadingJava"
+                  @click="findJavaInstallations"
+                  title="自动查找Java安装"
+                >
+                  <v-icon>mdi-refresh</v-icon>
+                </v-btn>
+              </template>
+            </v-combobox>
+            
+            <div v-if="isJavaPathValid" class="mt-3">
+              <v-chip color="success" variant="outlined">
+                <v-icon start>mdi-check</v-icon>
+                Java路径有效
+              </v-chip>
+            </div>
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
   </v-container>
 </template>

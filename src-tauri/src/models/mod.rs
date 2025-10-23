@@ -16,6 +16,11 @@ pub fn default_true() -> bool {
     true
 }
 
+// 默认为false的辅助函数
+pub fn default_false() -> bool {
+    false
+}
+
 // 游戏配置
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GameConfig {
@@ -37,6 +42,8 @@ pub struct GameConfig {
     #[serde(default = "default_max_memory")]
     pub max_memory: u32,
     pub download_mirror: Option<String>,
+    #[serde(default = "default_false")]
+    pub auto_memory_enabled: bool,
 }
 
 // 游戏目录信息
