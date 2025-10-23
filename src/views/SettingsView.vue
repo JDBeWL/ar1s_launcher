@@ -111,7 +111,7 @@ async function saveDownloadThreads() {
 // 检查内存设置是否超过90%并显示警告
 async function checkMemoryWarning() {
   try {
-    const warning = await invoke('check_memory_warning', { memoryMb: settingsStore.maxMemory });
+    const warning = await invoke<string | null>('check_memory_warning', { memoryMb: settingsStore.maxMemory });
     memoryWarning.value = warning || '';
   } catch (err) {
     console.error('Failed to check memory warning:', err);
@@ -122,7 +122,7 @@ async function checkMemoryWarning() {
 // 加载自动内存设置状态
 async function loadAutoMemoryConfig() {
   try {
-    const config = await invoke('get_auto_memory_config');
+    const config = await invoke<{ enabled: boolean }>('get_auto_memory_config');
     autoMemoryEnabled.value = config.enabled;
   } catch (err) {
     console.error('Failed to load auto memory config:', err);
@@ -146,7 +146,7 @@ async function toggleAutoMemory() {
 // 应用自动内存推荐
 async function applyAutoMemory() {
   try {
-    const recommendedMemory = await invoke('auto_set_memory');
+    const recommendedMemory = await invoke<number | null>('auto_set_memory');
     if (recommendedMemory !== null && recommendedMemory !== undefined) {
       settingsStore.maxMemory = recommendedMemory;
       await settingsStore.saveMaxMemory();
@@ -162,7 +162,7 @@ async function applyAutoMemory() {
 // 分析内存使用效率
 async function analyzeMemoryEfficiency() {
   try {
-    const efficiency = await invoke('analyze_memory_efficiency', { memoryMb: settingsStore.maxMemory });
+    const efficiency = await invoke<string>('analyze_memory_efficiency', { memoryMb: settingsStore.maxMemory });
     memoryEfficiency.value = efficiency;
   } catch (err) {
     console.error('Failed to analyze memory efficiency:', err);
@@ -193,13 +193,13 @@ watch(() => settingsStore.downloadMirror, async () => {
 });
 
 // 监听内存设置变化，检查是否超过90%
-watch(() => settingsStore.maxMemory, async (newValue) => {
+watch(() => settingsStore.maxMemory, async () => {
   await checkMemoryWarning();
   await analyzeMemoryEfficiency();
 });
 
 // 监听自动内存设置变化
-watch(autoMemoryEnabled, async (newValue) => {
+watch(autoMemoryEnabled, async () => {
   await toggleAutoMemory();
 });
 
