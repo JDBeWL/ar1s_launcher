@@ -132,3 +132,6 @@ pub struct ForgeVersion {
     pub mcversion: String,
     pub build: i32,
 }
+
+// 整合包相关模型
+pub mod modpack;

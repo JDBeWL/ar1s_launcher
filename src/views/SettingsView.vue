@@ -17,7 +17,7 @@ const versionIsolation = ref(true)
 const javaPath = ref('')
 const isJavaPathValid = ref(false)
 const loadingJava = ref(false)
-const downloadThreads = ref(8);
+const downloadThreads = ref(32);
 const memoryWarning = ref('');
 const autoMemoryEnabled = ref(false);
 const memoryEfficiency = ref('');
@@ -272,7 +272,7 @@ onMounted(async () => {
               v-model="downloadThreads"
               label="下载线程数"
               :min="1"
-              :max="16"
+              :max="64"
               :step="1"
               thumb-label
               show-ticks="always"

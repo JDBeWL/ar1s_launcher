@@ -79,6 +79,7 @@ const router = createRouter({
     { path: '/settings', component: () => import('./views/SettingsView.vue') },
     { path: '/instance-manager', component: () => import('./views/InstanceManagerView.vue') },
     { path: '/add-instance', component: () => import('./views/AddInstanceView.vue') },
+    { path: '/install-modpack', component: () => import('./views/InstallModpackView.vue') },
   ],
 })
 

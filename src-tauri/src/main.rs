@@ -82,7 +82,11 @@ fn main() {
             ar1s_launcher_lib::controllers::instance_controller::delete_instance,
             ar1s_launcher_lib::controllers::instance_controller::rename_instance,
             ar1s_launcher_lib::controllers::instance_controller::open_instance_folder,
-            ar1s_launcher_lib::controllers::forge_controller::get_forge_versions
+            ar1s_launcher_lib::controllers::instance_controller::launch_instance,
+            ar1s_launcher_lib::controllers::forge_controller::get_forge_versions,
+            ar1s_launcher_lib::controllers::modpack_controller::search_modrinth_modpacks,
+            ar1s_launcher_lib::controllers::modpack_controller::get_modrinth_modpack_versions,
+            ar1s_launcher_lib::controllers::modpack_controller::install_modrinth_modpack
         ])
         .setup(|_| {
             log::info!("[DEBUG] Tauri应用初始化完成");

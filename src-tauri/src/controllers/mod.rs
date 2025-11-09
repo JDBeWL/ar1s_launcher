@@ -5,3 +5,4 @@ pub mod java_controller;
 pub mod launcher_controller;
 pub mod instance_controller;
 pub mod forge_controller;
+pub mod modpack_controller;

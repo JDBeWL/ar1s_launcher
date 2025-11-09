@@ -650,3 +650,33 @@ pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherE
     
     Ok(())
 }
+
+// 启动实例
+pub async fn launch_instance(instance_name: String, window: tauri::Window) -> Result<(), LauncherError> {
+    let config = config::load_config()?;
+    let game_dir = PathBuf::from(config.game_dir);
+    let instance_dir = game_dir.join("versions").join(&instance_name);
+    
+    if !instance_dir.exists() {
+        return Err(LauncherError::Custom(format!("实例 '{}' 不存在", instance_name)));
+    }
+    
+    // 检查实例的 JSON 文件是否存在
+    let instance_json_path = instance_dir.join(format!("{}.json", instance_name));
+    if !instance_json_path.exists() {
+        return Err(LauncherError::Custom(format!("实例 '{}' 的配置文件不存在", instance_name)));
+    }
+    
+    // 获取用户名，如果未设置则使用默认值
+    let username = config.username.unwrap_or_else(|| "Player".to_string());
+    
+    // 创建启动选项
+    let launch_options = crate::models::LaunchOptions {
+        version: instance_name.clone(),
+        username,
+        memory: Some(config.max_memory),
+    };
+    
+    // 调用启动器服务启动游戏
+    crate::services::launcher::launch_minecraft(launch_options, window).await
+}

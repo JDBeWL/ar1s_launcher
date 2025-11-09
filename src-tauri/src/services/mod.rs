@@ -6,3 +6,5 @@ pub mod instance;
 pub mod forge;
 pub mod file_verification;
 pub mod memory;
+pub mod modrinth;
+pub mod modpack_installer;

@@ -36,3 +36,8 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
 pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherError> {
     instance::open_instance_folder(instance_name).await
 }
+
+#[tauri::command]
+pub async fn launch_instance(instance_name: String, window: tauri::Window) -> Result<(), LauncherError> {
+    instance::launch_instance(instance_name, window).await
+}

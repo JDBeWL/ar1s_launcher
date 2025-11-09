@@ -137,11 +137,19 @@ async function openInstanceFolder(instance: Instance) {
 // 启动实例
 async function launchInstance(instance: Instance) {
   try {
-    // 这里需要调用启动游戏的API
     store.gameSnackText = `正在启动实例: ${instance.name}`;
     store.gameSnackColor = 'info';
     store.gameSnackVisible = true;
-    console.log('启动实例:', instance);
+    
+    // 调用启动实例的API
+    await invoke('launch_instance', { 
+      instanceName: instance.name,
+      window: {} 
+    });
+    
+    store.gameSnackText = `实例 ${instance.name} 启动成功`;
+    store.gameSnackColor = 'success';
+    store.gameSnackVisible = true;
   } catch (error) {
     console.error('启动实例失败:', error);
     store.gameSnackText = '启动实例失败';

@@ -1,4 +1,4 @@
-use crate::errors::LauncherError;
+﻿use crate::errors::LauncherError;
 use crate::models::ForgeVersion;
 use crate::services::config;
 use crate::utils::file_utils;
@@ -180,6 +180,339 @@ async fn download_from_multiple_sources(
     Err(LauncherError::Custom("所有下载源均失败".to_string()))
 }
 
+/// 自动下载 LaunchWrapper 库
+async fn download_launchwrapper_library(
+    libraries_dir: &PathBuf,
+    mc_version: &str,
+) -> Result<(), LauncherError> {
+    println!("Forge: 开始下载 LaunchWrapper 库");
+    
+    // 根据 Minecraft 版本选择合适的 LaunchWrapper 版本
+    let launchwrapper_version = if mc_version.starts_with("1.12") {
+        "1.12"
+    } else if mc_version.starts_with("1.11") || mc_version.starts_with("1.10") {
+        "1.12" // 1.10-1.11 也使用 1.12 版本
+    } else if mc_version.starts_with("1.9") || mc_version.starts_with("1.8") {
+        "1.12" // 1.8-1.9 也使用 1.12 版本
+    } else {
+        "1.12" // 默认使用 1.12 版本
+    };
+    
+    let launchwrapper_path = format!(
+        "net/minecraft/launchwrapper/{}/launchwrapper-{}.jar",
+        launchwrapper_version, launchwrapper_version
+    );
+    let target_path = libraries_dir.join(&launchwrapper_path);
+    
+    // 如果库文件已存在，跳过下载
+    if target_path.exists() {
+        println!("Forge: LaunchWrapper 库已存在: {}", target_path.display());
+        return Ok(());
+    }
+    
+    // 创建目录
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| LauncherError::Custom(format!("创建 LaunchWrapper 目录失败: {}", e)))?;
+    }
+    
+    // 构建下载源列表
+    let sources = vec![
+        format!(
+            "https://bmclapi2.bangbang93.com/maven/net/minecraft/launchwrapper/{}/launchwrapper-{}.jar",
+            launchwrapper_version, launchwrapper_version
+        ),
+        format!(
+            "https://repo1.maven.org/maven2/net/minecraft/launchwrapper/{}/launchwrapper-{}.jar",
+            launchwrapper_version, launchwrapper_version
+        ),
+        format!(
+            "https://libraries.minecraft.net/net/minecraft/launchwrapper/{}/launchwrapper-{}.jar",
+            launchwrapper_version, launchwrapper_version
+        ),
+    ];
+    
+    let client = Client::new();
+    
+    for (index, source_url) in sources.iter().enumerate() {
+        println!("Forge: 尝试下载源 {}: {}", index + 1, source_url);
+        
+        match download_with_retry(source_url, &client, 3).await {
+            Ok(response) => {
+                let bytes = response.bytes().await?;
+                
+                // 验证 JAR 文件
+                if bytes.len() >= 4 && bytes[0..4] == [0x50, 0x4B, 0x03, 0x04] {
+                    fs::write(&target_path, &bytes)
+                        .map_err(|e| LauncherError::Custom(format!("写入 LaunchWrapper 库失败: {}", e)))?;
+                    println!("Forge: LaunchWrapper 库下载成功: {}", target_path.display());
+                    return Ok(());
+                } else {
+                    println!("Forge: 源 {} 返回的文件不是有效的 JAR 格式", index + 1);
+                }
+            }
+            Err(e) => {
+                println!("Forge: 源 {} 下载失败: {}", index + 1, e);
+            }
+        }
+    }
+    
+    Err(LauncherError::Custom("所有 LaunchWrapper 下载源均失败".to_string()))
+}
+
+/// 自动下载 ASM 库（Forge 字节码操作需要）
+async fn download_asm_library(
+    libraries_dir: &PathBuf,
+    mc_version: &str,
+) -> Result<(), LauncherError> {
+    println!("Forge: 开始下载 ASM 库");
+    
+    // 根据 Minecraft 版本选择合适的 ASM 版本
+    let asm_version = if mc_version.starts_with("1.7.10") {
+        "5.0.3" // 1.7.10 Forge 使用 ASM 5.0.3
+    } else if mc_version.starts_with("1.8") || mc_version.starts_with("1.9") || mc_version.starts_with("1.10") || mc_version.starts_with("1.11") {
+        "5.0.4" // 1.8-1.11 使用 ASM 5.0.4
+    } else {
+        "5.2" // 1.12+ 使用更新的 ASM 版本
+    };
+    
+    let asm_path = format!(
+        "org/ow2/asm/asm-all/{}/asm-all-{}.jar",
+        asm_version, asm_version
+    );
+    let target_path = libraries_dir.join(&asm_path);
+    
+    // 如果库文件已存在，跳过下载
+    if target_path.exists() {
+        println!("Forge: ASM 库已存在: {}", target_path.display());
+        return Ok(());
+    }
+    
+    // 创建目录
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| LauncherError::Custom(format!("创建 ASM 目录失败: {}", e)))?;
+    }
+    
+    // 构建下载源列表
+    let sources = vec![
+        format!(
+            "https://bmclapi2.bangbang93.com/maven/org/ow2/asm/asm-all/{}/asm-all-{}.jar",
+            asm_version, asm_version
+        ),
+        format!(
+            "https://repo1.maven.org/maven2/org/ow2/asm/asm-all/{}/asm-all-{}.jar",
+            asm_version, asm_version
+        ),
+        format!(
+            "https://libraries.minecraft.net/org/ow2/asm/asm-all/{}/asm-all-{}.jar",
+            asm_version, asm_version
+        ),
+    ];
+    
+    let client = Client::new();
+    
+    for (index, source_url) in sources.iter().enumerate() {
+        println!("Forge: 尝试下载源 {}: {}", index + 1, source_url);
+        
+        match download_with_retry(source_url, &client, 3).await {
+            Ok(response) => {
+                let bytes = response.bytes().await?;
+                
+                // 验证 JAR 文件
+                if bytes.len() >= 4 && bytes[0..4] == [0x50, 0x4B, 0x03, 0x04] {
+                    fs::write(&target_path, &bytes)
+                        .map_err(|e| LauncherError::Custom(format!("写入 ASM 库失败: {}", e)))?;
+                    println!("Forge: ASM 库下载成功: {}", target_path.display());
+                    return Ok(());
+                } else {
+                    println!("Forge: 源 {} 返回的文件不是有效的 JAR 格式", index + 1);
+                }
+            }
+            Err(e) => {
+                println!("Forge: 源 {} 下载失败: {}", index + 1, e);
+            }
+        }
+    }
+    
+    Err(LauncherError::Custom("所有 ASM 下载源均失败".to_string()))
+}
+
+/// 自动下载 LZMA 库（Forge 压缩文件处理需要）
+async fn download_lzma_library(
+    libraries_dir: &PathBuf,
+    mc_version: &str,
+) -> Result<(), LauncherError> {
+    println!("Forge: 开始下载 LZMA 库");
+
+    // 根据 Minecraft 版本选择合适的 LZMA 版本
+    let (lzma_path, sources) = if mc_version.starts_with("1.7.10") {
+        // Forge 1.7.10 实际上需要的是 lzma:lzma:0.0.1
+        let lzma_version = "0.0.1";
+        let path = format!("lzma/lzma/{v}/lzma-{v}.jar", v = lzma_version);
+        let urls = vec![
+            format!(
+                "https://bmclapi2.bangbang93.com/maven/lzma/lzma/{v}/lzma-{v}.jar",
+                v = lzma_version
+            ),
+            format!(
+                "https://files.minecraftforge.net/maven/lzma/lzma/{v}/lzma-{v}.jar",
+                v = lzma_version
+            ),
+            format!(
+                "https://repo1.maven.org/maven2/lzma/lzma/{v}/lzma-{v}.jar",
+                v = lzma_version
+            ),
+        ];
+        (path, urls)
+    } else {
+        // 其他版本使用 xz 库
+        let lzma_version = "1.8";
+        let path = format!("org/tukaani/xz/{v}/xz-{v}.jar", v = lzma_version);
+        let urls = vec![
+            format!(
+                "https://bmclapi2.bangbang93.com/maven/org/tukaani/xz/{}/xz-{}.jar",
+                lzma_version, lzma_version
+            ),
+            format!(
+                "https://repo1.maven.org/maven2/org/tukaani/xz/{}/xz-{}.jar",
+                lzma_version, lzma_version
+            ),
+            format!(
+                "https://libraries.minecraft.net/org/tukaani/xz/{}/xz-{}.jar",
+                lzma_version, lzma_version
+            ),
+        ];
+        (path, urls)
+    };
+
+    let target_path = libraries_dir.join(&lzma_path);
+
+    // 如果库文件已存在，跳过下载
+    if target_path.exists() {
+        println!("Forge: LZMA 库已存在: {}", target_path.display());
+        return Ok(());
+    }
+
+    // 创建目录
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| LauncherError::Custom(format!("创建 LZMA 目录失败: {}", e)))?;
+    }
+
+    let client = Client::new();
+
+    for (index, source_url) in sources.iter().enumerate() {
+        println!("Forge: 尝试下载源 {}: {}", index + 1, source_url);
+
+        match download_with_retry(source_url, &client, 3).await {
+            Ok(response) => {
+                let bytes = response.bytes().await?;
+
+                // 验证 JAR 文件
+                if bytes.len() >= 4 && bytes[0..4] == [0x50, 0x4B, 0x03, 0x04] {
+                    fs::write(&target_path, &bytes)
+                        .map_err(|e| LauncherError::Custom(format!("写入 LZMA 库失败: {}", e)))?;
+                    println!("Forge: LZMA 库下载成功: {}", target_path.display());
+                    return Ok(());
+                } else {
+                    println!("Forge: 源 {} 返回的文件不是有效的 JAR 格式", index + 1);
+                }
+            }
+            Err(e) => {
+                println!("Forge: 源 {} 下载失败: {}", index + 1, e);
+            }
+        }
+    }
+
+    Err(LauncherError::Custom("所有 LZMA 下载源均失败".to_string()))
+}
+
+/// 从 install_profile.json 下载单个库
+async fn download_library_from_profile(
+    library: &serde_json::Value,
+    libraries_dir: &PathBuf,
+    client: &Client,
+) -> Result<(), LauncherError> {
+    let name = library["name"].as_str().ok_or_else(|| {
+        LauncherError::Custom("Library object missing 'name' field".to_string())
+    })?;
+
+    // 仅下载客户端需要的库
+    if let Some(clientreq) = library.get("clientreq").and_then(|v| v.as_bool()) {
+        if !clientreq {
+            println!("Forge: Skipping server-only library: {}", name);
+            return Ok(());
+        }
+    }
+
+    let parts: Vec<&str> = name.split(':').collect();
+    if parts.len() != 3 {
+        println!("Forge: Skipping library with non-standard name format: {}", name);
+        return Ok(());
+    }
+    let group_id = parts[0];
+    let artifact_id = parts[1];
+    let version = parts[2];
+
+    let group_path = group_id.replace('.', "/");
+    let artifact_path = format!("{}/{}/{}", group_path, artifact_id, version);
+    let file_name = format!("{}-{}.jar", artifact_id, version);
+    let maven_path = format!("{}/{}", artifact_path, file_name);
+
+    let target_path = libraries_dir.join(&maven_path);
+
+    if target_path.exists() {
+        // TODO: Add checksum validation if available in profile
+        return Ok(());
+    }
+
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| LauncherError::Custom(format!("Failed to create directory for library {}: {}", name, e)))?;
+    }
+
+    let mut sources = Vec::new();
+    if let Some(url) = library.get("url").and_then(|u| u.as_str()) {
+        // Ensure the custom URL ends with a slash
+        let base_url = if url.ends_with('/') {
+            url.to_string()
+        } else {
+            format!("{}/", url)
+        };
+        sources.push(format!("{}{}", base_url, maven_path));
+    }
+    // Add default repositories
+    sources.push(format!("{}/maven/{}", BMCL_API_BASE_URL, maven_path));
+    sources.push(format!("https://libraries.minecraft.net/{}", maven_path));
+    sources.push(format!("https://repo1.maven.org/maven2/{}", maven_path));
+    sources.push(format!("https://files.minecraftforge.net/maven/{}", maven_path));
+    
+    sources.dedup();
+
+    for source_url in sources {
+        println!("Forge: Attempting to download library {}: {}", name, source_url);
+        match download_with_retry(&source_url, client, 3).await {
+            Ok(response) => {
+                let bytes = response.bytes().await?;
+                if bytes.len() > 100 { // Basic JAR check
+                    fs::write(&target_path, &bytes)
+                        .map_err(|e| LauncherError::Custom(format!("Failed to write library {}: {}", name, e)))?;
+                    println!("Forge: Library {} downloaded successfully", name);
+                    return Ok(());
+                } else {
+                    println!("Forge: Downloaded file for {} from {} is too small, likely not a valid JAR.", name, source_url);
+                }
+            }
+            Err(e) => {
+                println!("Forge: Failed to download {} from {}: {}", name, source_url, e);
+            }
+        }
+    }
+
+    Err(LauncherError::Custom(format!("Failed to download library {} from all sources", name)))
+}
+
 /// Manually installs old Forge versions by extracting and copying files
 async fn manual_install_old_forge(
     installer_path: &PathBuf,
@@ -221,69 +554,33 @@ async fn manual_install_old_forge(
     let profile: serde_json::Value = serde_json::from_str(&install_profile_content)
         .map_err(|e| LauncherError::Custom(format!("解析 install_profile.json 失败: {}", e)))?;
 
-    // 4. 创建版本目录
+    // 4. 从 profile 下载所有必需的库
+    let libraries_dir = game_dir.join("libraries");
+    let client = Client::new(); // Create a client for library downloads
+    if let Some(version_info) = profile.get("versionInfo") {
+        if let Some(libraries) = version_info.get("libraries").and_then(|l| l.as_array()) {
+            println!("Forge: 开始从 install_profile 下载 {} 个库", libraries.len());
+            for lib in libraries {
+                if let Err(e) = download_library_from_profile(lib, &libraries_dir, &client).await {
+                    // Log error but don't fail the installation, as the launcher might be able to download it later.
+                    println!("Forge: 下载库失败: {}，但继续安装过程", e);
+                }
+            }
+            println!("Forge: 库下载完成");
+        }
+    }
+
+    // 5. 创建版本目录和 JSON 文件
     let version_id = format!("{}-forge{}", forge_version.mcversion, forge_version.version);
     let version_dir = game_dir.join("versions").join(&version_id);
     fs::create_dir_all(&version_dir)
         .map_err(|e| LauncherError::Custom(format!("创建版本目录失败: {}", e)))?;
     println!("Forge: 创建版本目录: {}", version_dir.display());
 
-    // 5. 创建版本 JSON 文件
     let version_json_path = version_dir.join(format!("{}.json", version_id));
-
-    // 旧版本 Forge 使用 "versionInfo"，新版本可能直接在根级别
-    let version_info = if let Some(info) = profile.get("versionInfo") {
-        info.clone()
-    } else {
-        // 如果没有 versionInfo，尝试构建基本的版本信息
-        println!("Forge: 未找到 versionInfo，尝试从 install_profile 构建");
-
-        // 读取原版 Minecraft 的版本 JSON 作为基础
-        let mc_version_path = game_dir
-            .join("versions")
-            .join(&forge_version.mcversion)
-            .join(format!("{}.json", forge_version.mcversion));
-
-        if mc_version_path.exists() {
-            let mc_json_content = fs::read_to_string(&mc_version_path)
-                .map_err(|e| LauncherError::Custom(format!("读取原版 MC JSON 失败: {}", e)))?;
-            let mut mc_json: serde_json::Value = serde_json::from_str(&mc_json_content)
-                .map_err(|e| LauncherError::Custom(format!("解析原版 MC JSON 失败: {}", e)))?;
-
-            // 修改 ID
-            if let Some(obj) = mc_json.as_object_mut() {
-                obj.insert("id".to_string(), serde_json::json!(version_id));
-
-                // 添加 Forge 库
-                if let Some(install) = profile.get("install") {
-                    if let Some(path) = install.get("path") {
-                        let forge_lib = serde_json::json!({
-                            "name": path.as_str().unwrap_or("")
-                        });
-
-                        if let Some(libs) = obj.get_mut("libraries").and_then(|l| l.as_array_mut())
-                        {
-                            libs.insert(0, forge_lib);
-                        }
-                    }
-                }
-
-                // 修改 mainClass（如果 profile 中有）
-                if let Some(install) = profile.get("install") {
-                    if let Some(main_class) = install.get("minecraft") {
-                        obj.insert("mainClass".to_string(), main_class.clone());
-                    }
-                }
-            }
-
-            mc_json
-        } else {
-            return Err(LauncherError::Custom(format!(
-                "无法找到原版 Minecraft {} 的版本文件，请先安装原版",
-                forge_version.mcversion
-            )));
-        }
-    };
+    
+    // Use the versionInfo from the profile directly
+    let version_info = profile.get("versionInfo").ok_or_else(|| LauncherError::Custom("install_profile.json is missing 'versionInfo'".to_string()))?;
 
     fs::write(
         &version_json_path,
@@ -292,91 +589,54 @@ async fn manual_install_old_forge(
     .map_err(|e| LauncherError::Custom(format!("写入版本 JSON 失败: {}", e)))?;
     println!("Forge: 已创建版本 JSON: {}", version_json_path.display());
 
-    // 6. 解压并复制库文件
-    let libraries_dir = game_dir.join("libraries");
-    fs::create_dir_all(&libraries_dir)
-        .map_err(|e| LauncherError::Custom(format!("创建库目录失败: {}", e)))?;
+    // 6. 解压安装器中的 "maven" 目录和 universal jar
+    println!("Forge: 开始从安装器中提取文件...");
+    // Re-open archive for extraction
+    let file = fs::File::open(installer_path).map_err(|e| LauncherError::Custom(format!("无法重新打开安装器文件: {}", e)))?;
+    let mut archive = ZipArchive::new(file).map_err(|e| LauncherError::Custom(format!("无法重新读取安装器 ZIP: {}", e)))?;
 
-    // 重新打开 archive 用于提取文件
-    let file = fs::File::open(installer_path)
-        .map_err(|e| LauncherError::Custom(format!("无法重新打开安装器文件: {}", e)))?;
-    let mut archive = ZipArchive::new(file)
-        .map_err(|e| LauncherError::Custom(format!("无法重新读取安装器 ZIP: {}", e)))?;
-
-    let mut forge_universal_found = false;
-
-    // 提取所有必要的文件
     for i in 0..archive.len() {
-        let mut file = archive
-            .by_index(i)
-            .map_err(|e| LauncherError::Custom(format!("无法读取 ZIP 条目: {}", e)))?;
+        let mut file = archive.by_index(i).map_err(|e| LauncherError::Custom(format!("无法读取 ZIP 条目: {}", e)))?;
         let file_name = file.name().to_string();
 
-        // 提取 maven/ 目录下的所有库文件
+        // Extract files from the 'maven' directory within the installer
         if file_name.starts_with("maven/") && !file_name.ends_with('/') {
             let rel_path = file_name.strip_prefix("maven/").unwrap();
             let target_path = libraries_dir.join(rel_path);
 
             if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| LauncherError::Custom(format!("创建库子目录失败: {}", e)))?;
+                fs::create_dir_all(parent).map_err(|e| LauncherError::Custom(format!("创建库子目录失败: {}", e)))?;
             }
 
             let mut buffer = Vec::new();
-            file.read_to_end(&mut buffer)
-                .map_err(|e| LauncherError::Custom(format!("读取库文件失败: {}", e)))?;
-            fs::write(&target_path, buffer)
-                .map_err(|e| LauncherError::Custom(format!("写入库文件失败: {}", e)))?;
-
-            println!("Forge: 已提取库文件: {}", rel_path);
+            file.read_to_end(&mut buffer).map_err(|e| LauncherError::Custom(format!("读取库文件失败: {}", e)))?;
+            fs::write(&target_path, buffer).map_err(|e| LauncherError::Custom(format!("写入库文件失败: {}", e)))?;
         }
-        // 提取 Forge universal JAR（旧版本 Forge 需要）
-        else if file_name.contains("universal")
-            && file_name.ends_with(".jar")
-            && !file_name.contains("/")
-        {
-            forge_universal_found = true;
-
+        // Extract the universal jar
+        else if file_name.ends_with("-universal.jar") && !file_name.contains('/') {
             let mut buffer = Vec::new();
-            file.read_to_end(&mut buffer).map_err(|e| {
-                LauncherError::Custom(format!("读取 Forge universal JAR 失败: {}", e))
-            })?;
+            file.read_to_end(&mut buffer).map_err(|e| LauncherError::Custom(format!("读取 Forge universal JAR 失败: {}", e)))?;
 
-            // 1. 复制到 libraries 目录（标准 Maven 格式）
-            let forge_lib_path = format!(
-                "net/minecraftforge/forge/{}-{}",
-                forge_version.mcversion, forge_version.version
-            );
-            let lib_target_path = libraries_dir.join(&forge_lib_path).join(format!(
-                "forge-{}-{}.jar",
-                forge_version.mcversion, forge_version.version
-            ));
+            // Place it in the correct maven path inside /libraries
+            let forge_lib_path = format!("net/minecraftforge/forge/{mc}-{v}/forge-{mc}-{v}-universal.jar", mc=forge_version.mcversion, v=forge_version.version);
+            let lib_target_path = libraries_dir.join(&forge_lib_path);
 
             if let Some(parent) = lib_target_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| LauncherError::Custom(format!("创建 Forge 库目录失败: {}", e)))?;
+                fs::create_dir_all(parent).map_err(|e| LauncherError::Custom(format!("创建 Forge 库目录失败: {}", e)))?;
             }
+            fs::write(&lib_target_path, &buffer).map_err(|e| LauncherError::Custom(format!("写入 Forge 库 JAR 失败: {}", e)))?;
+            println!("Forge: 已提取 Forge universal JAR: {}", lib_target_path.display());
 
-            fs::write(&lib_target_path, &buffer)
-                .map_err(|e| LauncherError::Custom(format!("写入 Forge 库 JAR 失败: {}", e)))?;
-            println!("Forge: 已提取 Forge 库 JAR: {}", lib_target_path.display());
-
-            // 2. 同时复制到版本目录（某些启动器需要）
+            // Also copy it to the version directory for compatibility
             let version_jar_path = version_dir.join(format!("{}.jar", version_id));
-            fs::write(&version_jar_path, &buffer)
-                .map_err(|e| LauncherError::Custom(format!("写入版本 JAR 失败: {}", e)))?;
+            fs::write(&version_jar_path, &buffer).map_err(|e| LauncherError::Custom(format!("写入版本 JAR 失败: {}", e)))?;
             println!("Forge: 已复制到版本目录: {}", version_jar_path.display());
         }
     }
-
-    if !forge_universal_found {
-        println!("Forge: 警告 - 未找到 universal JAR，这可能是新版本安装器");
-    }
-
+    
     println!("Forge: 手动安装完成");
     Ok(())
 }
-
 /// Fetches the list of available Forge versions for a given Minecraft version.
 pub async fn get_forge_versions(
     minecraft_version: String,
@@ -396,10 +656,40 @@ pub async fn get_forge_versions(
         )));
     }
 
-    let versions: Vec<ForgeVersion> = response.json().await?;
+    let mut versions: Vec<ForgeVersion> = response.json().await?;
 
-    // The API returns versions in ascending order, so we reverse it to show newest first.
+    // 智能排序Forge版本号
+    versions.sort_by(|a, b| {
+        compare_forge_versions(&a.version, &b.version)
+    });
+
+    // 反转以显示最新版本在前
     Ok(versions.into_iter().rev().collect())
+}
+
+/// 比较两个Forge版本号，返回排序顺序
+fn compare_forge_versions(a: &str, b: &str) -> std::cmp::Ordering {
+    // 分割版本号为数字部分
+    let a_parts: Vec<&str> = a.split('.').collect();
+    let b_parts: Vec<&str> = b.split('.').collect();
+    
+    // 比较每个部分
+    for i in 0..std::cmp::max(a_parts.len(), b_parts.len()) {
+        let a_part = a_parts.get(i).unwrap_or(&"0");
+        let b_part = b_parts.get(i).unwrap_or(&"0");
+        
+        // 尝试解析为数字比较
+        let a_num = a_part.parse::<u32>().unwrap_or(0);
+        let b_num = b_part.parse::<u32>().unwrap_or(0);
+        
+        match a_num.cmp(&b_num) {
+            std::cmp::Ordering::Equal => continue,
+            ordering => return ordering,
+        }
+    }
+    
+    // 如果所有部分都相等，按字符串比较（处理特殊情况）
+    a.cmp(b)
 }
 
 /// Installs a specific version of Forge into a given instance directory.
@@ -480,6 +770,31 @@ pub async fn install_forge(
     println!("Forge: 工作目录: {}", game_dir.display());
     println!("Forge: 安装器路径: {}", installer_path.display());
     println!("Forge: 实例目录: {}", instance_path.display());
+
+    // 下载 LaunchWrapper 库（旧版本 Forge 需要）
+    let libraries_dir = game_dir.join("libraries");
+    if let Err(e) = download_launchwrapper_library(&libraries_dir, &forge_version.mcversion).await {
+        println!("Forge: LaunchWrapper 库下载失败: {}，但继续安装过程", e);
+        // 不中断安装，让启动器在运行时自动检测和下载
+    } else {
+        println!("Forge: LaunchWrapper 库下载成功");
+    }
+
+    // 下载 ASM 库（Forge 字节码操作需要）
+    if let Err(e) = download_asm_library(&libraries_dir, &forge_version.mcversion).await {
+        println!("Forge: ASM 库下载失败: {}，但继续安装过程", e);
+        // 不中断安装，让启动器在运行时自动检测和下载
+    } else {
+        println!("Forge: ASM 库下载成功");
+    }
+
+    // 下载 LZMA 库（Forge 压缩文件处理需要）
+    if let Err(e) = download_lzma_library(&libraries_dir, &forge_version.mcversion).await {
+        println!("Forge: LZMA 库下载失败: {}，但继续安装过程", e);
+        // 不中断安装，让启动器在运行时自动检测和下载
+    } else {
+        println!("Forge: LZMA 库下载成功");
+    }
 
     // 在游戏目录创建占位的 launcher_profiles.json（若不存在），满足 Forge 安装器检查
     let launcher_profiles = game_dir.join("launcher_profiles.json");

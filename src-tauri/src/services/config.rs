@@ -38,11 +38,71 @@ pub async fn set_saved_uuid(uuid: String) -> Result<(), LauncherError> {
 /// 加载配置文件
 pub fn load_config() -> Result<GameConfig, LauncherError> {
     let config_path = get_config_path()?;
+    let is_first_run = !config_path.exists();
 
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)?;
-        let config: GameConfig = serde_json::from_str(&content)?;
-        Ok(config)
+        // 如果配置文件内容为空或损坏，自动备份并重建默认配置
+        match serde_json::from_str::<GameConfig>(&content) {
+            Ok(config) => Ok(config),
+            Err(_) => {
+                // 备份损坏的配置文件
+                let backup_path = config_path.with_extension("bak");
+                let _ = fs::copy(&config_path, &backup_path);
+                // 重建默认配置
+                let exe_path = std::env::current_exe()?;
+                let exe_dir = exe_path
+                    .parent()
+                    .ok_or_else(|| LauncherError::Custom("无法获取可执行文件目录".to_string()))?;
+
+                let mc_dir = exe_dir.join(".minecraft");
+                let mc_dir_str = mc_dir.to_string_lossy().into_owned();
+
+                if !mc_dir.exists() {
+                    fs::create_dir_all(&mc_dir)?;
+                    let sub_dirs = [
+                        "versions",
+                        "libraries",
+                        "assets",
+                        "saves",
+                        "resourcepacks",
+                        "logs",
+                    ];
+                    for dir in sub_dirs {
+                        fs::create_dir_all(mc_dir.join(dir))?;
+                    }
+                }
+
+                let mut config = GameConfig {
+                    game_dir: mc_dir_str,
+                    version_isolation: true,
+                    java_path: None,
+                    download_threads: 8,
+                    language: Some("zh_cn".to_string()),
+                    isolate_saves: true,
+                    isolate_resourcepacks: true,
+                    isolate_logs: true,
+                    username: None,
+                    uuid: None,
+                    max_memory: crate::models::default_max_memory(),
+                    download_mirror: Some("bmcl".to_string()),
+                    auto_memory_enabled: false,
+                };
+
+                // 首次运行时自动检测Java
+                if is_first_run {
+                    if let Ok(java_paths) = auto_detect_java() {
+                        if let Some(java_path) = java_paths.first() {
+                            config.java_path = Some(java_path.clone());
+                            log::info!("首次启动自动检测到Java路径: {}", java_path);
+                        }
+                    }
+                }
+
+                save_config(&config)?;
+                Ok(config)
+            }
+        }
     } else {
         // 获取可执行文件路径并确保其存在
         let exe_path = std::env::current_exe()?;
@@ -72,7 +132,7 @@ pub fn load_config() -> Result<GameConfig, LauncherError> {
         }
 
         // 创建并返回配置
-        let config = GameConfig {
+        let mut config = GameConfig {
             game_dir: mc_dir_str,
             version_isolation: true,
             java_path: None,
@@ -88,11 +148,96 @@ pub fn load_config() -> Result<GameConfig, LauncherError> {
             auto_memory_enabled: false,
         };
 
+        // 首次运行时自动检测Java
+        if is_first_run {
+            if let Ok(java_paths) = auto_detect_java() {
+                if let Some(java_path) = java_paths.first() {
+                    config.java_path = Some(java_path.clone());
+                    log::info!("首次启动自动检测到Java路径: {}", java_path);
+                }
+            }
+        }
+
         // 保存配置
         save_config(&config)?;
 
         Ok(config)
     }
+}
+
+/// 自动检测Java安装
+fn auto_detect_java() -> Result<Vec<String>, LauncherError> {
+    use std::process::Command;
+    
+    let mut java_paths = Vec::new();
+    
+    // 1. 检查PATH环境变量中的Java
+    if Command::new("java").arg("-version").output().is_ok() {
+        java_paths.push("java".to_string());
+    }
+    
+    // 2. 检查JAVA_HOME环境变量
+    if let Ok(java_home) = std::env::var("JAVA_HOME") {
+        let java_exe = if cfg!(windows) { "java.exe" } else { "java" };
+        let java_path = std::path::PathBuf::from(&java_home)
+            .join("bin")
+            .join(java_exe);
+        
+        if java_path.exists() {
+            java_paths.push(java_path.to_string_lossy().into_owned());
+        }
+    }
+    
+    // 3. 检查常见的Java安装目录
+    #[cfg(target_os = "windows")]
+    {
+        let program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
+        let program_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
+        
+        let common_dirs = vec![
+            program_files,
+            program_files_x86,
+        ];
+        
+        for base_dir in common_dirs {
+            if let Ok(entries) = std::fs::read_dir(&base_dir) {
+                for entry in entries.flatten() {
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_dir() {
+                            let dir_name = entry.file_name().to_string_lossy().to_lowercase();
+                            if dir_name.contains("java") || dir_name.contains("jdk") || dir_name.contains("jre") {
+                                let java_exe = entry.path().join("bin").join("java.exe");
+                                if java_exe.exists() {
+                                    java_paths.push(java_exe.to_string_lossy().into_owned());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 4. 检查PATH中的java.exe
+    #[cfg(target_os = "windows")]
+    {
+        if Command::new("java.exe").arg("-version").output().is_ok() {
+            java_paths.push("java.exe".to_string());
+        }
+    }
+    
+    // 去重
+    let mut unique_paths = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    
+    for path in java_paths {
+        if !seen.contains(&path) {
+            seen.insert(path.clone());
+            unique_paths.push(path);
+        }
+    }
+    
+    Ok(unique_paths)
 }
 
 /// 保存配置文件
