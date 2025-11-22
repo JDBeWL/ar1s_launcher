@@ -5,7 +5,11 @@ use tauri::Emitter;
 
 use crate::errors::LauncherError;
 use crate::models::{GameConfig, GameDirInfo};
-use crate::services::memory::{get_system_memory, recommend_memory_for_game, get_memory_warning_message, is_memory_setting_safe, MemoryStats, MemoryRecommendation, AutoMemoryConfig, auto_set_memory_if_enabled};
+use crate::services::memory::{
+    auto_set_memory_if_enabled, get_memory_warning_message, get_system_memory,
+    is_memory_setting_safe, recommend_memory_for_game, AutoMemoryConfig, MemoryRecommendation,
+    MemoryStats,
+};
 
 // 获取保存的用户名
 pub async fn get_saved_username() -> Result<Option<String>, LauncherError> {
@@ -165,80 +169,9 @@ pub fn load_config() -> Result<GameConfig, LauncherError> {
     }
 }
 
-/// 自动检测Java安装
-fn auto_detect_java() -> Result<Vec<String>, LauncherError> {
-    use std::process::Command;
-    
-    let mut java_paths = Vec::new();
-    
-    // 1. 检查PATH环境变量中的Java
-    if Command::new("java").arg("-version").output().is_ok() {
-        java_paths.push("java".to_string());
-    }
-    
-    // 2. 检查JAVA_HOME环境变量
-    if let Ok(java_home) = std::env::var("JAVA_HOME") {
-        let java_exe = if cfg!(windows) { "java.exe" } else { "java" };
-        let java_path = std::path::PathBuf::from(&java_home)
-            .join("bin")
-            .join(java_exe);
-        
-        if java_path.exists() {
-            java_paths.push(java_path.to_string_lossy().into_owned());
-        }
-    }
-    
-    // 3. 检查常见的Java安装目录
-    #[cfg(target_os = "windows")]
-    {
-        let program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
-        let program_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string());
-        
-        let common_dirs = vec![
-            program_files,
-            program_files_x86,
-        ];
-        
-        for base_dir in common_dirs {
-            if let Ok(entries) = std::fs::read_dir(&base_dir) {
-                for entry in entries.flatten() {
-                    if let Ok(file_type) = entry.file_type() {
-                        if file_type.is_dir() {
-                            let dir_name = entry.file_name().to_string_lossy().to_lowercase();
-                            if dir_name.contains("java") || dir_name.contains("jdk") || dir_name.contains("jre") {
-                                let java_exe = entry.path().join("bin").join("java.exe");
-                                if java_exe.exists() {
-                                    java_paths.push(java_exe.to_string_lossy().into_owned());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // 4. 检查PATH中的java.exe
-    #[cfg(target_os = "windows")]
-    {
-        if Command::new("java.exe").arg("-version").output().is_ok() {
-            java_paths.push("java.exe".to_string());
-        }
-    }
-    
-    // 去重
-    let mut unique_paths = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    
-    for path in java_paths {
-        if !seen.contains(&path) {
-            seen.insert(path.clone());
-            unique_paths.push(path);
-        }
-    }
-    
-    Ok(unique_paths)
-}
+use crate::services::java::auto_detect_java;
+
+/// 保存配置文件
 
 /// 保存配置文件
 pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
@@ -448,88 +381,6 @@ pub async fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
     set_config_value(|config| config.download_threads = threads).await
 }
 
-pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, LauncherError> {
-    let config = load_config()?;
-    let game_dir = PathBuf::from(&config.game_dir);
-    let version_dir = game_dir.join("versions").join(&version_id);
-    let version_json_path = version_dir.join(format!("{}.json", &version_id));
-
-    let mut missing_files = Vec::new();
-
-    if !version_json_path.exists() {
-        missing_files.push(format!(
-            "版本JSON文件不存在: {}",
-            version_json_path.display()
-        ));
-        return Ok(missing_files);
-    }
-
-    let version_json_str = fs::read_to_string(&version_json_path)?;
-    let version_json: serde_json::Value = serde_json::from_str(&version_json_str)?;
-
-    let libraries_base_dir = game_dir.join("libraries");
-
-    let main_game_jar_path = version_dir.join(format!("{}.jar", &version_id));
-    if !main_game_jar_path.exists() {
-        missing_files.push(format!(
-            "主游戏JAR文件不存在: {}",
-            main_game_jar_path.display()
-        ));
-    }
-
-    if let Some(libraries) = version_json["libraries"].as_array() {
-        for lib in libraries {
-            if let Some(natives) = lib.get("natives") {
-                if let Some(os_classifier) = natives.get(std::env::consts::OS) {
-                    if let Some(artifact) = lib
-                        .get("downloads")
-                        .and_then(|d| d.get("classifiers"))
-                        .and_then(|c| c.get(os_classifier.as_str().unwrap_or("")))
-                    {
-                        let lib_path =
-                            libraries_base_dir.join(artifact["path"].as_str().unwrap_or(""));
-                        if !lib_path.exists() {
-                            missing_files
-                                .push(format!("Natives库文件不存在: {}", lib_path.display()));
-                        }
-                    }
-                }
-            } else {
-                if let Some(rules) = lib.get("rules").and_then(|r| r.as_array()) {
-                    let mut allowed = true;
-                    for rule in rules {
-                        if let Some(os) = rule.get("os") {
-                            if let Some(name) = os["name"].as_str() {
-                                if name == std::env::consts::OS {
-                                    allowed = rule["action"].as_str() == Some("allow");
-                                } else {
-                                    allowed = rule["action"].as_str() != Some("allow");
-                                }
-                            }
-                        }
-                    }
-                    if !allowed {
-                        continue;
-                    }
-                }
-                if let Some(path) = lib
-                    .get("downloads")
-                    .and_then(|d| d.get("artifact"))
-                    .and_then(|a| a.get("path"))
-                    .and_then(|p| p.as_str())
-                {
-                    let lib_path = libraries_base_dir.join(path);
-                    if !lib_path.exists() {
-                        missing_files.push(format!("库文件不存在: {}", lib_path.display()));
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(missing_files)
-}
-
 pub fn get_total_memory() -> u64 {
     let mut sys = System::new();
     sys.refresh_memory();
@@ -542,7 +393,10 @@ pub async fn get_memory_stats() -> Result<MemoryStats, LauncherError> {
 }
 
 /// 为指定游戏版本推荐内存设置
-pub async fn recommend_memory(version: String, modded: bool) -> Result<MemoryRecommendation, LauncherError> {
+pub async fn recommend_memory(
+    version: String,
+    modded: bool,
+) -> Result<MemoryRecommendation, LauncherError> {
     Ok(recommend_memory_for_game(&version, modded))
 }
 
@@ -561,7 +415,7 @@ pub async fn get_auto_memory_config() -> Result<AutoMemoryConfig, LauncherError>
     let config = load_config()?;
     let auto_config = AutoMemoryConfig {
         enabled: config.auto_memory_enabled,
-        max_limit_mb: 8500, // 整合包优化模组要求的最大限制
+        max_limit_mb: 8500,          // 整合包优化模组要求的最大限制
         safety_margin_percent: 20.0, // 保留20%的安全余量
     };
     Ok(auto_config)
@@ -582,16 +436,18 @@ pub async fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
         max_limit_mb: 8500,
         safety_margin_percent: 20.0,
     };
-    
+
     if !auto_config.enabled {
         return Ok(None);
     }
-    
+
     let recommended_memory = auto_set_memory_if_enabled(&auto_config);
     Ok(recommended_memory)
 }
 
 /// 分析内存使用效率
 pub async fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError> {
-    Ok(crate::services::memory::analyze_memory_efficiency(memory_mb))
+    Ok(crate::services::memory::analyze_memory_efficiency(
+        memory_mb,
+    ))
 }

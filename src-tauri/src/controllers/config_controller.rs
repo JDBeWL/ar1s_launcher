@@ -55,7 +55,7 @@ pub async fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
 
 #[tauri::command]
 pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, LauncherError> {
-    config::validate_version_files(version_id).await
+    crate::services::file_verification::validate_version_files(version_id).await
 }
 
 #[tauri::command]
@@ -69,7 +69,10 @@ pub async fn get_memory_stats() -> Result<crate::services::memory::MemoryStats, 
 }
 
 #[tauri::command]
-pub async fn recommend_memory(version: String, modded: bool) -> Result<crate::services::memory::MemoryRecommendation, LauncherError> {
+pub async fn recommend_memory(
+    version: String,
+    modded: bool,
+) -> Result<crate::services::memory::MemoryRecommendation, LauncherError> {
     config::recommend_memory(version, modded).await
 }
 
@@ -84,7 +87,8 @@ pub async fn check_memory_warning(memory_mb: u32) -> Result<Option<String>, Laun
 }
 
 #[tauri::command]
-pub async fn get_auto_memory_config() -> Result<crate::services::memory::AutoMemoryConfig, LauncherError> {
+pub async fn get_auto_memory_config(
+) -> Result<crate::services::memory::AutoMemoryConfig, LauncherError> {
     config::get_auto_memory_config().await
 }
 

@@ -1,320 +1,204 @@
-<template>
-  <v-container fluid>
-    <!-- 标题卡片 -->
-    <v-card class="mb-6" elevation="2">
-      <v-card-title class="d-flex mt-2 justify-space-between align-center">
-        实例管理
-        <v-btn color="primary" variant="outlined" @click="fetchInstances" :loading="loading">
-          <v-icon start>mdi-refresh</v-icon>
-          刷新列表
-        </v-btn>
-      </v-card-title>
-      
-      <!-- 加载状态 -->
-      <v-row v-if="loading" class="pa-4">
-        <v-col cols="12" class="text-center">
-          <v-progress-circular indeterminate color="primary"></v-progress-circular>
-          <div class="mt-2">正在加载实例列表...</div>
-        </v-col>
-      </v-row>
-      
-      <!-- 空状态 -->
-      <v-row v-else-if="instances.length === 0" class="pa-4">
-        <v-col cols="12" class="text-center">
-          <v-icon size="64" color="grey">mdi-folder-open-outline</v-icon>
-          <div class="mt-2 text-grey">暂无实例，请先创建实例</div>
-        </v-col>
-      </v-row>
-      
-      <!-- 实例卡片网格布局 -->
-      <v-row v-else class="pa-4">
-        <v-col v-for="instance in instances" :key="instance.id" cols="12" sm="6" md="4" lg="3">
-          <v-card class="instance-card" elevation="2">
-            <div class="card-top">
-              <!-- 左边图标占位符 -->
-              <div class="icon-placeholder"></div>
-              
-              <!-- 右边信息区域 -->
-              <div class="info-area">
-                <div class="instance-name">{{ instance.name }}</div>
-                <div class="version-info">{{ instance.version }}</div>
-                <div v-if="instance.created_time" class="created-time">
-                  {{ formatTime(instance.created_time) }}
-                </div>
-              </div>
-            </div>
-            <div class="card-bottom">
-              <v-btn class="action-btn" icon variant="text" size="small" @click="editInstance(instance)" title="重命名">
-                <v-icon>mdi-pencil</v-icon>
-              </v-btn>
-              
-              <v-btn class="action-btn" icon variant="text" size="small" @click="openInstanceFolder(instance)" title="打开文件夹">
-                <v-icon>mdi-folder-open</v-icon>
-              </v-btn>
-              
-              <v-btn class="action-btn" icon variant="text" size="small" @click="deleteInstance(instance)" title="删除" color="error">
-                <v-icon>mdi-delete</v-icon>
-              </v-btn>
-              
-              <v-btn class="action-btn" icon variant="text" size="small" @click="launchInstance(instance)" title="启动" color="success">
-                <v-icon>mdi-play</v-icon>
-              </v-btn>
-            </div>
-          </v-card>
-        </v-col>
-      </v-row>
-    </v-card>
-  </v-container>
-</template>
-
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
-import { useLauncherStore } from '../stores/launcherStore';
+import { ref, onMounted } from "vue";
+import { invoke } from "@tauri-apps/api/core";
+import { useRouter } from "vue-router";
+import InstanceCard from "../components/instance/InstanceCard.vue";
 
-interface Instance {
-  id: string;
-  name: string;
-  version: string;
-  path: string;
-  created_time?: string;
-}
-
-const instances = ref<Instance[]>([]);
+const router = useRouter();
+const instances = ref<any[]>([]);
 const loading = ref(false);
-const store = useLauncherStore();
 
-// 获取实例列表
-async function fetchInstances() {
+// 重命名对话框
+const renameDialog = ref(false);
+const renameInstanceName = ref("");
+const currentInstance = ref<any>(null);
+
+// 删除确认对话框
+const deleteDialog = ref(false);
+
+async function loadInstances() {
   loading.value = true;
   try {
-    const realInstances = await invoke<Instance[]>('get_instances');
-    instances.value = realInstances;
+    const result = await invoke("get_instances");
+    instances.value = result as any[];
   } catch (error) {
-    console.error('获取实例列表失败:', error);
-    store.gameSnackText = '获取实例列表失败';
-    store.gameSnackColor = 'error';
-    store.gameSnackVisible = true;
+    console.error("Failed to load instances:", error);
   } finally {
     loading.value = false;
   }
 }
 
-// 编辑实例名称
-async function editInstance(instance: Instance) {
-  const newName = prompt(`请输入新的实例名称:`, instance.name);
-  if (newName && newName.trim() && newName !== instance.name) {
-    try {
-      await invoke('rename_instance', { 
-        oldName: instance.name, 
-        newName: newName.trim() 
-      });
-      store.gameSnackText = '实例重命名成功';
-      store.gameSnackColor = 'success';
-      store.gameSnackVisible = true;
-      await fetchInstances(); // 刷新列表
-    } catch (error) {
-      console.error('重命名实例失败:', error);
-      store.gameSnackText = '重命名实例失败';
-      store.gameSnackColor = 'error';
-      store.gameSnackVisible = true;
-    }
-  }
+function launchInstance(instance: any) {
+  // 跳转到主页并选中该实例，或者直接启动
+  // 这里简单起见，我们跳转到主页，实际逻辑可能需要通过Store传递选中的实例
+  router.push({ path: "/", query: { instance: instance.name } });
 }
 
-// 打开实例文件夹
-async function openInstanceFolder(instance: Instance) {
+async function openInstanceFolder(instance: any) {
   try {
-    await invoke('open_instance_folder', { instanceName: instance.name });
+    await invoke("open_instance_folder", { instanceName: instance.name });
   } catch (error) {
-    console.error('打开实例文件夹失败:', error);
-    store.gameSnackText = '打开实例文件夹失败';
-    store.gameSnackColor = 'error';
-    store.gameSnackVisible = true;
+    console.error("Failed to open folder:", error);
   }
 }
 
-// 启动实例
-async function launchInstance(instance: Instance) {
+function openRenameDialog(instance: any) {
+  currentInstance.value = instance;
+  renameInstanceName.value = instance.name;
+  renameDialog.value = true;
+}
+
+async function renameInstance() {
+  if (!currentInstance.value || !renameInstanceName.value) return;
+  
   try {
-    store.gameSnackText = `正在启动实例: ${instance.name}`;
-    store.gameSnackColor = 'info';
-    store.gameSnackVisible = true;
-    
-    // 调用启动实例的API
-    await invoke('launch_instance', { 
-      instanceName: instance.name,
-      window: {} 
+    await invoke("rename_instance", { 
+      oldName: currentInstance.value.name, 
+      newName: renameInstanceName.value 
     });
-    
-    store.gameSnackText = `实例 ${instance.name} 启动成功`;
-    store.gameSnackColor = 'success';
-    store.gameSnackVisible = true;
+    renameDialog.value = false;
+    await loadInstances();
   } catch (error) {
-    console.error('启动实例失败:', error);
-    store.gameSnackText = '启动实例失败';
-    store.gameSnackColor = 'error';
-    store.gameSnackVisible = true;
+    console.error("Failed to rename instance:", error);
+    alert(`重命名失败: ${error}`);
   }
 }
 
-// 删除实例
-async function deleteInstance(instance: Instance) {
-  if (confirm(`确定要删除实例 "${instance.name}" 吗？此操作不可撤销。`)) {
-    try {
-      await invoke('delete_instance', { instanceName: instance.name });
-      store.gameSnackText = '实例删除成功';
-      store.gameSnackColor = 'success';
-      store.gameSnackVisible = true;
-      await fetchInstances(); // 刷新列表
-    } catch (error) {
-      console.error('删除实例失败:', error);
-      store.gameSnackText = '删除实例失败';
-      store.gameSnackColor = 'error';
-      store.gameSnackVisible = true;
-    }
-  }
+function openDeleteDialog(instance: any) {
+  currentInstance.value = instance;
+  deleteDialog.value = true;
 }
 
-// 格式化时间戳
-function formatTime(timestamp: string): string {
-  const date = new Date(parseInt(timestamp) * 1000);
-  return date.toLocaleDateString('zh-CN') + ' ' + date.toLocaleTimeString('zh-CN', { 
-    hour: '2-digit', 
-    minute: '2-digit' 
-  });
+async function deleteInstance() {
+  if (!currentInstance.value) return;
+  
+  try {
+    await invoke("delete_instance", { instanceName: currentInstance.value.name });
+    deleteDialog.value = false;
+    await loadInstances();
+  } catch (error) {
+    console.error("Failed to delete instance:", error);
+    alert(`删除失败: ${error}`);
+  }
 }
 
 onMounted(() => {
-  fetchInstances();
+  loadInstances();
 });
 </script>
 
-<style scoped>
-.instance-card {
-  height: 160px; /* 稍微增加高度以适应更多内容 */
-  border-radius: 12px;
-  background-color: #f5f5f5; /* 灰色背景 */
-  display: flex;
-  flex-direction: column;
-  transition: all 0.3s ease;
-}
+<template>
+  <v-container>
+    <v-card>
+      <v-card-title class="d-flex mt-2 align-center justify-space-between">
+        <span>实例管理</span>
+        <v-btn
+          color="primary"
+          prepend-icon="mdi-plus"
+          to="/add-instance"
+          variant="elevated"
+        >
+          新建实例
+        </v-btn>
+      </v-card-title>
 
-.instance-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-}
+      <v-card-text>
+        <!-- 加载状态 -->
+        <v-row v-if="loading">
+          <v-col cols="12" class="text-center py-8">
+            <v-progress-circular 
+              indeterminate 
+              color="primary"
+              size="64"
+            ></v-progress-circular>
+            <div class="mt-4 text-h6">正在加载实例...</div>
+          </v-col>
+        </v-row>
 
-.card-top {
-  flex: 3; /* 增加顶部区域比例 */
-  display: flex;
-  padding: 12px;
-}
+        <!-- 空状态 -->
+        <v-row v-else-if="instances.length === 0">
+          <v-col cols="12" class="text-center py-12">
+            <v-icon size="96" color="grey-lighten-1">mdi-cube-outline</v-icon>
+            <div class="text-h5 text-grey mt-4">没有找到实例</div>
+            <div class="text-body-1 text-grey-darken-1 mt-2">
+              创建您的第一个 Minecraft 实例来开始游戏
+            </div>
+            <v-btn 
+              color="primary" 
+              class="mt-6" 
+              to="/add-instance"
+              size="large"
+              prepend-icon="mdi-plus"
+            >
+              创建新实例
+            </v-btn>
+          </v-col>
+        </v-row>
 
-.icon-placeholder {
-  width: 54px;
-  height: 54px;
-  background-color: rgba(0, 0, 0, 0.1);
-  border-radius: 8px;
-  margin-right: 12px;
-  margin-top: 10px;
-}
+        <!-- 实例列表 -->
+        <v-row v-else>
+          <v-col
+            v-for="instance in instances"
+            :key="instance.name"
+            cols="12"
+            sm="6"
+            md="4"
+            lg="3"
+          >
+            <InstanceCard
+              :instance="instance"
+              @launch="launchInstance"
+              @open-folder="openInstanceFolder"
+              @rename="openRenameDialog"
+              @delete="openDeleteDialog"
+            />
+          </v-col>
+        </v-row>
+      </v-card-text>
+    </v-card>
 
-.info-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
+    <!-- 重命名对话框 -->
+    <v-dialog v-model="renameDialog" max-width="400">
+      <v-card>
+        <v-card-title>重命名实例</v-card-title>
+        <v-card-text>
+          <v-text-field
+            v-model="renameInstanceName"
+            label="新名称"
+            autofocus
+            variant="outlined"
+            density="comfortable"
+          ></v-text-field>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn color="grey" variant="text" @click="renameDialog = false">取消</v-btn>
+          <v-btn color="primary" variant="elevated" @click="renameInstance">确定</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
-.instance-name {
-  font-size: 1.175rem;
-  font-weight: 600;
-  color: #000;
-  line-height: 1.2;
-  margin-bottom: 4px;
-  word-break: break-word;
-}
-
-.version-info {
-  font-size: 0.825rem;
-  color: #666;
-  line-height: 1.2;
-  margin-bottom: 2px;
-}
-
-.created-time {
-  font-size: 0.75rem;
-  color: #999;
-  line-height: 1.2;
-}
-
-.card-bottom {
-  flex: 1;
-  display: flex;
-  justify-content: space-around;
-  align-items: center;
-  padding: 8px;
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
-}
-
-.action-btn {
-  width: 32px;
-  height: 32px;
-  transition: all 0.2s ease;
-}
-
-.action-btn:hover {
-  transform: scale(1.1);
-}
-
-/* 深色模式适配 */
-:deep(.v-theme--dark) .instance-card {
-  background-color: #424242;
-}
-
-:deep(.v-theme--dark) .instance-name {
-  color: #fff;
-}
-
-:deep(.v-theme--dark) .version-info {
-  color: #ccc;
-}
-
-:deep(.v-theme--dark) .created-time {
-  color: #aaa;
-}
-
-:deep(.v-theme--dark) .card-bottom {
-  border-top-color: rgba(255, 255, 255, 0.1);
-}
-
-:deep(.v-theme--dark) .icon-placeholder {
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
-/* 响应式调整 */
-@media (max-width: 960px) {
-  .instance-card {
-    height: 140px;
-  }
-  
-  .card-top {
-    padding: 8px;
-  }
-  
-  .icon-placeholder {
-    width: 48px;
-    height: 48px;
-    margin-right: 8px;
-  }
-  
-  .instance-name {
-    font-size: 1rem;
-  }
-  
-  .version-info, .created-time {
-    font-size: 0.75rem;
-  }
-}
-</style>
+    <!-- 删除确认对话框 -->
+    <v-dialog v-model="deleteDialog" max-width="400">
+      <v-card>
+        <v-card-title class="text-error">
+          <v-icon start>mdi-alert-circle</v-icon>
+          删除实例
+        </v-card-title>
+        <v-card-text>
+          <div class="text-body-1">
+            确定要删除实例 <strong>"{{ currentInstance?.name }}"</strong> 吗？
+          </div>
+          <div class="text-body-2 text-grey-darken-1 mt-2">
+            此操作无法撤销，所有数据将被永久删除。
+          </div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn color="grey" variant="text" @click="deleteDialog = false">取消</v-btn>
+          <v-btn color="error" variant="elevated" @click="deleteInstance">删除</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+  </v-container>
+</template>

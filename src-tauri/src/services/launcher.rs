@@ -711,95 +711,109 @@ fn extract_natives(
             if let Some(natives) = lib.get("natives") {
                 emit("log-debug", format!("发现Natives库: {:?}", lib));
                 if let Some(os_classifier) = natives.get(current_os) {
-                    emit(
-                        "log-debug",
-                        format!(
-                            "正在查找的OS分类器: {}",
-                            os_classifier.as_str().unwrap_or("N/A")
-                        ),
-                    );
-                    if let Some(artifact) = lib
-                        .get("downloads")
-                        .and_then(|d| d.get("classifiers"))
-                        .and_then(|c| c.get(os_classifier.as_str().unwrap_or("")))
-                    {
-                        emit("log-debug", format!("Natives Artifact: {:?}", artifact));
-                        let lib_path =
-                            libraries_base_dir.join(artifact["path"].as_str().unwrap_or(""));
+                    if let Some(classifier_str) = os_classifier.as_str() {
+                        // 处理 ${arch} 占位符替换
+                        let arch = if std::env::consts::ARCH.contains("64") {
+                            "64"
+                        } else {
+                            "32"
+                        };
+                        let classifier = classifier_str.replace("${arch}", arch);
+
                         emit(
                             "log-debug",
-                            format!("尝试解压Natives库: {}", lib_path.display()),
+                            format!(
+                                "正在查找的OS分类器: {} (原始: {})",
+                                classifier, classifier_str
+                            ),
                         );
-                        if !lib_path.exists() {
-                            emit(
-                                "log-error",
-                                format!("Natives库文件不存在: {}", lib_path.display()),
-                            );
-                            return Err(LauncherError::Custom(format!(
-                                "Natives库文件不存在: {}",
-                                lib_path.display()
-                            )));
-                        }
-                        let file = fs::File::open(&lib_path)?;
-                        let mut archive = zip::ZipArchive::new(file)?;
 
-                        for i in 0..archive.len() {
-                            let mut file = archive.by_index(i)?;
-                            // 只取条目最后的文件名，避免将库解压到嵌套路径中，确保所有本机库位于 natives 根目录
-                            // 使用 owned String 来避免后续对 zip 条目进行可变借用时的借用冲突
-                            let entry_name = file.name().to_string();
-                            // 检查是否需要排除
-                            if let Some(extract_rules) = lib.get("extract") {
-                                if let Some(exclude) =
-                                    extract_rules.get("exclude").and_then(|e| e.as_array())
-                                {
-                                    if exclude
-                                        .iter()
-                                        .any(|v| entry_name.starts_with(v.as_str().unwrap_or("")))
-                                    {
-                                        continue;
-                                    }
-                                }
-                            }
-
-                            // 跳过文件夹条目
-                            if entry_name.ends_with('/') {
-                                continue;
-                            }
-
-                            // 取出最后一段文件名，避免嵌套目录（例如 some/path/native.dll -> native.dll）
-                            let file_stem = std::path::Path::new(&entry_name)
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or(entry_name.as_str());
-
-                            let outpath = natives_dir.join(file_stem);
-
-                            if let Some(p) = outpath.parent() {
-                                if !p.exists() {
-                                    fs::create_dir_all(&p)?;
-                                }
-                            }
-                            let mut outfile = fs::File::create(&outpath)?;
-                            io::copy(&mut file, &mut outfile)?;
+                        if let Some(artifact) = lib
+                            .get("downloads")
+                            .and_then(|d| d.get("classifiers"))
+                            .and_then(|c| c.get(&classifier))
+                        {
+                            emit("log-debug", format!("Natives Artifact: {:?}", artifact));
+                            let lib_path =
+                                libraries_base_dir.join(artifact["path"].as_str().unwrap_or(""));
                             emit(
                                 "log-debug",
-                                format!("解压Natives文件: {} -> {}", entry_name, outpath.display()),
+                                format!("尝试解压Natives库: {}", lib_path.display()),
                             );
-                        }
-                        // 列出 natives 目录内容，便于排查缺失的本机库
-                        if natives_dir.exists() {
-                            if let Ok(entries) = fs::read_dir(&natives_dir) {
-                                let mut names = vec![];
-                                for e in entries.flatten() {
-                                    if let Ok(fname) = e.file_name().into_string() {
-                                        names.push(fname);
+                            if !lib_path.exists() {
+                                emit(
+                                    "log-error",
+                                    format!("Natives库文件不存在: {}", lib_path.display()),
+                                );
+                                return Err(LauncherError::Custom(format!(
+                                    "Natives库文件不存在: {}",
+                                    lib_path.display()
+                                )));
+                            }
+                            let file = fs::File::open(&lib_path)?;
+                            let mut archive = zip::ZipArchive::new(file)?;
+
+                            for i in 0..archive.len() {
+                                let mut file = archive.by_index(i)?;
+                                // 只取条目最后的文件名，避免将库解压到嵌套路径中，确保所有本机库位于 natives 根目录
+                                // 使用 owned String 来避免后续对 zip 条目进行可变借用时的借用冲突
+                                let entry_name = file.name().to_string();
+                                // 检查是否需要排除
+                                if let Some(extract_rules) = lib.get("extract") {
+                                    if let Some(exclude) =
+                                        extract_rules.get("exclude").and_then(|e| e.as_array())
+                                    {
+                                        if exclude.iter().any(|v| {
+                                            entry_name.starts_with(v.as_str().unwrap_or(""))
+                                        }) {
+                                            continue;
+                                        }
                                     }
                                 }
+
+                                // 跳过文件夹条目
+                                if entry_name.ends_with('/') {
+                                    continue;
+                                }
+
+                                // 取出最后一段文件名，避免嵌套目录（例如 some/path/native.dll -> native.dll）
+                                let file_stem = std::path::Path::new(&entry_name)
+                                    .file_name()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or(entry_name.as_str());
+
+                                let outpath = natives_dir.join(file_stem);
+
+                                if let Some(p) = outpath.parent() {
+                                    if !p.exists() {
+                                        fs::create_dir_all(&p)?;
+                                    }
+                                }
+                                let mut outfile = fs::File::create(&outpath)?;
+                                io::copy(&mut file, &mut outfile)?;
                                 emit(
                                     "log-debug",
-                                    format!("natives 目录内容: [{}]", names.join(", ")),
+                                    format!(
+                                        "解压Natives文件: {} -> {}",
+                                        entry_name,
+                                        outpath.display()
+                                    ),
                                 );
+                            }
+                            // 列出 natives 目录内容，便于排查缺失的本机库
+                            if natives_dir.exists() {
+                                if let Ok(entries) = fs::read_dir(&natives_dir) {
+                                    let mut names = vec![];
+                                    for e in entries.flatten() {
+                                        if let Ok(fname) = e.file_name().into_string() {
+                                            names.push(fname);
+                                        }
+                                    }
+                                    emit(
+                                        "log-debug",
+                                        format!("natives 目录内容: [{}]", names.join(", ")),
+                                    );
+                                }
                             }
                         }
                     }

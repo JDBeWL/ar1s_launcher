@@ -1,16 +1,9 @@
-use crate::services::instance;
 use crate::errors::LauncherError;
 use crate::models::ForgeVersion;
-use serde::Serialize;
+use crate::services::instance;
+// 移除旧的结构体定义，直接使用 service 中的定义
+use crate::services::instance::InstanceInfo; 
 
-#[derive(Serialize)]
-pub struct InstanceInfo {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub path: String,
-    pub created_time: Option<String>,
-}
 
 #[tauri::command]
 pub async fn create_instance(new_instance_name: String, base_version_id: String, forge_version: Option<ForgeVersion>, window: tauri::Window) -> Result<(), LauncherError> {

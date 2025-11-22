@@ -30,7 +30,7 @@ pub async fn process_and_download_version(
     let config = load_config()?;
     let game_dir = PathBuf::from(&config.game_dir);
     let version_dir = game_dir.join("versions").join(&version_id);
-    
+
     // 在开始下载前创建版本目录
     fs::create_dir_all(&version_dir)?;
     let (libraries_base_dir, assets_base_dir) =
@@ -218,9 +218,18 @@ pub async fn process_and_download_version(
                 let is_lwjgl = lib["name"]
                     .as_str()
                     .map_or(false, |name| name.contains("lwjgl"));
+
+                // 统一OS名称映射：将 macOS 映射为 osx 以匹配 JSON 中的键
+                let current_os = std::env::consts::OS;
+                let os_key = if current_os == "macos" {
+                    "osx"
+                } else {
+                    current_os
+                };
+
                 for (os_name, classifier_value) in natives.as_object().unwrap() {
                     let os_classifier = classifier_value.as_str().unwrap();
-                    if os_name == std::env::consts::OS || is_lwjgl {
+                    if os_name == os_key || is_lwjgl {
                         if let Some(classifiers) =
                             lib.get("downloads").and_then(|d| d.get("classifiers"))
                         {
@@ -413,7 +422,7 @@ pub struct DownloadProgress {
     pub total_bytes: u64,      // 总字节数
     pub percent: u8,           // 完成百分比(0-100)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,  // 错误信息
+    pub error: Option<String>, // 错误信息
 }
 
 pub async fn download_all_files(
@@ -574,7 +583,9 @@ pub async fn download_all_files(
             // 记录正在进行的下载
             {
                 let mut state = download_state.lock().await;
-                state.active_downloads.insert(job.url.clone(), job.path.clone());
+                state
+                    .active_downloads
+                    .insert(job.url.clone(), job.path.clone());
                 if let Err(e) = std::fs::write(&state_file, serde_json::to_string(&*state)?) {
                     println!("WARN: Failed to write state file: {}", e);
                 }
@@ -717,7 +728,9 @@ pub async fn download_all_files(
                 bytes_downloaded: bytes_downloaded.load(Ordering::SeqCst),
                 total_bytes: total_size_precomputed,
                 percent: if total_size_precomputed > 0 {
-                    (bytes_downloaded.load(Ordering::SeqCst) as f64 / total_size_precomputed as f64 * 100.0).round() as u8
+                    (bytes_downloaded.load(Ordering::SeqCst) as f64 / total_size_precomputed as f64
+                        * 100.0)
+                        .round() as u8
                 } else {
                     0
                 },
@@ -790,7 +803,8 @@ async fn download_file(
             Err(e) => {
                 println!(
                     "DEBUG: File verification failed, attempting to download: {} - {}",
-                    job.path.display(), e
+                    job.path.display(),
+                    e
                 );
                 // 验证过程出错，继续下载
             }
@@ -936,8 +950,6 @@ async fn download_chunk(
 
     result
 }
-
-
 
 async fn fetch_versions(
     client: &reqwest::Client,
