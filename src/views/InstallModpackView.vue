@@ -63,6 +63,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
+import { useNotificationStore } from '../stores/notificationStore'
 
 interface ModrinthVersion {
   id: string;
@@ -72,6 +73,7 @@ interface ModrinthVersion {
 
 const route = useRoute()
 const router = useRouter()
+const notificationStore = useNotificationStore()
 
 const projectId = String(route.query.projectId || '')
 const title = String(route.query.title || '')
@@ -131,11 +133,12 @@ async function install() {
       install_path: '',
     }
     await invoke('install_modrinth_modpack', options)
-    alert('整合包安装成功')
+    notificationStore.success('安装成功', '整合包已安装完成')
     router.push('/instance-manager')
   } catch (e) {
     console.error('安装整合包失败:', e)
-    alert('安装失败')
+    const errorMessage = e instanceof Error ? e.message : String(e)
+    notificationStore.error('安装失败', errorMessage, true)
   } finally {
     installing.value = false
   }
@@ -156,16 +159,68 @@ function onGameVersionChange() {
   selectedVersionId.value = first ? first.id : null
 }
 
+/**
+ * 比较 Minecraft 版本号（降序）
+ * 支持格式：1.20.1, 1.20.1-pre1, 1.20.1-rc1, 24w10a (快照)
+ */
 function compareVersionDesc(a: string, b: string): number {
-  const ap = a.split('.').map(n => parseInt(n || '0', 10))
-  const bp = b.split('.').map(n => parseInt(n || '0', 10))
-  const len = Math.max(ap.length, bp.length)
-  for (let i = 0; i < len; i++) {
-    const av = ap[i] ?? 0
-    const bv = bp[i] ?? 0
+  // 解析版本号，提取主版本和后缀
+  const parseVersion = (v: string) => {
+    // 匹配快照格式 (如 24w10a)
+    const snapshotMatch = v.match(/^(\d+)w(\d+)([a-z])$/)
+    if (snapshotMatch) {
+      return {
+        type: 'snapshot',
+        parts: [parseInt(snapshotMatch[1]), parseInt(snapshotMatch[2])],
+        suffix: snapshotMatch[3]
+      }
+    }
+    
+    // 匹配正式版/预览版格式 (如 1.20.1, 1.20.1-pre1, 1.20.1-rc1)
+    const match = v.match(/^([\d.]+)(?:-(.+))?$/)
+    if (!match) return { type: 'unknown', parts: [0], suffix: v }
+    
+    const parts = match[1].split('.').map(n => parseInt(n) || 0)
+    const suffix = match[2] || ''
+    
+    // 确定版本类型优先级：release > rc > pre
+    let type = 'release'
+    let suffixNum = 0
+    if (suffix.startsWith('rc')) {
+      type = 'rc'
+      suffixNum = parseInt(suffix.slice(2)) || 0
+    } else if (suffix.startsWith('pre')) {
+      type = 'pre'
+      suffixNum = parseInt(suffix.slice(3)) || 0
+    } else if (suffix) {
+      type = 'other'
+    }
+    
+    return { type, parts, suffix, suffixNum }
+  }
+  
+  const va = parseVersion(a)
+  const vb = parseVersion(b)
+  
+  // 快照版本排在正式版之后
+  if (va.type === 'snapshot' && vb.type !== 'snapshot') return 1
+  if (vb.type === 'snapshot' && va.type !== 'snapshot') return -1
+  
+  // 比较主版本号
+  const maxLen = Math.max(va.parts.length, vb.parts.length)
+  for (let i = 0; i < maxLen; i++) {
+    const av = va.parts[i] ?? 0
+    const bv = vb.parts[i] ?? 0
     if (av !== bv) return bv - av
   }
-  return 0
+  
+  // 主版本相同，比较类型优先级
+  const typePriority: Record<string, number> = { release: 3, rc: 2, pre: 1, other: 0, snapshot: -1, unknown: -2 }
+  const typeDiff = (typePriority[vb.type] ?? 0) - (typePriority[va.type] ?? 0)
+  if (typeDiff !== 0) return typeDiff
+  
+  // 类型相同，比较后缀数字
+  return (vb.suffixNum ?? 0) - (va.suffixNum ?? 0)
 }
 </script>
 

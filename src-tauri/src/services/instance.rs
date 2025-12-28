@@ -1,9 +1,9 @@
 use crate::errors::LauncherError;
-use crate::models::{DownloadJob, ForgeVersion, LaunchOptions};
+use crate::models::{DownloadJob, ForgeVersion, InstanceInfo, LaunchOptions};
 use crate::services::{config, download, forge, launcher};
 use crate::utils::file_utils;
 use log::{info, warn};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
@@ -15,18 +15,6 @@ struct InstallProgress {
     progress: u8,
     message: String,
     indeterminate: bool,
-}
-
-// 将 InstanceInfo 定义移到这里，或者是 models 模块，
-// 以避免 controller 和 service 之间的循环依赖。
-// 如果 controller 需要用它，可以从这里引用，或者最好把它移到 src/models/mod.rs
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct InstanceInfo {
-    pub id: String,
-    pub name: String,
-    pub version: String,
-    pub path: String,
-    pub created_time: Option<String>,
 }
 
 /// 辅助函数：获取游戏目录和版本目录

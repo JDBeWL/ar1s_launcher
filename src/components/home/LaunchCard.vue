@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DownloadProgress } from '../../composables/useGameLaunch';
+import type { DownloadProgress } from '../../types/events';
 
 defineProps<{
   selectedVersion: string

@@ -26,6 +26,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             controllers::download_controller::get_versions,
             controllers::download_controller::download_version,
+            controllers::download_controller::cancel_download,
             controllers::launcher_controller::launch_minecraft,
             controllers::config_controller::get_config,
             controllers::config_controller::get_game_dir,
@@ -38,6 +39,7 @@ pub fn run() {
             controllers::config_controller::load_config_key,
             controllers::config_controller::save_config_key,
             controllers::java_controller::validate_java_path,
+            controllers::java_controller::get_java_version,
             controllers::config_controller::get_download_threads,
             controllers::config_controller::set_download_threads,
             controllers::config_controller::validate_version_files,

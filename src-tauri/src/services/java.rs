@@ -227,6 +227,51 @@ pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
     }
 }
 
+/// 获取 Java 版本信息
+pub async fn get_java_version(path: String) -> Result<String, LauncherError> {
+    let path_buf = PathBuf::from(&path);
+    
+    let java_path = if path == "java" || path == "java.exe" {
+        PathBuf::from(&path)
+    } else if path_buf.is_dir() {
+        path_buf.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" })
+    } else {
+        path_buf
+    };
+
+    let mut command = Command::new(&java_path);
+    command.arg("-version");
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    match command.output() {
+        Ok(output) => {
+            // Java 版本信息通常输出到 stderr
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let version_output = if stderr.contains("version") { stderr } else { stdout };
+
+            // 提取版本号
+            for line in version_output.lines() {
+                if line.contains("version") {
+                    // 提取引号中的版本号
+                    if let Some(start) = line.find('"') {
+                        if let Some(end) = line[start + 1..].find('"') {
+                            return Ok(line[start + 1..start + 1 + end].to_string());
+                        }
+                    }
+                    // 如果没有引号，返回整行
+                    return Ok(line.trim().to_string());
+                }
+            }
+            
+            Err(LauncherError::Custom("无法解析 Java 版本".to_string()))
+        }
+        Err(e) => Err(LauncherError::Custom(format!("无法获取 Java 版本: {}", e))),
+    }
+}
+
 /// 自动检测Java安装 (同步版本，用于配置加载)
 pub fn auto_detect_java() -> Result<Vec<String>, LauncherError> {
     let mut java_paths = Vec::new();

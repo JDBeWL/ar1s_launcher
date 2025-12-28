@@ -14,3 +14,8 @@ pub async fn set_java_path_command(path: String) -> Result<(), LauncherError> {
 pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
     crate::services::java::validate_java_path(path).await
 }
+
+#[tauri::command]
+pub async fn get_java_version(path: String) -> Result<String, LauncherError> {
+    crate::services::java::get_java_version(path).await
+}

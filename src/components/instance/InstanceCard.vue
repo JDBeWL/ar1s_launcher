@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-const props = defineProps<{
-  instance: any;
+import type { GameInstance } from '../../types/events';
+
+defineProps<{
+  instance: GameInstance;
 }>();
 
 const emit = defineEmits<{
-  (e: 'launch', instance: any): void;
-  (e: 'open-folder', instance: any): void;
-  (e: 'delete', instance: any): void;
-  (e: 'rename', instance: any): void;
+  (e: 'launch', instance: GameInstance): void;
+  (e: 'open-folder', instance: GameInstance): void;
+  (e: 'delete', instance: GameInstance): void;
+  (e: 'rename', instance: GameInstance): void;
 }>();
 
 const instanceImage = computed(() => {
@@ -18,7 +20,7 @@ const instanceImage = computed(() => {
   return 'https://cdn.vuetifyjs.com/images/cards/house.jpg'; 
 });
 
-function formatLastPlayed(time: number) {
+function formatLastPlayed(time?: number) {
   if (!time) return '从未运行';
   return new Date(time).toLocaleString();
 }
@@ -38,7 +40,7 @@ function formatLastPlayed(time: number) {
     </v-img>
 
     <v-card-subtitle class="pt-4">
-      {{ instance.loader_type !== 'None' ? instance.loader_type : '' }} {{ instance.game_version }}
+      {{ instance.loader_type && instance.loader_type !== 'None' ? instance.loader_type : '' }} {{ instance.game_version || instance.version }}
     </v-card-subtitle>
 
     <v-card-text>

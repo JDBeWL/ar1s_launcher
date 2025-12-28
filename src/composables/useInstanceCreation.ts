@@ -1,14 +1,9 @@
-import { ref, computed } from 'vue';
+import { ref, computed, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-
-export interface MinecraftVersion {
-    id: string;
-    type: string;
-    url: string;
-    time: string;
-    releaseTime: string;
-}
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import { useNotificationStore } from '../stores/notificationStore';
+import type { MinecraftVersion, VersionManifest, CreateInstancePayload, InstallProgressPayload } from '../types/events';
 
 export function useInstanceCreation() {
     const versions = ref<MinecraftVersion[]>([]);
@@ -71,8 +66,8 @@ export function useInstanceCreation() {
     async function fetchVersions() {
         loadingVersions.value = true;
         try {
-            const manifest = await invoke("get_versions");
-            versions.value = (manifest as any).versions.map((v: any) => ({
+            const manifest = await invoke<VersionManifest>("get_versions");
+            versions.value = manifest.versions.map((v) => ({
                 ...v,
                 releaseTime: new Date(v.releaseTime).toLocaleString(),
             }));
@@ -98,10 +93,10 @@ export function useInstanceCreation() {
 
         try {
             if (selectedModLoaderType.value === "Forge") {
-                const result = await invoke("get_forge_versions", {
+                const result = await invoke<string[]>("get_forge_versions", {
                     minecraftVersion: selectedVersion.value.id,
                 });
-                modLoaderVersions.value = result as any[];
+                modLoaderVersions.value = result;
             } else {
                 modLoaderVersions.value = [];
             }
@@ -120,17 +115,29 @@ export function useInstanceCreation() {
         }
     }
 
-    let unlistenProgress: (() => void) | null = null;
+    let unlistenProgress: UnlistenFn | null = null;
+
+    function cleanup() {
+        if (unlistenProgress) {
+            unlistenProgress();
+            unlistenProgress = null;
+        }
+    }
+
+    // 组件卸载时自动清理
+    onUnmounted(cleanup);
 
     async function createInstance() {
+        const notificationStore = useNotificationStore();
+        
         if (!selectedVersion.value) {
-            alert("请先选择一个Minecraft版本");
+            notificationStore.warning('请先选择一个Minecraft版本');
             return;
         }
 
         const finalInstanceName = instanceName.value || defaultInstanceName.value;
         if (!finalInstanceName) {
-            alert("实例名称不能为空");
+            notificationStore.warning('实例名称不能为空');
             return;
         }
 
@@ -141,9 +148,9 @@ export function useInstanceCreation() {
         progressText.value = "准备安装...";
 
         try {
-            unlistenProgress = await listen(
+            unlistenProgress = await listen<InstallProgressPayload>(
                 "instance-install-progress",
-                (event: any) => {
+                (event) => {
                     const progressData = event.payload;
                     progressValue.value = progressData.progress;
                     progressText.value = progressData.message;
@@ -151,7 +158,7 @@ export function useInstanceCreation() {
                 }
             );
 
-            let payload: any = {
+            const payload: CreateInstancePayload = {
                 newInstanceName: finalInstanceName,
                 baseVersionId: selectedVersion.value.id,
             };
@@ -163,9 +170,9 @@ export function useInstanceCreation() {
                 payload.forgeVersion = selectedModLoaderVersion.value;
             }
 
-            await invoke("create_instance", payload);
+            await invoke("create_instance", { ...payload });
 
-            alert(`实例 '${finalInstanceName}' 创建成功!`);
+            notificationStore.success('创建成功', `实例 '${finalInstanceName}' 已创建`);
 
             showProgress.value = false;
             installing.value = false;
@@ -178,12 +185,10 @@ export function useInstanceCreation() {
             await new Promise((resolve) => setTimeout(resolve, 1000));
             showProgress.value = false;
 
-            alert(`创建实例失败: ${error}`);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            notificationStore.error('创建实例失败', errorMessage, true);
         } finally {
-            if (unlistenProgress) {
-                unlistenProgress();
-                unlistenProgress = null;
-            }
+            cleanup();
         }
     }
 

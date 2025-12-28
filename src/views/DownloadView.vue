@@ -3,6 +3,8 @@ import { ref, onMounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useDownloadStore } from '@/stores/downloadStore';
 import { useSettingsStore } from '@/stores/settings';
+import { useNotificationStore } from '@/stores/notificationStore';
+import type { MinecraftVersion, VersionManifest } from '@/types/events';
 
 // SVG图标
 const grassBlockIcon = '/icons/grass_block.svg';
@@ -11,9 +13,10 @@ const dirtPathIcon = '/icons/dirt_path.svg';
 // 使用全局下载状态
 const downloadStore = useDownloadStore();
 const settingsStore = useSettingsStore();
+const notificationStore = useNotificationStore();
 
 // --- State ---
-const allVersions = ref<Array<any>>([]);
+const allVersions = ref<MinecraftVersion[]>([]);
 const loading = ref(false);
 const searchQuery = ref('');
 const versionType = ref('release');
@@ -49,15 +52,15 @@ const selectedVersion = computed(() => downloadStore.selectedVersion);
 async function fetchVersions() {
   try {
     loading.value = true;
-    const result = await invoke('get_versions');
-    if (result && (result as any).versions) {
-      allVersions.value = (result as any).versions;
+    const result = await invoke<VersionManifest>('get_versions');
+    if (result?.versions) {
+      allVersions.value = result.versions;
     } else {
       allVersions.value = [];
     }
   } catch (err) {
     console.error('获取版本列表失败:', err);
-    alert('获取版本列表失败，请检查网络连接或稍后再试');
+    notificationStore.error('获取版本列表失败', '请检查网络连接或稍后再试');
   } finally {
     loading.value = false;
   }

@@ -41,15 +41,23 @@ const formattedSpeed = computed(() => {
 })
 
 const remainingTime = computed(() => {
-  if (props.speed === 0 || props.progress === 0) return '--'
+  // 速度为 0 时无法计算剩余时间
+  if (props.speed === 0) return '--'
+  // 还没有下载数据或已完成时不显示剩余时间
+  if (props.total === 0) return '--'
+  
   const remainingBytes = props.total - props.progress
+  if (remainingBytes <= 0) return '0s'
+  
   const seconds = remainingBytes / (props.speed * 1024)
   
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   const secs = Math.floor(seconds % 60)
   
-  return `${hours ? `${hours}h ` : ''}${minutes ? `${minutes}m ` : ''}${secs}s`
+  if (hours > 0) return `${hours}h ${minutes}m`
+  if (minutes > 0) return `${minutes}m ${secs}s`
+  return `${secs}s`
 })
 
 const progressText = computed(() => {

@@ -22,7 +22,7 @@ pub fn default_false() -> bool {
 }
 
 // 游戏配置
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameConfig {
     pub game_dir: String,
     #[serde(default = "default_true")]
@@ -89,22 +89,27 @@ pub struct LaunchOptions {
 }
 
 // 下载状态
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DownloadStatus {
     Downloading,
     Completed,
     Cancelled,
-    Error(String),
+    Error,
 }
 
 // 下载进度
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadProgress {
     pub progress: u64,
     pub total: u64,
     pub speed: f64,
     pub status: DownloadStatus,
+    pub bytes_downloaded: u64,
+    pub total_bytes: u64,
+    pub percent: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 // 下载任务
@@ -123,6 +128,16 @@ pub struct InstanceConfig {
     pub display_name: String,
     pub minecraft_version: String,
     pub created_at: String,
+}
+
+// 实例信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstanceInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub path: String,
+    pub created_time: Option<String>,
 }
 
 // Forge版本

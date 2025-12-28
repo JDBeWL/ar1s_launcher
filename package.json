@@ -1,7 +1,7 @@
 {
   "name": "ar1s_launcher",
   "private": true,
-  "version": "0.3.3",
+  "version": "0.3.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -24,7 +24,8 @@
     "@tauri-apps/cli": "^2.0",
     "@vitejs/plugin-vue": "^5.0.4",
     "typescript": "~5.8.3",
-    "vite": "^6.3.6",
+    "vite": "^6.4.1",
+    "vite-plugin-vuetify": "^2.1.2",
     "vue-tsc": "^2.0.0"
   }
 }

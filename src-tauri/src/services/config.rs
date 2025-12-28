@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::RwLock;
 use sysinfo::System;
 use tauri::Emitter;
 
@@ -10,6 +11,18 @@ use crate::services::memory::{
     is_memory_setting_safe, recommend_memory_for_game, AutoMemoryConfig, MemoryRecommendation,
     MemoryStats,
 };
+
+// 配置缓存
+static CONFIG_CACHE: std::sync::LazyLock<RwLock<Option<GameConfig>>> = 
+    std::sync::LazyLock::new(|| RwLock::new(None));
+
+/// 清除配置缓存（供外部模块在需要时调用）
+#[allow(dead_code)]
+pub fn invalidate_config_cache() {
+    if let Ok(mut cache) = CONFIG_CACHE.write() {
+        *cache = None;
+    }
+}
 
 // 获取保存的用户名
 pub async fn get_saved_username() -> Result<Option<String>, LauncherError> {
@@ -39,8 +52,15 @@ pub async fn set_saved_uuid(uuid: String) -> Result<(), LauncherError> {
     Ok(())
 }
 
-/// 加载配置文件
+/// 加载配置文件（带缓存）
 pub fn load_config() -> Result<GameConfig, LauncherError> {
+    // 先检查缓存
+    if let Ok(cache) = CONFIG_CACHE.read() {
+        if let Some(ref config) = *cache {
+            return Ok(config.clone());
+        }
+    }
+
     let config_path = get_config_path()?;
     let is_first_run = !config_path.exists();
 
@@ -48,7 +68,13 @@ pub fn load_config() -> Result<GameConfig, LauncherError> {
         let content = fs::read_to_string(&config_path)?;
         // 如果配置文件内容为空或损坏，自动备份并重建默认配置
         match serde_json::from_str::<GameConfig>(&content) {
-            Ok(config) => Ok(config),
+            Ok(config) => {
+                // 更新缓存
+                if let Ok(mut cache) = CONFIG_CACHE.write() {
+                    *cache = Some(config.clone());
+                }
+                Ok(config)
+            }
             Err(_) => {
                 // 备份损坏的配置文件
                 let backup_path = config_path.with_extension("bak");
@@ -171,12 +197,16 @@ pub fn load_config() -> Result<GameConfig, LauncherError> {
 
 use crate::services::java::auto_detect_java;
 
-/// 保存配置文件
-
-/// 保存配置文件
+/// 保存配置文件（同时更新缓存）
 pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
     let config_path = get_config_path()?;
     fs::write(config_path, serde_json::to_string_pretty(config)?)?;
+    
+    // 更新缓存
+    if let Ok(mut cache) = CONFIG_CACHE.write() {
+        *cache = Some(config.clone());
+    }
+    
     Ok(())
 }
 
@@ -249,37 +279,35 @@ impl ConfigKey {
             Self::GameDir => config.game_dir = value,
             Self::VersionIsolation => {
                 config.version_isolation = value.parse().map_err(|_| {
-                    LauncherError::Custom("Invalid boolean value for versionIsolation".to_string())
+                    LauncherError::Custom("版本隔离设置值无效".to_string())
                 })?
             }
             Self::DownloadThreads => {
                 config.download_threads = value.parse().map_err(|_| {
-                    LauncherError::Custom("Invalid u8 value for downloadThreads".to_string())
+                    LauncherError::Custom("下载线程数设置值无效".to_string())
                 })?
             }
             Self::Language => config.language = Some(value),
             Self::IsolateSaves => {
                 config.isolate_saves = value.parse().map_err(|_| {
-                    LauncherError::Custom("Invalid boolean value for isolateSaves".to_string())
+                    LauncherError::Custom("存档隔离设置值无效".to_string())
                 })?
             }
             Self::IsolateResourcepacks => {
                 config.isolate_resourcepacks = value.parse().map_err(|_| {
-                    LauncherError::Custom(
-                        "Invalid boolean value for isolateResourcepacks".to_string(),
-                    )
+                    LauncherError::Custom("资源包隔离设置值无效".to_string())
                 })?
             }
             Self::IsolateLogs => {
                 config.isolate_logs = value.parse().map_err(|_| {
-                    LauncherError::Custom("Invalid boolean value for isolateLogs".to_string())
+                    LauncherError::Custom("日志隔离设置值无效".to_string())
                 })?
             }
             Self::Username => config.username = Some(value),
             Self::Uuid => config.uuid = Some(value),
             Self::MaxMemory => {
                 config.max_memory = value.parse().map_err(|_| {
-                    LauncherError::Custom("Invalid u32 value for maxMemory".to_string())
+                    LauncherError::Custom("最大内存设置值无效".to_string())
                 })?
             }
             Self::DownloadMirror => config.download_mirror = Some(value),
@@ -293,7 +321,7 @@ pub async fn load_config_key(key: String) -> Result<Option<String>, LauncherErro
     match ConfigKey::from_str(&key) {
         Some(config_key) => Ok(config_key.get_value(&config)),
         None => Err(LauncherError::Custom(format!(
-            "Unknown config key: {}",
+            "未知的配置项: {}",
             key
         ))),
     }
@@ -307,7 +335,7 @@ pub async fn save_config_key(key: String, value: String) -> Result<(), LauncherE
             save_config(&config)
         }
         None => Err(LauncherError::Custom(format!(
-            "Unknown config key: {}",
+            "未知的配置项: {}",
             key
         ))),
     }

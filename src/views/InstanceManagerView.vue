@@ -3,15 +3,18 @@ import { ref, onMounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useRouter } from "vue-router";
 import InstanceCard from "../components/instance/InstanceCard.vue";
+import { useNotificationStore } from "../stores/notificationStore";
+import type { GameInstance } from "../types/events";
 
 const router = useRouter();
-const instances = ref<any[]>([]);
+const notificationStore = useNotificationStore();
+const instances = ref<GameInstance[]>([]);
 const loading = ref(false);
 
 // 重命名对话框
 const renameDialog = ref(false);
 const renameInstanceName = ref("");
-const currentInstance = ref<any>(null);
+const currentInstance = ref<GameInstance | null>(null);
 
 // 删除确认对话框
 const deleteDialog = ref(false);
@@ -19,8 +22,8 @@ const deleteDialog = ref(false);
 async function loadInstances() {
   loading.value = true;
   try {
-    const result = await invoke("get_instances");
-    instances.value = result as any[];
+    const result = await invoke<GameInstance[]>("get_instances");
+    instances.value = result;
   } catch (error) {
     console.error("Failed to load instances:", error);
   } finally {
@@ -28,13 +31,11 @@ async function loadInstances() {
   }
 }
 
-function launchInstance(instance: any) {
-  // 跳转到主页并选中该实例，或者直接启动
-  // 这里简单起见，我们跳转到主页，实际逻辑可能需要通过Store传递选中的实例
+function launchInstance(instance: GameInstance) {
   router.push({ path: "/", query: { instance: instance.name } });
 }
 
-async function openInstanceFolder(instance: any) {
+async function openInstanceFolder(instance: GameInstance) {
   try {
     await invoke("open_instance_folder", { instanceName: instance.name });
   } catch (error) {
@@ -42,7 +43,7 @@ async function openInstanceFolder(instance: any) {
   }
 }
 
-function openRenameDialog(instance: any) {
+function openRenameDialog(instance: GameInstance) {
   currentInstance.value = instance;
   renameInstanceName.value = instance.name;
   renameDialog.value = true;
@@ -57,14 +58,16 @@ async function renameInstance() {
       newName: renameInstanceName.value 
     });
     renameDialog.value = false;
+    notificationStore.success('重命名成功');
     await loadInstances();
   } catch (error) {
     console.error("Failed to rename instance:", error);
-    alert(`重命名失败: ${error}`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    notificationStore.error('重命名失败', errorMessage);
   }
 }
 
-function openDeleteDialog(instance: any) {
+function openDeleteDialog(instance: GameInstance) {
   currentInstance.value = instance;
   deleteDialog.value = true;
 }
@@ -75,10 +78,12 @@ async function deleteInstance() {
   try {
     await invoke("delete_instance", { instanceName: currentInstance.value.name });
     deleteDialog.value = false;
+    notificationStore.success('删除成功');
     await loadInstances();
   } catch (error) {
     console.error("Failed to delete instance:", error);
-    alert(`删除失败: ${error}`);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    notificationStore.error('删除失败', errorMessage);
   }
 }
 

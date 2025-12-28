@@ -9,8 +9,17 @@ const autoMemoryEnabled = ref(false);
 const memoryEfficiency = ref('');
 
 const totalMemoryGB = computed(() => (settingsStore.totalMemoryMB / 1024).toFixed(1));
+const maxMemoryGB = computed(() => (settingsStore.maxMemory / 1024).toFixed(1));
+const memoryPercentage = computed(() => 
+  Math.round((settingsStore.maxMemory / settingsStore.totalMemoryMB) * 100)
+);
 
-// 检查内存设置是否超过90%并显示警告
+const memoryColor = computed(() => {
+  if (memoryPercentage.value > 90) return 'error';
+  if (memoryPercentage.value > 75) return 'warning';
+  return 'success';
+});
+
 async function checkMemoryWarning() {
   try {
     const warning = await invoke<string | null>('check_memory_warning', { memoryMb: settingsStore.maxMemory });
@@ -21,7 +30,6 @@ async function checkMemoryWarning() {
   }
 }
 
-// 加载自动内存设置状态
 async function loadAutoMemoryConfig() {
   try {
     const config = await invoke<{ enabled: boolean }>('get_auto_memory_config');
@@ -31,12 +39,9 @@ async function loadAutoMemoryConfig() {
   }
 }
 
-// 切换自动内存设置
 async function toggleAutoMemory() {
   try {
     await invoke('set_auto_memory_enabled', { enabled: autoMemoryEnabled.value });
-    
-    // 如果启用自动设置，立即应用推荐的内存
     if (autoMemoryEnabled.value) {
       await applyAutoMemory();
     }
@@ -45,15 +50,12 @@ async function toggleAutoMemory() {
   }
 }
 
-// 应用自动内存推荐
 async function applyAutoMemory() {
   try {
     const recommendedMemory = await invoke<number | null>('auto_set_memory');
     if (recommendedMemory !== null && recommendedMemory !== undefined) {
       settingsStore.maxMemory = recommendedMemory;
       await settingsStore.saveMaxMemory();
-      
-      // 更新内存效率分析
       await analyzeMemoryEfficiency();
     }
   } catch (err) {
@@ -61,7 +63,6 @@ async function applyAutoMemory() {
   }
 }
 
-// 分析内存使用效率
 async function analyzeMemoryEfficiency() {
   try {
     const efficiency = await invoke<string>('analyze_memory_efficiency', { memoryMb: settingsStore.maxMemory });
@@ -72,13 +73,16 @@ async function analyzeMemoryEfficiency() {
   }
 }
 
-// 监听内存设置变化，检查是否超过90%
+function setPresetMemory(mb: number) {
+  settingsStore.maxMemory = Math.min(mb, settingsStore.totalMemoryMB);
+  settingsStore.saveMaxMemory();
+}
+
 watch(() => settingsStore.maxMemory, async () => {
   await checkMemoryWarning();
   await analyzeMemoryEfficiency();
 });
 
-// 监听自动内存设置变化
 watch(autoMemoryEnabled, async () => {
   await toggleAutoMemory();
 });
@@ -92,119 +96,224 @@ onMounted(async () => {
 </script>
 
 <template>
-  <v-card>
-    <v-card-title class="d-flex align-center">
-      <v-icon class="mr-2">mdi-memory</v-icon>
-      内存设置
-    </v-card-title>
-    <v-card-text class="pa-4">
-      <!-- 系统内存信息 -->
-      <div class="d-flex align-center justify-space-between mb-6">
+  <div class="settings-group">
+    <!-- 标题 -->
+    <div class="group-header mb-4">
+      <div class="d-flex align-center">
+        <v-avatar color="purple" variant="tonal" size="40" class="mr-3">
+          <v-icon>mdi-memory</v-icon>
+        </v-avatar>
         <div>
-          <div class="text-subtitle-2">系统总内存</div>
-          <div class="text-h6 text-primary">{{ settingsStore.totalMemoryMB }} MB (约 {{ totalMemoryGB }} GB)</div>
+          <h2 class="text-h6 font-weight-bold">内存管理</h2>
+          <p class="text-body-2 text-medium-emphasis mb-0">配置游戏可用的内存大小</p>
         </div>
-        <v-chip color="primary" variant="outlined">
-          <v-icon start>mdi-information</v-icon>
-          可用内存
-        </v-chip>
       </div>
+    </div>
 
-      <!-- 自动内存设置 -->
-      <v-switch
-        v-model="autoMemoryEnabled"
-        label="自动设置内存"
-        color="primary"
-        class="mb-6"
-        hide-details
-        hint="根据系统可用内存自动设置最佳内存大小，不超过8500MB"
-        persistent-hint
-      ></v-switch>
+    <!-- 系统内存概览 -->
+    <v-card variant="outlined" rounded="lg" class="mb-4">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center mb-4">
+          <v-icon color="purple" class="mr-2">mdi-chart-donut</v-icon>
+          <span class="text-subtitle-1 font-weight-medium">内存概览</span>
+        </div>
 
-      <!-- 手动内存设置 -->
-      <div v-if="!autoMemoryEnabled" class="mb-6">
-        <div class="text-subtitle-2 mb-3">手动设置内存</div>
         <v-row align="center">
-          <v-col cols="12" sm="8">
-            <v-slider
-              v-model="settingsStore.maxMemory"
-              label="最大内存 (MB)"
-              :min="512"
-              :max="settingsStore.totalMemoryMB"
-              :step="128"
-              thumb-label
-              :hint="`可用范围: 512MB - ${settingsStore.totalMemoryMB}MB`"
-              persistent-hint
-              @end="settingsStore.saveMaxMemory"
-              hide-details
-            ></v-slider>
+          <v-col cols="12" sm="4">
+            <div class="memory-stat text-center pa-4 rounded-lg">
+              <div class="text-h4 font-weight-bold text-primary">{{ totalMemoryGB }}</div>
+              <div class="text-body-2 text-medium-emphasis">系统总内存 (GB)</div>
+            </div>
           </v-col>
           <v-col cols="12" sm="4">
+            <div class="memory-stat text-center pa-4 rounded-lg">
+              <div class="text-h4 font-weight-bold" :class="`text-${memoryColor}`">{{ maxMemoryGB }}</div>
+              <div class="text-body-2 text-medium-emphasis">分配给游戏 (GB)</div>
+            </div>
+          </v-col>
+          <v-col cols="12" sm="4">
+            <div class="memory-stat text-center pa-4 rounded-lg">
+              <div class="text-h4 font-weight-bold" :class="`text-${memoryColor}`">{{ memoryPercentage }}%</div>
+              <div class="text-body-2 text-medium-emphasis">占用比例</div>
+            </div>
+          </v-col>
+        </v-row>
+      </v-card-text>
+    </v-card>
+
+    <!-- 自动内存设置 -->
+    <v-card variant="outlined" rounded="lg" class="mb-4">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center justify-space-between mb-1">
+          <div class="d-flex align-center">
+            <v-icon color="purple" class="mr-2">mdi-auto-fix</v-icon>
+            <span class="text-subtitle-1 font-weight-medium">自动内存管理</span>
+          </div>
+          <v-switch
+            v-model="autoMemoryEnabled"
+            color="purple"
+            hide-details
+            density="compact"
+          />
+        </div>
+        <p class="text-body-2 text-medium-emphasis mb-0">
+          根据系统可用内存自动设置最佳值，上限 8.5GB
+        </p>
+
+        <v-expand-transition>
+          <div v-if="autoMemoryEnabled" class="mt-4">
+            <v-alert
+              type="info"
+              variant="tonal"
+              density="compact"
+              rounded="lg"
+            >
+              <div class="d-flex align-center justify-space-between">
+                <span>当前自动分配: {{ settingsStore.maxMemory }} MB</span>
+                <v-btn
+                  size="small"
+                  variant="text"
+                  @click="applyAutoMemory"
+                >
+                  重新计算
+                </v-btn>
+              </div>
+            </v-alert>
+          </div>
+        </v-expand-transition>
+      </v-card-text>
+    </v-card>
+
+    <!-- 手动内存设置 -->
+    <v-card v-if="!autoMemoryEnabled" variant="outlined" rounded="lg" class="mb-4">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center mb-4">
+          <v-icon color="purple" class="mr-2">mdi-tune-vertical</v-icon>
+          <span class="text-subtitle-1 font-weight-medium">手动设置</span>
+        </div>
+
+        <!-- 快捷预设 -->
+        <div class="mb-4">
+          <div class="text-body-2 text-medium-emphasis mb-2">快捷预设</div>
+          <div class="d-flex flex-wrap ga-2">
+            <v-chip
+              v-for="preset in [2048, 4096, 6144, 8192]"
+              :key="preset"
+              :color="settingsStore.maxMemory === preset ? 'purple' : undefined"
+              :variant="settingsStore.maxMemory === preset ? 'flat' : 'outlined'"
+              :disabled="preset > settingsStore.totalMemoryMB"
+              @click="setPresetMemory(preset)"
+            >
+              {{ preset / 1024 }} GB
+            </v-chip>
+          </div>
+        </div>
+
+        <!-- 滑块 -->
+        <div class="mb-4">
+          <div class="d-flex align-center justify-space-between mb-2">
+            <span class="text-body-2">自定义内存</span>
             <v-text-field
               v-model.number="settingsStore.maxMemory"
               type="number"
-              label="内存大小"
+              variant="outlined"
+              density="compact"
               suffix="MB"
-              :rules="[
-                v => !!v || '必须输入内存大小',
-                v => (v >= 512 && v <= settingsStore.totalMemoryMB) || `必须在512-${settingsStore.totalMemoryMB}MB之间`
-              ]"
-              hide-spin-buttons
-              @change="settingsStore.saveMaxMemory"
               hide-details
-            ></v-text-field>
-          </v-col>
-        </v-row>
-      </div>
-
-      <!-- 自动内存状态 -->
-      <div v-if="autoMemoryEnabled" class="mb-6">
-        <v-alert
-          type="info"
-          variant="tonal"
-          density="compact"
-          hide-details
-        >
-          <div class="d-flex align-center">
-            <v-icon class="mr-2">mdi-auto-fix</v-icon>
-            <span>自动内存设置已启用：当前内存 {{ settingsStore.maxMemory }}MB</span>
-            <v-btn
-              size="small"
-              variant="text"
-              class="ml-auto"
-              @click="applyAutoMemory"
-            >
-              重新计算
-            </v-btn>
+              hide-spin-buttons
+              style="max-width: 140px"
+              @change="settingsStore.saveMaxMemory"
+            />
           </div>
-        </v-alert>
-      </div>
+          <v-slider
+            v-model="settingsStore.maxMemory"
+            :min="512"
+            :max="settingsStore.totalMemoryMB"
+            :step="128"
+            :color="memoryColor"
+            track-color="grey-lighten-2"
+            hide-details
+            @end="settingsStore.saveMaxMemory"
+          >
+            <template #prepend>
+              <span class="text-caption text-medium-emphasis">512 MB</span>
+            </template>
+            <template #append>
+              <span class="text-caption text-medium-emphasis">{{ settingsStore.totalMemoryMB }} MB</span>
+            </template>
+          </v-slider>
+        </div>
 
-      <!-- 内存分析信息 -->
-      <div v-if="memoryEfficiency || memoryWarning" class="mb-2">
-        <v-alert
-          v-if="memoryEfficiency"
-          type="info"
-          variant="tonal"
-          density="compact"
-          class="mb-2"
-          hide-details
-        >
-          <v-icon class="mr-2">mdi-chart-line</v-icon>
-          {{ memoryEfficiency }}
-        </v-alert>
-        
-        <v-alert
-          v-if="memoryWarning"
-          type="warning"
-          variant="tonal"
-          density="compact"
-          hide-details
-        >
-          <v-icon class="mr-2">mdi-alert</v-icon>
-          {{ memoryWarning }}
-        </v-alert>
-      </div>
-    </v-card-text>
-  </v-card>
+        <!-- 进度条 -->
+        <v-progress-linear
+          :model-value="memoryPercentage"
+          :color="memoryColor"
+          height="8"
+          rounded
+        />
+      </v-card-text>
+    </v-card>
+
+    <!-- 警告和建议 -->
+    <div v-if="memoryWarning || memoryEfficiency" class="mb-4">
+      <v-alert
+        v-if="memoryWarning"
+        type="warning"
+        variant="tonal"
+        density="compact"
+        rounded="lg"
+        class="mb-2"
+      >
+        <template #prepend>
+          <v-icon>mdi-alert-outline</v-icon>
+        </template>
+        {{ memoryWarning }}
+      </v-alert>
+      
+      <v-alert
+        v-if="memoryEfficiency"
+        type="info"
+        variant="tonal"
+        density="compact"
+        rounded="lg"
+      >
+        <template #prepend>
+          <v-icon>mdi-lightbulb-outline</v-icon>
+        </template>
+        {{ memoryEfficiency }}
+      </v-alert>
+    </div>
+
+    <!-- 内存建议 -->
+    <v-alert
+      type="info"
+      variant="tonal"
+      rounded="lg"
+    >
+      <template #title>
+        <span class="text-body-2 font-weight-medium">内存分配建议</span>
+      </template>
+      <ul class="text-body-2 pl-4 mb-0 mt-1">
+        <li>原版游戏: 2-4 GB</li>
+        <li>轻量整合包: 4-6 GB</li>
+        <li>大型整合包: 6-8 GB</li>
+        <li>建议保留至少 2GB 给系统使用</li>
+      </ul>
+    </v-alert>
+  </div>
 </template>
+
+<style scoped>
+.settings-group {
+  margin-bottom: 32px;
+}
+
+.group-header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.memory-stat {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+</style>

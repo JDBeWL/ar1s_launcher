@@ -5,7 +5,7 @@ import { useTheme } from 'vuetify'
 import { useDownloadStore } from './stores/downloadStore'
 import { useLauncherStore } from './stores/launcherStore'
 import GlobalDownloadStatus from './components/GlobalDownloadStatus.vue'
-import GlobalGameStatus from './components/GlobalGameStatus.vue'
+import GlobalNotification from './components/GlobalNotification.vue'
 
 // 窗口控制
 const appWindow = Window.getCurrent()
@@ -28,8 +28,9 @@ const isDarkMode = ref(true)
 // 切换主题模式
 function toggleTheme() {
   isDarkMode.value = !isDarkMode.value
-  theme.global.name.value = isDarkMode.value ? 'dark' : 'light'
-  localStorage.setItem('theme', isDarkMode.value ? 'dark' : 'light')
+  const newTheme = isDarkMode.value ? 'dark' : 'light'
+  theme.change(newTheme)
+  localStorage.setItem('theme', newTheme)
 }
 
 const downloadStore = useDownloadStore()
@@ -45,11 +46,9 @@ onMounted(async () => {
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme) {
     isDarkMode.value = savedTheme === 'dark'
-    theme.global.name.value = isDarkMode.value ? 'dark' : 'light'
-  } else {
-    // 默认使用暗色主题
-    theme.global.name.value = 'dark'
   }
+  const themeName = isDarkMode.value ? 'dark' : 'light'
+  theme.change(themeName)
 })
 
 onUnmounted(() => {
@@ -99,8 +98,8 @@ onUnmounted(() => {
     
     <!-- 全局下载状态组件 -->
     <GlobalDownloadStatus />
-    <!-- 全局游戏状态提示 -->
-    <GlobalGameStatus />
+    <!-- 全局通知组件 -->
+    <GlobalNotification />
   </v-app>
 </template>
 

@@ -1,8 +1,6 @@
 use crate::errors::LauncherError;
-use crate::models::ForgeVersion;
-use crate::services::instance;
-// 移除旧的结构体定义，直接使用 service 中的定义
-use crate::services::instance::InstanceInfo; 
+use crate::models::{ForgeVersion, InstanceInfo};
+use crate::services::instance; 
 
 
 #[tauri::command]

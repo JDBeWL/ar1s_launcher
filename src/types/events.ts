@@ -17,3 +17,52 @@ export interface GameExitPayload {
 }
 
 export type LaunchCommandPayload = string;
+
+// Minecraft 版本信息
+export interface MinecraftVersion {
+  id: string;
+  type: 'release' | 'snapshot' | 'old_beta' | 'old_alpha';
+  url: string;
+  time: string;
+  releaseTime: string;
+}
+
+export interface VersionManifest {
+  latest: {
+    release: string;
+    snapshot: string;
+  };
+  versions: MinecraftVersion[];
+}
+
+// 游戏实例
+export interface GameInstance {
+  id: string;
+  name: string;
+  version: string;
+  path: string;
+  created_time?: string;
+  loader_type?: string;
+  game_version?: string;
+  last_played?: number;
+  modLoader?: string;
+  modLoaderVersion?: string;
+  lastPlayed?: string;
+  icon?: string;
+}
+
+// 创建实例参数
+export interface CreateInstancePayload {
+  newInstanceName: string;
+  baseVersionId: string;
+  forgeVersion?: string;
+  fabricVersion?: string;
+  quiltVersion?: string;
+}
+
+// 安装进度事件
+export interface InstallProgressPayload {
+  progress: number;
+  message: string;
+  indeterminate: boolean;
+}

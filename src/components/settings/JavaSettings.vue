@@ -1,63 +1,92 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useSettingsStore } from '../../stores/settings';
 
 const settingsStore = useSettingsStore();
 const javaPath = ref('');
 const isJavaPathValid = ref(false);
 const loadingJava = ref(false);
+const javaVersion = ref('');
 
-function formatJavaPath(rawPath: string) {
-  if (!rawPath) return '';
-  // 统一转换为正斜杠显示
-  return rawPath.replace(/\\/g, '/');
-}
+const formattedJavaPath = computed(() => {
+  if (!javaPath.value) return '';
+  return javaPath.value.replace(/\\/g, '/');
+});
 
-// 加载已保存的Java路径
 async function loadJavaPath() {
   try {
     javaPath.value = (await invoke('load_config_key', { key: 'javaPath' })) as string;
-    isJavaPathValid.value = await invoke('validate_java_path', { path: javaPath.value });
+    if (javaPath.value) {
+      isJavaPathValid.value = await invoke('validate_java_path', { path: javaPath.value });
+      if (isJavaPathValid.value) {
+        await getJavaVersion();
+      }
+    }
   } catch (error) {
     console.error('Failed to load Java path:', error);
   }
 }
 
-// 查找系统中的Java安装
+async function getJavaVersion() {
+  try {
+    const version = await invoke('get_java_version', { path: javaPath.value });
+    javaVersion.value = version as string;
+  } catch {
+    javaVersion.value = '';
+  }
+}
+
 async function findJavaInstallations() {
   try {
     loadingJava.value = true;
     await settingsStore.findJavaInstallations();
     
-    // 如果找到了Java安装但还没有设置Java路径，则自动选择第一个
     if (settingsStore.javaInstallations.length > 0 && !javaPath.value) {
-      javaPath.value = settingsStore.javaInstallations[0];
-      await setJavaPath(javaPath.value);
+      await selectJavaPath(settingsStore.javaInstallations[0]);
     }
-    
-    loadingJava.value = false;
   } catch (err) {
     console.error('Failed to find Java installations:', err);
+  } finally {
     loadingJava.value = false;
   }
 }
 
-// 设置Java路径
-async function setJavaPath(path: string) {
+async function selectJavaPath(path: string) {
   try {
+    javaPath.value = path;
     await invoke('save_config_key', { key: 'javaPath', value: path });
-    // 验证新路径
-    isJavaPathValid.value = await invoke('validate_java_path', { path: path });
+    isJavaPathValid.value = await invoke('validate_java_path', { path });
+    if (isJavaPathValid.value) {
+      await getJavaVersion();
+    }
   } catch (err) {
     console.error('Failed to set Java path:', err);
+  }
+}
+
+async function browseJavaPath() {
+  try {
+    const selected = await open({
+      multiple: false,
+      title: '选择 Java 可执行文件',
+      filters: [{
+        name: 'Java',
+        extensions: ['exe', '']
+      }]
+    });
+    if (selected) {
+      await selectJavaPath(selected as string);
+    }
+  } catch (err) {
+    console.error('Failed to browse Java path:', err);
   }
 }
 
 onMounted(async () => {
   await loadJavaPath();
   
-  // 只在启动时查找一次Java安装，之后保持状态
   if (!settingsStore.hasFoundJavaInstallations && settingsStore.javaInstallations.length === 0) {
     await findJavaInstallations();
   }
@@ -65,41 +94,151 @@ onMounted(async () => {
 </script>
 
 <template>
-  <v-card>
-    <v-card-title class="d-flex align-center">
-      <v-icon class="mr-2">mdi-language-java</v-icon>
-      Java 设置
-    </v-card-title>
-    <v-card-text class="pa-4">
-      <v-combobox
-        v-model="javaPath"
-        :items="settingsStore.javaInstallations.map(p => formatJavaPath(p))"
-        label="Java 路径"
-        :loading="loadingJava"
-        persistent-hint
-        hint="选择或输入一个Java路径"
-        @update:model-value="setJavaPath"
-        hide-details
-      >
-        <template v-slot:append>
-          <v-btn
-            icon
-            variant="text"
-            :loading="loadingJava"
-            @click="findJavaInstallations"
-            title="自动查找Java安装"
-          >
-            <v-icon>mdi-refresh</v-icon>
-          </v-btn>
-        </template>
-      </v-combobox>
-      
-      <div v-if="isJavaPathValid" class="mt-3">
-        <v-chip color="success" variant="outlined">
-          <v-icon start>mdi-check</v-icon>
-          Java路径有效
-        </v-chip>
+  <div class="settings-group">
+    <!-- 标题 -->
+    <div class="group-header mb-4">
+      <div class="d-flex align-center">
+        <v-avatar color="orange" variant="tonal" size="40" class="mr-3">
+          <v-icon>mdi-language-java</v-icon>
+        </v-avatar>
+        <div>
+          <h2 class="text-h6 font-weight-bold">Java 配置</h2>
+          <p class="text-body-2 text-medium-emphasis mb-0">选择用于启动游戏的 Java 运行时</p>
+        </div>
       </div>
-    </v-card-text>
-  </v-card>
+    </div>
+
+    <!-- Java 路径选择 -->
+    <v-card variant="outlined" rounded="lg" class="mb-4">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center justify-space-between mb-3">
+          <div class="d-flex align-center">
+            <v-icon color="orange" class="mr-2">mdi-file-cog-outline</v-icon>
+            <span class="text-subtitle-1 font-weight-medium">Java 路径</span>
+          </div>
+          <div class="d-flex ga-2">
+            <v-btn
+              variant="tonal"
+              size="small"
+              :loading="loadingJava"
+              @click="findJavaInstallations"
+            >
+              <v-icon start>mdi-magnify</v-icon>
+              自动查找
+            </v-btn>
+            <v-btn
+              variant="tonal"
+              size="small"
+              @click="browseJavaPath"
+            >
+              <v-icon start>mdi-folder-open-outline</v-icon>
+              浏览
+            </v-btn>
+          </div>
+        </div>
+
+        <!-- 已检测到的 Java -->
+        <div v-if="settingsStore.javaInstallations.length > 0" class="mb-4">
+          <div class="text-body-2 text-medium-emphasis mb-2">检测到的 Java 安装：</div>
+          <v-list density="compact" rounded="lg" class="java-list">
+            <v-list-item
+              v-for="(path, index) in settingsStore.javaInstallations"
+              :key="index"
+              :active="javaPath === path"
+              rounded="lg"
+              @click="selectJavaPath(path)"
+            >
+              <template #prepend>
+                <v-icon :color="javaPath === path ? 'orange' : undefined">
+                  {{ javaPath === path ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank' }}
+                </v-icon>
+              </template>
+              <v-list-item-title class="text-body-2 font-mono">
+                {{ path.replace(/\\/g, '/') }}
+              </v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </div>
+
+        <!-- 当前选择 -->
+        <div v-if="javaPath" class="current-java pa-3 rounded-lg">
+          <div class="d-flex align-center justify-space-between">
+            <div>
+              <div class="text-body-2 text-medium-emphasis">当前选择</div>
+              <div class="text-body-1 font-mono">{{ formattedJavaPath }}</div>
+            </div>
+            <v-chip
+              :color="isJavaPathValid ? 'success' : 'error'"
+              variant="tonal"
+              size="small"
+            >
+              <v-icon start size="small">
+                {{ isJavaPathValid ? 'mdi-check-circle' : 'mdi-alert-circle' }}
+              </v-icon>
+              {{ isJavaPathValid ? '有效' : '无效' }}
+            </v-chip>
+          </div>
+          <div v-if="javaVersion" class="text-caption text-medium-emphasis mt-1">
+            版本: {{ javaVersion }}
+          </div>
+        </div>
+
+        <!-- 未选择提示 -->
+        <v-alert
+          v-else
+          type="warning"
+          variant="tonal"
+          density="compact"
+          rounded="lg"
+        >
+          <template #prepend>
+            <v-icon>mdi-alert-outline</v-icon>
+          </template>
+          未检测到 Java，请点击"自动查找"或手动选择 Java 路径
+        </v-alert>
+      </v-card-text>
+    </v-card>
+
+    <!-- Java 提示 -->
+    <v-alert
+      type="info"
+      variant="tonal"
+      rounded="lg"
+    >
+      <template #title>
+        <span class="text-body-2 font-weight-medium">Java 版本建议</span>
+      </template>
+      <ul class="text-body-2 pl-4 mb-0 mt-1">
+        <li>Minecraft 1.17+ 需要 Java 17 或更高版本</li>
+        <li>Minecraft 1.16.5 及以下版本建议使用 Java 8</li>
+        <li>推荐使用 Adoptium (Eclipse Temurin) 或 Azul Zulu</li>
+      </ul>
+    </v-alert>
+  </div>
 </template>
+
+<style scoped>
+.settings-group {
+  margin-bottom: 32px;
+}
+
+.group-header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.java-list {
+  background: transparent;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.current-java {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.font-mono {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 0.875rem;
+}
+</style>

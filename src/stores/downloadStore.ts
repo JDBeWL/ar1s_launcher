@@ -4,6 +4,7 @@ import { listen, emit } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import type { DownloadProgress, DownloadStatus } from '../types/events'
+import { useNotificationStore } from './notificationStore'
 
 // Add 'idle' to the possible statuses for the store
 export type StoreDownloadStatus = DownloadStatus | 'idle';
@@ -55,10 +56,8 @@ export const useDownloadStore = defineStore('download', () => {
         userHidNotification.value = false
         if (data.status === 'error') {
             downloadError.value = data.error || '下载过程中发生未知错误';
-            // 显示错误提示
-            if (data.error) {
-                alert(`下载失败: ${data.error}`);
-            }
+            const notificationStore = useNotificationStore()
+            notificationStore.error('下载失败', data.error || '下载过程中发生未知错误', true)
         }
       }
     })
@@ -90,12 +89,19 @@ export const useDownloadStore = defineStore('download', () => {
       downloadProgress.value.status = 'error'
       const errorMessage = err instanceof Error ? err.message : String(err);
       downloadError.value = errorMessage;
-      alert(`下载失败: ${errorMessage}`)
+      const notificationStore = useNotificationStore()
+      notificationStore.error('下载失败', errorMessage, true)
     }
   }
 
   async function cancelDownload() {
-    await emit('cancel-download')
+    try {
+      await invoke('cancel_download')
+    } catch (err) {
+      console.error('Failed to cancel download:', err)
+      // 回退到 emit 方式
+      await emit('cancel-download')
+    }
   }
 
   function toggleNotification() {

@@ -3,7 +3,6 @@ import { onMounted } from 'vue';
 import { useInstanceCreation } from '../../composables/useInstanceCreation';
 
 const {
-  versions,
   loadingVersions,
   selectedVersion,
   searchVersion,
