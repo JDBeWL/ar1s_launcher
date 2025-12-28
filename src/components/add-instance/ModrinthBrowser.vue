@@ -41,121 +41,162 @@ function selectModpack(modpack: ModrinthModpack) {
 
 onMounted(async () => {
   await fetchGameVersions();
-  // Initial search if needed, or wait for user input
-  // searchModpacks(); 
 });
 </script>
 
 <template>
   <div>
-    <!-- 搜索框和游戏版本 -->
-    <v-row no-gutters class="align-center mb-4">
-      <v-col class="flex-grow-1 pr-2">
-        <v-text-field
-          v-model="modpackSearchQuery"
-          label="搜索整合包"
-          prepend-inner-icon="mdi-magnify"
-          clearable
-          hide-details
-          @input="searchModpacks"
-        ></v-text-field>
-      </v-col>
-      <v-col class="shrink pr-2" style="max-width: 200px">
-        <v-select
-          v-model="selectedGameVersion"
-          :items="gameVersions"
-          label="游戏版本"
-          clearable
-          hide-details
-          @update:model-value="searchModpacks"
-        ></v-select>
-      </v-col>
-      <v-col class="shrink" style="max-width: 200px">
-        <v-select
-          v-model="selectedLoader"
-          :items="loaders"
-          label="加载器"
-          clearable
-          hide-details
-          @update:model-value="searchModpacks"
-        ></v-select>
-      </v-col>
-    </v-row>
+    <!-- 搜索和筛选 -->
+    <v-card variant="outlined" rounded="lg" class="mb-4">
+      <v-card-text class="pa-3">
+        <v-row dense>
+          <v-col cols="12" sm="6">
+            <v-text-field
+              v-model="modpackSearchQuery"
+              placeholder="搜索整合包..."
+              variant="outlined"
+              density="compact"
+              rounded="lg"
+              hide-details
+              clearable
+              @input="searchModpacks"
+            >
+              <template #prepend-inner>
+                <v-icon size="18">mdi-magnify</v-icon>
+              </template>
+            </v-text-field>
+          </v-col>
+          <v-col cols="6" sm="3">
+            <v-select
+              v-model="selectedGameVersion"
+              :items="gameVersions"
+              placeholder="游戏版本"
+              variant="outlined"
+              density="compact"
+              rounded="lg"
+              clearable
+              hide-details
+              @update:model-value="searchModpacks"
+            >
+              <template #prepend-inner>
+                <v-icon size="18">mdi-minecraft</v-icon>
+              </template>
+            </v-select>
+          </v-col>
+          <v-col cols="6" sm="3">
+            <v-select
+              v-model="selectedLoader"
+              :items="loaders"
+              placeholder="加载器"
+              variant="outlined"
+              density="compact"
+              rounded="lg"
+              clearable
+              hide-details
+              @update:model-value="searchModpacks"
+            >
+              <template #prepend-inner>
+                <v-icon size="18">mdi-puzzle</v-icon>
+              </template>
+            </v-select>
+          </v-col>
+        </v-row>
 
-    <!-- 其他筛选条件 -->
-    <v-row no-gutters class="align-center mb-4">
-      <v-col class="flex-grow-1 pr-2" style="min-width: 150px">
-        <v-select
-          v-model="selectedCategory"
-          :items="categories"
-          label="分类"
-          clearable
-          hide-details
-          @update:model-value="searchModpacks"
-        ></v-select>
-      </v-col>
-      <v-col class="flex-grow-1 pr-2" style="min-width: 150px">
-        <v-select
-          v-model="sortBy"
-          :items="modpackSortOptions"
-          label="排序"
-          hide-details
-          @update:model-value="searchModpacks"
-        ></v-select>
-      </v-col>
-    </v-row>
+        <v-row dense class="mt-2">
+          <v-col cols="6">
+            <v-select
+              v-model="selectedCategory"
+              :items="categories"
+              placeholder="分类"
+              variant="outlined"
+              density="compact"
+              rounded="lg"
+              clearable
+              hide-details
+              @update:model-value="searchModpacks"
+            >
+              <template #prepend-inner>
+                <v-icon size="18">mdi-tag</v-icon>
+              </template>
+            </v-select>
+          </v-col>
+          <v-col cols="6">
+            <v-select
+              v-model="sortBy"
+              :items="modpackSortOptions"
+              placeholder="排序"
+              variant="outlined"
+              density="compact"
+              rounded="lg"
+              hide-details
+              @update:model-value="searchModpacks"
+            >
+              <template #prepend-inner>
+                <v-icon size="18">mdi-sort</v-icon>
+              </template>
+            </v-select>
+          </v-col>
+        </v-row>
+      </v-card-text>
+    </v-card>
 
     <!-- 加载状态 -->
-    <v-row v-if="loadingModpacks" class="mb-4">
-      <v-col cols="12" class="text-center">
-        <v-progress-circular indeterminate color="primary"></v-progress-circular>
-        <div class="mt-2">正在搜索整合包...</div>
-      </v-col>
-    </v-row>
-
-    <!-- 整合包列表 -->
-    <v-row v-else-if="modpacks.length > 0" class="mb-4">
-      <v-col 
-        v-for="modpack in modpacks" 
-        :key="modpack.slug" 
-        cols="12" 
-        sm="6" 
-        md="4"
-      >
-        <ModpackCard 
-          :modpack="modpack" 
-          :selected="selectedModpack?.slug === modpack.slug"
-          @select="selectModpack"
-        />
-      </v-col>
-    </v-row>
-
-    <!-- 分页组件 -->
-    <v-row v-if="modpacks.length > 0 && modpackTotalPages > 1" class="mb-4">
-      <v-col cols="12" class="d-flex justify-center">
-        <div class="d-flex align-center">
-          <v-pagination
-            v-model="modpackCurrentPage"
-            :length="modpackTotalPages"
-            :total-visible="7"
-            @update:model-value="onModpackPageChange"
-            class="mr-4"
-          ></v-pagination>
-          <div class="text-caption text-grey">
-            共 {{ modpackTotalHits }} 个整合包
-          </div>
-        </div>
-      </v-col>
-    </v-row>
+    <div v-if="loadingModpacks" class="text-center py-12">
+      <v-progress-circular indeterminate size="40" />
+      <div class="text-body-2 text-medium-emphasis mt-3">搜索整合包中...</div>
+    </div>
 
     <!-- 空状态 -->
-    <v-row v-else-if="!loadingModpacks && modpacks.length === 0" class="mb-4">
-      <v-col cols="12" class="text-center">
-        <v-icon size="64" color="grey">mdi-package-variant</v-icon>
-        <div class="mt-2 text-grey">
-          {{ modpackInitialLoad ? '正在加载热门整合包...' : (modpackSearchQuery || selectedGameVersion || selectedLoader || selectedCategory ? '未找到相关整合包' : '请输入关键词搜索整合包') }}
+    <div v-else-if="modpacks.length === 0" class="text-center py-12">
+      <v-avatar size="64" class="mb-3 avatar-outlined">
+        <v-icon size="32">mdi-package-variant</v-icon>
+      </v-avatar>
+      <div class="text-body-1 font-weight-medium">
+        {{ modpackInitialLoad ? '正在加载...' : '没有找到整合包' }}
+      </div>
+      <div class="text-body-2 text-medium-emphasis">
+        {{ modpackInitialLoad ? '' : '尝试调整搜索条件或输入关键词' }}
+      </div>
+    </div>
+
+    <!-- 整合包列表 -->
+    <template v-else>
+      <v-row dense>
+        <v-col 
+          v-for="modpack in modpacks" 
+          :key="modpack.slug" 
+          cols="12" 
+          sm="6" 
+          md="4"
+        >
+          <ModpackCard 
+            :modpack="modpack" 
+            :selected="selectedModpack?.slug === modpack.slug"
+            @select="selectModpack"
+          />
+        </v-col>
+      </v-row>
+
+      <!-- 分页 -->
+      <div v-if="modpackTotalPages > 1" class="d-flex flex-column align-center mt-4">
+        <v-pagination
+          v-model="modpackCurrentPage"
+          :length="modpackTotalPages"
+          :total-visible="5"
+          density="compact"
+          rounded="lg"
+          @update:model-value="onModpackPageChange"
+        />
+        <div class="text-caption text-medium-emphasis mt-2">
+          共 {{ modpackTotalHits }} 个整合包
         </div>
-      </v-col>
-    </v-row>
+      </div>
+    </template>
   </div>
 </template>
+
+<style scoped>
+.avatar-outlined {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+</style>

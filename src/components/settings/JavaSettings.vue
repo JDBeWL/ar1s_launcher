@@ -98,7 +98,7 @@ onMounted(async () => {
     <!-- 标题 -->
     <div class="group-header mb-4">
       <div class="d-flex align-center">
-        <v-avatar color="orange" variant="tonal" size="40" class="mr-3">
+        <v-avatar size="40" class="mr-3 avatar-outlined">
           <v-icon>mdi-language-java</v-icon>
         </v-avatar>
         <div>
@@ -113,12 +113,12 @@ onMounted(async () => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-3">
           <div class="d-flex align-center">
-            <v-icon color="orange" class="mr-2">mdi-file-cog-outline</v-icon>
+            <v-icon class="mr-2">mdi-file-cog-outline</v-icon>
             <span class="text-subtitle-1 font-weight-medium">Java 路径</span>
           </div>
           <div class="d-flex ga-2">
             <v-btn
-              variant="tonal"
+              variant="outlined"
               size="small"
               :loading="loadingJava"
               @click="findJavaInstallations"
@@ -127,7 +127,7 @@ onMounted(async () => {
               自动查找
             </v-btn>
             <v-btn
-              variant="tonal"
+              variant="outlined"
               size="small"
               @click="browseJavaPath"
             >
@@ -149,7 +149,7 @@ onMounted(async () => {
               @click="selectJavaPath(path)"
             >
               <template #prepend>
-                <v-icon :color="javaPath === path ? 'orange' : undefined">
+                <v-icon>
                   {{ javaPath === path ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank' }}
                 </v-icon>
               </template>
@@ -169,7 +169,7 @@ onMounted(async () => {
             </div>
             <v-chip
               :color="isJavaPathValid ? 'success' : 'error'"
-              variant="tonal"
+              variant="outlined"
               size="small"
             >
               <v-icon start size="small">
@@ -186,8 +186,7 @@ onMounted(async () => {
         <!-- 未选择提示 -->
         <v-alert
           v-else
-          type="warning"
-          variant="tonal"
+          variant="outlined"
           density="compact"
           rounded="lg"
         >
@@ -201,10 +200,12 @@ onMounted(async () => {
 
     <!-- Java 提示 -->
     <v-alert
-      type="info"
-      variant="tonal"
+      variant="outlined"
       rounded="lg"
     >
+      <template #prepend>
+        <v-icon>mdi-information-outline</v-icon>
+      </template>
       <template #title>
         <span class="text-body-2 font-weight-medium">Java 版本建议</span>
       </template>
@@ -225,6 +226,10 @@ onMounted(async () => {
 .group-header {
   padding-bottom: 16px;
   border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.avatar-outlined {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
 .java-list {

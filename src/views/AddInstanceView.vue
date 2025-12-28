@@ -1,82 +1,90 @@
 <template>
-  <v-container>
-    <v-card>
-      <v-card-title class="d-flex mt-2 align-center"> 添加新实例 </v-card-title>
-      <v-card-text>
-        <!-- 安装方式选择 -->
-        <v-row class="mb-4">
-          <v-col cols="12" class="d-flex align-center">
-            <div class="d-flex align-center" style="width: 100%">
-              <div
-                class="install-type-tab flex-grow-1 text-center py-3 cursor-pointer"
-                :class="{ 'install-type-active': installType === 'custom' }"
-                @click="installType = 'custom'"
-              >
-                自定义安装
-              </div>
-              <div class="install-type-divider"></div>
-              <div
-                class="install-type-tab flex-grow-1 text-center py-3 cursor-pointer"
-                :class="{ 'install-type-active': installType === 'online' }"
-                @click="installType = 'online'"
-              >
-                从互联网安装
-              </div>
-            </div>
-          </v-col>
-        </v-row>
+  <v-container fluid class="add-instance-container pa-4">
+    <!-- 页面标题 -->
+    <div class="d-flex align-center mb-4">
+      <v-avatar size="40" class="mr-3 avatar-outlined">
+        <v-icon size="20">mdi-plus-circle</v-icon>
+      </v-avatar>
+      <div>
+        <h1 class="text-h6 font-weight-bold">添加新实例</h1>
+        <p class="text-body-2 text-medium-emphasis mb-0">创建自定义游戏实例或从网络安装整合包</p>
+      </div>
+    </div>
 
-        <!-- 自定义安装内容 -->
-        <div v-if="installType === 'custom'">
-          <CustomInstallForm />
-        </div>
-
-        <!-- 从互联网安装内容 -->
-        <div v-if="installType === 'online'">
-          <!-- 平台选择 -->
-          <v-row class="mb-4">
-            <v-col cols="12">
-              <div class="d-flex">
-                <v-btn
-                  :color="selectedPlatform === 'modrinth' ? 'primary' : 'grey lighten-3'"
-                  :class="selectedPlatform === 'modrinth' ? 'elevation-4' : 'elevation-1'"
-                  height="60"
-                  width="200"
-                  @click="selectedPlatform = 'modrinth'"
-                  class="platform-btn mr-4"
-                >
-                  <span class="text-h6 font-weight-bold">Modrinth</span>
-                </v-btn>
-                <v-btn
-                  :color="selectedPlatform === 'curseforge' ? 'primary' : 'grey lighten-3'"
-                  :class="selectedPlatform === 'curseforge' ? 'elevation-4' : 'elevation-1'"
-                  height="60"
-                  width="200"
-                  @click="selectedPlatform = 'curseforge'"
-                  class="platform-btn"
-                  disabled
-                >
-                  <span class="text-h6 font-weight-bold">CurseForge</span>
-                  <v-chip small color="orange" class="ml-2">开发中</v-chip>
-                </v-btn>
-              </div>
-            </v-col>
-          </v-row>
-
-          <!-- Modrinth整合包搜索 -->
-          <div v-if="selectedPlatform === 'modrinth'">
-            <ModrinthBrowser />
-          </div>
-
-          <!-- CurseForge整合包搜索 (占位) -->
-          <div v-if="selectedPlatform === 'curseforge'">
-            <v-alert type="info" class="mb-4">
-              CurseForge整合包支持正在开发中...
-            </v-alert>
-          </div>
-        </div>
+    <!-- 安装方式选择 -->
+    <v-card variant="outlined" rounded="lg" class="mb-4">
+      <v-card-text class="pa-2">
+        <v-btn-toggle
+          v-model="installType"
+          mandatory
+          rounded="lg"
+          density="compact"
+          variant="outlined"
+          divided
+          class="w-100"
+        >
+          <v-btn value="custom" class="flex-grow-1">
+            <v-icon start size="18">mdi-cog</v-icon>
+            自定义安装
+          </v-btn>
+          <v-btn value="online" class="flex-grow-1">
+            <v-icon start size="18">mdi-cloud-download</v-icon>
+            从互联网安装
+          </v-btn>
+        </v-btn-toggle>
       </v-card-text>
     </v-card>
+
+    <!-- 自定义安装内容 -->
+    <div v-if="installType === 'custom'">
+      <CustomInstallForm />
+    </div>
+
+    <!-- 从互联网安装内容 -->
+    <div v-if="installType === 'online'">
+      <!-- 平台选择 -->
+      <v-card variant="outlined" rounded="lg" class="mb-4">
+        <v-card-text class="pa-3">
+          <div class="text-body-2 text-medium-emphasis mb-2">选择平台</div>
+          <div class="d-flex ga-2">
+            <v-btn
+              :variant="selectedPlatform === 'modrinth' ? 'flat' : 'outlined'"
+              rounded="lg"
+              @click="selectedPlatform = 'modrinth'"
+              class="platform-btn"
+            >
+              <v-icon start size="18">mdi-alpha-m-circle</v-icon>
+              Modrinth
+            </v-btn>
+            <v-btn
+              variant="outlined"
+              rounded="lg"
+              disabled
+              class="platform-btn"
+            >
+              <v-icon start size="18">mdi-fire</v-icon>
+              CurseForge
+              <v-chip size="x-small" class="ml-2" variant="outlined">开发中</v-chip>
+            </v-btn>
+          </div>
+        </v-card-text>
+      </v-card>
+
+      <!-- Modrinth整合包搜索 -->
+      <div v-if="selectedPlatform === 'modrinth'">
+        <ModrinthBrowser />
+      </div>
+
+      <!-- CurseForge整合包搜索 (占位) -->
+      <div v-if="selectedPlatform === 'curseforge'">
+        <v-alert variant="outlined" rounded="lg">
+          <template #prepend>
+            <v-icon>mdi-information-outline</v-icon>
+          </template>
+          CurseForge 整合包支持正在开发中...
+        </v-alert>
+      </div>
+    </div>
   </v-container>
 </template>
 
@@ -91,35 +99,16 @@ const selectedPlatform = ref("modrinth");
 </script>
 
 <style scoped>
-.install-type-tab {
-  border-bottom: 2px solid transparent;
-  transition: all 0.3s ease;
-  font-size: 1.1rem;
-  font-weight: 500;
-  color: grey;
+.add-instance-container {
+  max-width: 900px;
+  margin: 0 auto;
 }
 
-.install-type-active {
-  border-bottom-color: rgb(var(--v-theme-primary));
-  color: rgb(var(--v-theme-primary));
-  font-weight: bold;
-}
-
-.install-type-divider {
-  width: 1px;
-  height: 24px;
-  background-color: #e0e0e0;
-  margin: 0 16px;
+.avatar-outlined {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
 .platform-btn {
-  transition: all 0.3s ease;
-  border-radius: 12px;
-}
-
-/* 确保子组件样式正确应用 */
-:deep(.v-card-title) {
-  font-size: 1.25rem;
-  font-weight: 600;
+  min-width: 140px;
 }
 </style>

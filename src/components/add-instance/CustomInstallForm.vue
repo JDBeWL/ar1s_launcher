@@ -26,19 +26,6 @@ const {
   createInstance
 } = useInstanceCreation();
 
-const versionTypes = [
-  { title: "正式版", value: "release" },
-  { title: "快照版", value: "snapshot" },
-  { title: "全部", value: "all" },
-];
-
-const sortOptions = [
-  { title: "最新优先", value: "newest" },
-  { title: "最旧优先", value: "oldest" },
-  { title: "A-Z", value: "az" },
-  { title: "Z-A", value: "za" },
-];
-
 onMounted(() => {
   fetchVersions();
 });
@@ -46,116 +33,195 @@ onMounted(() => {
 
 <template>
   <div>
-    <v-row>
-      <v-col cols="12">
+    <!-- 实例名称 -->
+    <v-card variant="outlined" rounded="lg" class="mb-4">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center mb-3">
+          <v-icon size="18" class="mr-2">mdi-label-outline</v-icon>
+          <span class="text-body-2 font-weight-medium">实例名称</span>
+        </div>
         <v-text-field
           v-model="instanceName"
-          label="实例名称"
-          :placeholder="defaultInstanceName"
+          :placeholder="defaultInstanceName || '输入实例名称'"
+          variant="outlined"
+          density="compact"
+          rounded="lg"
           hide-details
-        ></v-text-field>
-      </v-col>
-    </v-row>
+        />
+      </v-card-text>
+    </v-card>
 
-    <!-- 搜索游戏版本 -->
-    <v-row no-gutters class="align-center mt-4 mb-4">
-      <v-col class="flex-grow-1 pr-2">
-        <v-text-field
-          v-model="searchVersion"
-          label="搜索版本"
-          prepend-inner-icon="mdi-magnify"
-          clearable
-          hide-details
-        ></v-text-field>
-      </v-col>
-      <v-col class="shrink pr-2" style="max-width: 150px">
-        <v-select
-          v-model="versionTypeFilter"
-          label="版本类型"
-          :items="versionTypes"
-          hide-details
-        ></v-select>
-      </v-col>
-      <v-col class="shrink" style="max-width: 180px">
-        <v-select
-          v-model="sortOrder"
-          label="排序方式"
-          :items="sortOptions"
-          hide-details
-        ></v-select>
-      </v-col>
-    </v-row>
+    <!-- 版本选择 -->
+    <v-card variant="outlined" rounded="lg" class="mb-4">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center mb-3">
+          <v-icon size="18" class="mr-2">mdi-minecraft</v-icon>
+          <span class="text-body-2 font-weight-medium">游戏版本</span>
+        </div>
 
-    <!-- 游戏版本和Mod加载器选择 -->
-    <v-row no-gutters class="align-center mb-4">
-      <v-col class="shrink pr-2" style="max-width: 200px">
+        <!-- 搜索和筛选 -->
+        <v-row dense class="mb-3">
+          <v-col cols="12" sm="5">
+            <v-text-field
+              v-model="searchVersion"
+              placeholder="搜索版本..."
+              variant="outlined"
+              density="compact"
+              rounded="lg"
+              hide-details
+              clearable
+            >
+              <template #prepend-inner>
+                <v-icon size="18">mdi-magnify</v-icon>
+              </template>
+            </v-text-field>
+          </v-col>
+          <v-col cols="6" sm="4">
+            <v-btn-toggle
+              v-model="versionTypeFilter"
+              mandatory
+              rounded="lg"
+              density="compact"
+              variant="outlined"
+              divided
+            >
+              <v-btn value="release" size="small">正式版</v-btn>
+              <v-btn value="snapshot" size="small">快照</v-btn>
+              <v-btn value="all" size="small">全部</v-btn>
+            </v-btn-toggle>
+          </v-col>
+          <v-col cols="6" sm="3">
+            <v-select
+              v-model="sortOrder"
+              :items="[
+                { title: '最新', value: 'newest' },
+                { title: '最旧', value: 'oldest' }
+              ]"
+              variant="outlined"
+              density="compact"
+              rounded="lg"
+              hide-details
+            >
+              <template #prepend-inner>
+                <v-icon size="18">mdi-sort</v-icon>
+              </template>
+            </v-select>
+          </v-col>
+        </v-row>
+
+        <!-- 版本选择器 -->
         <v-select
           v-model="selectedVersion"
           :items="filteredVersions"
           item-title="id"
           item-value="id"
-          label="游戏版本"
+          placeholder="选择游戏版本"
+          variant="outlined"
+          density="compact"
+          rounded="lg"
           :loading="loadingVersions"
           hide-details
           return-object
           @update:model-value="fetchModLoaderVersions"
-        ></v-select>
-      </v-col>
-      <v-col class="shrink pr-2" style="max-width: 200px">
-        <v-select
-          v-model="selectedModLoaderType"
-          :items="modLoaderTypes"
-          label="Mod加载器"
-          :disabled="!selectedVersion"
-          hide-details
-          @update:model-value="fetchModLoaderVersions"
-        ></v-select>
-      </v-col>
-      <v-col class="shrink" style="max-width: 1000px">
-        <v-select
-          v-model="selectedModLoaderVersion"
-          :items="modLoaderVersions"
-          item-title="version"
-          item-value="version"
-          label="Mod加载器版本"
-          :loading="loadingModLoaderVersions"
-          :disabled="!selectedModLoaderType || selectedModLoaderType === 'None'"
-          placeholder="请先选择Mod加载器"
-          hide-details
-          return-object
-        ></v-select>
-      </v-col>
-    </v-row>
+        >
+          <template #prepend-inner>
+            <v-icon size="18">mdi-gamepad-variant</v-icon>
+          </template>
+          <template #no-data>
+            <v-list-item>
+              <v-list-item-title class="text-medium-emphasis">
+                没有找到版本
+              </v-list-item-title>
+            </v-list-item>
+          </template>
+        </v-select>
+      </v-card-text>
+    </v-card>
+
+    <!-- Mod 加载器 -->
+    <v-card variant="outlined" rounded="lg" class="mb-4">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center mb-3">
+          <v-icon size="18" class="mr-2">mdi-puzzle</v-icon>
+          <span class="text-body-2 font-weight-medium">Mod 加载器</span>
+          <span class="text-caption text-medium-emphasis ml-2">(可选)</span>
+        </div>
+
+        <v-row dense>
+          <v-col cols="12" sm="6">
+            <v-select
+              v-model="selectedModLoaderType"
+              :items="modLoaderTypes"
+              placeholder="选择加载器类型"
+              variant="outlined"
+              density="compact"
+              rounded="lg"
+              :disabled="!selectedVersion"
+              hide-details
+              @update:model-value="fetchModLoaderVersions"
+            >
+              <template #prepend-inner>
+                <v-icon size="18">mdi-cog</v-icon>
+              </template>
+            </v-select>
+          </v-col>
+          <v-col cols="12" sm="6">
+            <v-select
+              v-model="selectedModLoaderVersion"
+              :items="modLoaderVersions"
+              placeholder="选择加载器版本"
+              variant="outlined"
+              density="compact"
+              rounded="lg"
+              :loading="loadingModLoaderVersions"
+              :disabled="!selectedModLoaderType || selectedModLoaderType === 'None'"
+              hide-details
+            >
+              <template #prepend-inner>
+                <v-icon size="18">mdi-tag</v-icon>
+              </template>
+              <template #no-data>
+                <v-list-item>
+                  <v-list-item-title class="text-medium-emphasis">
+                    {{ selectedModLoaderType === 'None' ? '无需选择' : '没有可用版本' }}
+                  </v-list-item-title>
+                </v-list-item>
+              </template>
+            </v-select>
+          </v-col>
+        </v-row>
+      </v-card-text>
+    </v-card>
 
     <!-- 进度条 -->
-    <v-row v-if="showProgress" class="mt-4">
-      <v-col cols="12">
+    <v-card v-if="showProgress" variant="outlined" rounded="lg" class="mb-4">
+      <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-2">
-          <span class="text-caption">{{ progressText }}</span>
-          <span class="text-caption font-weight-medium">{{ progressValue }}%</span>
+          <span class="text-body-2">{{ progressText }}</span>
+          <span class="text-body-2 font-weight-medium">{{ progressValue }}%</span>
         </div>
         <v-progress-linear
-          v-model="progressValue"
-          color="primary"
+          :model-value="progressValue"
           height="8"
+          rounded
           :indeterminate="progressIndeterminate"
-        ></v-progress-linear>
-      </v-col>
-    </v-row>
+        />
+      </v-card-text>
+    </v-card>
 
     <!-- 开始安装按钮 -->
-    <v-row class="mt-4">
-      <v-col cols="12" class="text-right">
-        <v-btn
-          color="primary"
-          size="large"
-          @click="createInstance"
-          :disabled="!selectedVersion || installing"
-          :loading="installing"
-        >
-          开始安装
-        </v-btn>
-      </v-col>
-    </v-row>
+    <div class="d-flex justify-end">
+      <v-btn
+        variant="flat"
+        rounded="lg"
+        size="large"
+        @click="createInstance"
+        :disabled="!selectedVersion || installing"
+        :loading="installing"
+      >
+        <v-icon start size="20">mdi-download</v-icon>
+        开始安装
+      </v-btn>
+    </div>
   </div>
 </template>

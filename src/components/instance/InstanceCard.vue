@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-
 import type { GameInstance } from '../../types/events';
 
 defineProps<{
@@ -14,82 +12,99 @@ const emit = defineEmits<{
   (e: 'rename', instance: GameInstance): void;
 }>();
 
-const instanceImage = computed(() => {
-  // 这里可以根据实例类型或名称返回不同的图片
-  // 暂时使用默认图片
-  return 'https://cdn.vuetifyjs.com/images/cards/house.jpg'; 
-});
-
 function formatLastPlayed(time?: number) {
   if (!time) return '从未运行';
   return new Date(time).toLocaleString();
 }
+
+function getLoaderIcon(loaderType?: string) {
+  if (!loaderType || loaderType === 'None') return 'mdi-minecraft';
+  switch (loaderType.toLowerCase()) {
+    case 'forge': return 'mdi-anvil';
+    case 'fabric': return 'mdi-texture-box';
+    case 'quilt': return 'mdi-quilt';
+    case 'neoforge': return 'mdi-anvil';
+    default: return 'mdi-minecraft';
+  }
+}
 </script>
 
 <template>
-  <v-card class="instance-card h-100">
-    <v-img
-      :src="instanceImage"
-      height="150"
-      cover
-      class="align-end"
-    >
-      <v-card-title class="text-white bg-black-transparent">
-        {{ instance.name }}
-      </v-card-title>
-    </v-img>
+  <v-card variant="outlined" rounded="xl" class="instance-card h-100">
+    <v-card-text class="pa-4">
+      <!-- 头部：图标和名称 -->
+      <div class="d-flex align-center mb-3">
+        <v-avatar size="44" class="mr-3 avatar-outlined">
+          <v-icon size="22">{{ getLoaderIcon(instance.loader_type) }}</v-icon>
+        </v-avatar>
+        <div class="flex-grow-1 overflow-hidden">
+          <div class="text-subtitle-1 font-weight-bold text-truncate">
+            {{ instance.name }}
+          </div>
+          <div class="text-body-2 text-medium-emphasis">
+            {{ instance.loader_type && instance.loader_type !== 'None' ? instance.loader_type + ' ' : '' }}{{ instance.game_version || instance.version }}
+          </div>
+        </div>
+        <v-menu>
+          <template v-slot:activator="{ props }">
+            <v-btn icon variant="text" size="small" v-bind="props">
+              <v-icon size="20">mdi-dots-vertical</v-icon>
+            </v-btn>
+          </template>
+          <v-list density="compact" rounded="lg">
+            <v-list-item @click="emit('open-folder', instance)">
+              <template #prepend>
+                <v-icon size="18">mdi-folder-open</v-icon>
+              </template>
+              <v-list-item-title class="text-body-2">打开文件夹</v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="emit('rename', instance)">
+              <template #prepend>
+                <v-icon size="18">mdi-pencil</v-icon>
+              </template>
+              <v-list-item-title class="text-body-2">重命名</v-list-item-title>
+            </v-list-item>
+            <v-divider class="my-1" />
+            <v-list-item @click="emit('delete', instance)">
+              <template #prepend>
+                <v-icon size="18" color="error">mdi-delete</v-icon>
+              </template>
+              <v-list-item-title class="text-body-2 text-error">删除实例</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
+      </div>
 
-    <v-card-subtitle class="pt-4">
-      {{ instance.loader_type && instance.loader_type !== 'None' ? instance.loader_type : '' }} {{ instance.game_version || instance.version }}
-    </v-card-subtitle>
+      <!-- 最后运行时间 -->
+      <div class="d-flex align-center text-caption text-medium-emphasis mb-3">
+        <v-icon size="14" class="mr-1">mdi-clock-outline</v-icon>
+        {{ formatLastPlayed(instance.last_played) }}
+      </div>
 
-    <v-card-text>
-      <div>最后运行: {{ formatLastPlayed(instance.last_played) }}</div>
-    </v-card-text>
-
-    <v-card-actions>
+      <!-- 启动按钮 -->
       <v-btn
-        color="primary"
-        variant="elevated"
-        prepend-icon="mdi-play"
+        variant="outlined"
+        rounded="lg"
+        block
         @click="emit('launch', instance)"
       >
+        <v-icon start size="18">mdi-play</v-icon>
         启动
       </v-btn>
-      
-      <v-spacer></v-spacer>
-
-      <v-menu>
-        <template v-slot:activator="{ props }">
-          <v-btn icon="mdi-dots-vertical" variant="text" v-bind="props"></v-btn>
-        </template>
-        <v-list>
-          <v-list-item @click="emit('open-folder', instance)" prepend-icon="mdi-folder-open">
-            <v-list-item-title>打开文件夹</v-list-item-title>
-          </v-list-item>
-          <v-list-item @click="emit('rename', instance)" prepend-icon="mdi-pencil">
-            <v-list-item-title>重命名</v-list-item-title>
-          </v-list-item>
-          <v-divider></v-divider>
-          <v-list-item @click="emit('delete', instance)" prepend-icon="mdi-delete" color="error">
-            <v-list-item-title class="text-error">删除实例</v-list-item-title>
-          </v-list-item>
-        </v-list>
-      </v-menu>
-    </v-card-actions>
+    </v-card-text>
   </v-card>
 </template>
 
 <style scoped>
-.bg-black-transparent {
-  background-color: rgba(0, 0, 0, 0.6);
-}
-
 .instance-card {
-  transition: transform 0.2s;
+  transition: transform 0.2s ease, border-color 0.2s ease;
 }
 
 .instance-card:hover {
-  transform: translateY(-4px);
+  transform: translateY(-3px);
+}
+
+.avatar-outlined {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 </style>

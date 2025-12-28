@@ -14,12 +14,6 @@ const memoryPercentage = computed(() =>
   Math.round((settingsStore.maxMemory / settingsStore.totalMemoryMB) * 100)
 );
 
-const memoryColor = computed(() => {
-  if (memoryPercentage.value > 90) return 'error';
-  if (memoryPercentage.value > 75) return 'warning';
-  return 'success';
-});
-
 async function checkMemoryWarning() {
   try {
     const warning = await invoke<string | null>('check_memory_warning', { memoryMb: settingsStore.maxMemory });
@@ -100,7 +94,7 @@ onMounted(async () => {
     <!-- 标题 -->
     <div class="group-header mb-4">
       <div class="d-flex align-center">
-        <v-avatar color="purple" variant="tonal" size="40" class="mr-3">
+        <v-avatar size="40" class="mr-3 avatar-outlined">
           <v-icon>mdi-memory</v-icon>
         </v-avatar>
         <div>
@@ -114,26 +108,26 @@ onMounted(async () => {
     <v-card variant="outlined" rounded="lg" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
-          <v-icon color="purple" class="mr-2">mdi-chart-donut</v-icon>
+          <v-icon class="mr-2">mdi-chart-donut</v-icon>
           <span class="text-subtitle-1 font-weight-medium">内存概览</span>
         </div>
 
         <v-row align="center">
           <v-col cols="12" sm="4">
             <div class="memory-stat text-center pa-4 rounded-lg">
-              <div class="text-h4 font-weight-bold text-primary">{{ totalMemoryGB }}</div>
+              <div class="text-h4 font-weight-bold">{{ totalMemoryGB }}</div>
               <div class="text-body-2 text-medium-emphasis">系统总内存 (GB)</div>
             </div>
           </v-col>
           <v-col cols="12" sm="4">
             <div class="memory-stat text-center pa-4 rounded-lg">
-              <div class="text-h4 font-weight-bold" :class="`text-${memoryColor}`">{{ maxMemoryGB }}</div>
+              <div class="text-h4 font-weight-bold">{{ maxMemoryGB }}</div>
               <div class="text-body-2 text-medium-emphasis">分配给游戏 (GB)</div>
             </div>
           </v-col>
           <v-col cols="12" sm="4">
             <div class="memory-stat text-center pa-4 rounded-lg">
-              <div class="text-h4 font-weight-bold" :class="`text-${memoryColor}`">{{ memoryPercentage }}%</div>
+              <div class="text-h4 font-weight-bold">{{ memoryPercentage }}%</div>
               <div class="text-body-2 text-medium-emphasis">占用比例</div>
             </div>
           </v-col>
@@ -146,12 +140,11 @@ onMounted(async () => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-1">
           <div class="d-flex align-center">
-            <v-icon color="purple" class="mr-2">mdi-auto-fix</v-icon>
+            <v-icon class="mr-2">mdi-auto-fix</v-icon>
             <span class="text-subtitle-1 font-weight-medium">自动内存管理</span>
           </div>
           <v-switch
             v-model="autoMemoryEnabled"
-            color="purple"
             hide-details
             density="compact"
           />
@@ -163,8 +156,7 @@ onMounted(async () => {
         <v-expand-transition>
           <div v-if="autoMemoryEnabled" class="mt-4">
             <v-alert
-              type="info"
-              variant="tonal"
+              variant="outlined"
               density="compact"
               rounded="lg"
             >
@@ -188,7 +180,7 @@ onMounted(async () => {
     <v-card v-if="!autoMemoryEnabled" variant="outlined" rounded="lg" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
-          <v-icon color="purple" class="mr-2">mdi-tune-vertical</v-icon>
+          <v-icon class="mr-2">mdi-tune-vertical</v-icon>
           <span class="text-subtitle-1 font-weight-medium">手动设置</span>
         </div>
 
@@ -199,7 +191,6 @@ onMounted(async () => {
             <v-chip
               v-for="preset in [2048, 4096, 6144, 8192]"
               :key="preset"
-              :color="settingsStore.maxMemory === preset ? 'purple' : undefined"
               :variant="settingsStore.maxMemory === preset ? 'flat' : 'outlined'"
               :disabled="preset > settingsStore.totalMemoryMB"
               @click="setPresetMemory(preset)"
@@ -230,8 +221,6 @@ onMounted(async () => {
             :min="512"
             :max="settingsStore.totalMemoryMB"
             :step="128"
-            :color="memoryColor"
-            track-color="grey-lighten-2"
             hide-details
             @end="settingsStore.saveMaxMemory"
           >
@@ -247,7 +236,6 @@ onMounted(async () => {
         <!-- 进度条 -->
         <v-progress-linear
           :model-value="memoryPercentage"
-          :color="memoryColor"
           height="8"
           rounded
         />
@@ -258,8 +246,7 @@ onMounted(async () => {
     <div v-if="memoryWarning || memoryEfficiency" class="mb-4">
       <v-alert
         v-if="memoryWarning"
-        type="warning"
-        variant="tonal"
+        variant="outlined"
         density="compact"
         rounded="lg"
         class="mb-2"
@@ -272,8 +259,7 @@ onMounted(async () => {
       
       <v-alert
         v-if="memoryEfficiency"
-        type="info"
-        variant="tonal"
+        variant="outlined"
         density="compact"
         rounded="lg"
       >
@@ -286,10 +272,12 @@ onMounted(async () => {
 
     <!-- 内存建议 -->
     <v-alert
-      type="info"
-      variant="tonal"
+      variant="outlined"
       rounded="lg"
     >
+      <template #prepend>
+        <v-icon>mdi-information-outline</v-icon>
+      </template>
       <template #title>
         <span class="text-body-2 font-weight-medium">内存分配建议</span>
       </template>
@@ -311,6 +299,10 @@ onMounted(async () => {
 .group-header {
   padding-bottom: 16px;
   border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.avatar-outlined {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
 .memory-stat {

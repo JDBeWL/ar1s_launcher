@@ -117,7 +117,7 @@ onUnmounted(() => {
     <!-- 标题 -->
     <div class="group-header mb-4">
       <div class="d-flex align-center">
-        <v-avatar color="primary" variant="tonal" size="40" class="mr-3">
+        <v-avatar size="40" class="mr-3 avatar-outlined">
           <v-icon>mdi-cog-outline</v-icon>
         </v-avatar>
         <div>
@@ -131,7 +131,7 @@ onUnmounted(() => {
     <v-card variant="outlined" rounded="lg" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-3">
-          <v-icon color="primary" class="mr-2">mdi-folder-outline</v-icon>
+          <v-icon class="mr-2">mdi-folder-outline</v-icon>
           <span class="text-subtitle-1 font-weight-medium">游戏目录</span>
         </div>
         <v-text-field
@@ -162,12 +162,11 @@ onUnmounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-1">
           <div class="d-flex align-center">
-            <v-icon color="primary" class="mr-2">mdi-folder-multiple-outline</v-icon>
+            <v-icon class="mr-2">mdi-folder-multiple-outline</v-icon>
             <span class="text-subtitle-1 font-weight-medium">版本隔离</span>
           </div>
           <v-switch
             v-model="versionIsolation"
-            color="primary"
             hide-details
             density="compact"
           />
@@ -215,7 +214,7 @@ onUnmounted(() => {
     <v-card variant="outlined" rounded="lg">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
-          <v-icon color="primary" class="mr-2">mdi-download-outline</v-icon>
+          <v-icon class="mr-2">mdi-download-outline</v-icon>
           <span class="text-subtitle-1 font-weight-medium">下载设置</span>
         </div>
 
@@ -223,15 +222,13 @@ onUnmounted(() => {
         <div class="mb-6">
           <div class="d-flex align-center justify-space-between mb-2">
             <span class="text-body-2">下载线程数</span>
-            <v-chip size="small" color="primary" variant="tonal">{{ downloadThreads }}</v-chip>
+            <v-chip size="small" variant="outlined">{{ downloadThreads }}</v-chip>
           </div>
           <v-slider
             v-model="downloadThreads"
             :min="1"
             :max="64"
             :step="1"
-            color="primary"
-            track-color="grey-lighten-2"
             hide-details
             @end="saveDownloadThreads"
           >
@@ -252,7 +249,6 @@ onUnmounted(() => {
             mandatory
             rounded="lg"
             density="comfortable"
-            color="primary"
             variant="outlined"
           >
             <v-btn value="official" class="px-4">
@@ -281,5 +277,9 @@ onUnmounted(() => {
 .group-header {
   padding-bottom: 16px;
   border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.avatar-outlined {
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 </style>
