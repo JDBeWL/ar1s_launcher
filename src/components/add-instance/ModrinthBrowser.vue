@@ -47,22 +47,19 @@ onMounted(async () => {
 <template>
   <div>
     <!-- 搜索和筛选 -->
-    <v-card variant="outlined" rounded="lg" class="mb-4">
-      <v-card-text class="pa-3">
+    <v-card color="surface-container" class="mb-4">
+      <v-card-text class="pa-4">
         <v-row dense>
           <v-col cols="12" sm="6">
             <v-text-field
               v-model="modpackSearchQuery"
               placeholder="搜索整合包..."
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               hide-details
               clearable
               @input="searchModpacks"
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-magnify</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-magnify</v-icon>
               </template>
             </v-text-field>
           </v-col>
@@ -71,15 +68,12 @@ onMounted(async () => {
               v-model="selectedGameVersion"
               :items="gameVersions"
               placeholder="游戏版本"
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               clearable
               hide-details
               @update:model-value="searchModpacks"
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-minecraft</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-minecraft</v-icon>
               </template>
             </v-select>
           </v-col>
@@ -88,15 +82,12 @@ onMounted(async () => {
               v-model="selectedLoader"
               :items="loaders"
               placeholder="加载器"
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               clearable
               hide-details
               @update:model-value="searchModpacks"
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-puzzle</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-puzzle</v-icon>
               </template>
             </v-select>
           </v-col>
@@ -108,15 +99,12 @@ onMounted(async () => {
               v-model="selectedCategory"
               :items="categories"
               placeholder="分类"
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               clearable
               hide-details
               @update:model-value="searchModpacks"
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-tag</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-tag</v-icon>
               </template>
             </v-select>
           </v-col>
@@ -125,14 +113,11 @@ onMounted(async () => {
               v-model="sortBy"
               :items="modpackSortOptions"
               placeholder="排序"
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               hide-details
               @update:model-value="searchModpacks"
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-sort</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-sort</v-icon>
               </template>
             </v-select>
           </v-col>
@@ -142,19 +127,19 @@ onMounted(async () => {
 
     <!-- 加载状态 -->
     <div v-if="loadingModpacks" class="text-center py-12">
-      <v-progress-circular indeterminate size="40" />
-      <div class="text-body-2 text-medium-emphasis mt-3">搜索整合包中...</div>
+      <v-progress-circular indeterminate size="48" color="primary" />
+      <div class="text-body-2 text-on-surface-variant mt-4">搜索整合包中...</div>
     </div>
 
     <!-- 空状态 -->
     <div v-else-if="modpacks.length === 0" class="text-center py-12">
-      <v-avatar size="64" class="mb-3 avatar-outlined">
-        <v-icon size="32">mdi-package-variant</v-icon>
+      <v-avatar size="80" color="surface-container-high" class="mb-4">
+        <v-icon size="40" color="on-surface-variant">mdi-package-variant</v-icon>
       </v-avatar>
       <div class="text-body-1 font-weight-medium">
         {{ modpackInitialLoad ? '正在加载...' : '没有找到整合包' }}
       </div>
-      <div class="text-body-2 text-medium-emphasis">
+      <div class="text-body-2 text-on-surface-variant">
         {{ modpackInitialLoad ? '' : '尝试调整搜索条件或输入关键词' }}
       </div>
     </div>
@@ -178,25 +163,19 @@ onMounted(async () => {
       </v-row>
 
       <!-- 分页 -->
-      <div v-if="modpackTotalPages > 1" class="d-flex flex-column align-center mt-4">
+      <div v-if="modpackTotalPages > 1" class="d-flex flex-column align-center mt-5">
         <v-pagination
           v-model="modpackCurrentPage"
           :length="modpackTotalPages"
           :total-visible="5"
-          density="compact"
-          rounded="lg"
+          density="comfortable"
+          color="primary"
           @update:model-value="onModpackPageChange"
         />
-        <div class="text-caption text-medium-emphasis mt-2">
+        <div class="text-caption text-on-surface-variant mt-2">
           共 {{ modpackTotalHits }} 个整合包
         </div>
       </div>
     </template>
   </div>
 </template>
-
-<style scoped>
-.avatar-outlined {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-</style>

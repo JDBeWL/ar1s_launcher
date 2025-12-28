@@ -30,18 +30,18 @@ function getLoaderIcon(loaderType?: string) {
 </script>
 
 <template>
-  <v-card variant="outlined" rounded="xl" class="instance-card h-100">
+  <v-card color="surface-container" class="instance-card h-100">
     <v-card-text class="pa-4">
       <!-- 头部：图标和名称 -->
       <div class="d-flex align-center mb-3">
-        <v-avatar size="44" class="mr-3 avatar-outlined">
-          <v-icon size="22">{{ getLoaderIcon(instance.loader_type) }}</v-icon>
+        <v-avatar size="48" color="primary-container" class="mr-3">
+          <v-icon size="24" color="on-primary-container">{{ getLoaderIcon(instance.loader_type) }}</v-icon>
         </v-avatar>
         <div class="flex-grow-1 overflow-hidden">
           <div class="text-subtitle-1 font-weight-bold text-truncate">
             {{ instance.name }}
           </div>
-          <div class="text-body-2 text-medium-emphasis">
+          <div class="text-body-2 text-on-surface-variant">
             {{ instance.loader_type && instance.loader_type !== 'None' ? instance.loader_type + ' ' : '' }}{{ instance.game_version || instance.version }}
           </div>
         </div>
@@ -51,23 +51,23 @@ function getLoaderIcon(loaderType?: string) {
               <v-icon size="20">mdi-dots-vertical</v-icon>
             </v-btn>
           </template>
-          <v-list density="compact" rounded="lg">
+          <v-list density="compact" color="surface-container-high">
             <v-list-item @click="emit('open-folder', instance)">
               <template #prepend>
-                <v-icon size="18">mdi-folder-open</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-folder-open</v-icon>
               </template>
               <v-list-item-title class="text-body-2">打开文件夹</v-list-item-title>
             </v-list-item>
             <v-list-item @click="emit('rename', instance)">
               <template #prepend>
-                <v-icon size="18">mdi-pencil</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-pencil</v-icon>
               </template>
               <v-list-item-title class="text-body-2">重命名</v-list-item-title>
             </v-list-item>
             <v-divider class="my-1" />
             <v-list-item @click="emit('delete', instance)">
               <template #prepend>
-                <v-icon size="18" color="error">mdi-delete</v-icon>
+                <v-icon size="20" color="error">mdi-delete</v-icon>
               </template>
               <v-list-item-title class="text-body-2 text-error">删除实例</v-list-item-title>
             </v-list-item>
@@ -76,19 +76,19 @@ function getLoaderIcon(loaderType?: string) {
       </div>
 
       <!-- 最后运行时间 -->
-      <div class="d-flex align-center text-caption text-medium-emphasis mb-3">
+      <div class="d-flex align-center text-caption text-on-surface-variant mb-4">
         <v-icon size="14" class="mr-1">mdi-clock-outline</v-icon>
         {{ formatLastPlayed(instance.last_played) }}
       </div>
 
       <!-- 启动按钮 -->
       <v-btn
-        variant="outlined"
-        rounded="lg"
+        variant="tonal"
+        color="primary"
         block
         @click="emit('launch', instance)"
       >
-        <v-icon start size="18">mdi-play</v-icon>
+        <v-icon start size="20">mdi-play</v-icon>
         启动
       </v-btn>
     </v-card-text>
@@ -97,14 +97,12 @@ function getLoaderIcon(loaderType?: string) {
 
 <style scoped>
 .instance-card {
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .instance-card:hover {
-  transform: translateY(-3px);
-}
-
-.avatar-outlined {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 </style>

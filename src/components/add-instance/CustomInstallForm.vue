@@ -34,29 +34,26 @@ onMounted(() => {
 <template>
   <div>
     <!-- 实例名称 -->
-    <v-card variant="outlined" rounded="lg" class="mb-4">
+    <v-card color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-3">
-          <v-icon size="18" class="mr-2">mdi-label-outline</v-icon>
-          <span class="text-body-2 font-weight-medium">实例名称</span>
+          <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-label-outline</v-icon>
+          <span class="text-body-1 font-weight-medium">实例名称</span>
         </div>
         <v-text-field
           v-model="instanceName"
           :placeholder="defaultInstanceName || '输入实例名称'"
-          variant="outlined"
-          density="compact"
-          rounded="lg"
           hide-details
         />
       </v-card-text>
     </v-card>
 
     <!-- 版本选择 -->
-    <v-card variant="outlined" rounded="lg" class="mb-4">
+    <v-card color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
-        <div class="d-flex align-center mb-3">
-          <v-icon size="18" class="mr-2">mdi-minecraft</v-icon>
-          <span class="text-body-2 font-weight-medium">游戏版本</span>
+        <div class="d-flex align-center mb-4">
+          <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-minecraft</v-icon>
+          <span class="text-body-1 font-weight-medium">游戏版本</span>
         </div>
 
         <!-- 搜索和筛选 -->
@@ -65,14 +62,11 @@ onMounted(() => {
             <v-text-field
               v-model="searchVersion"
               placeholder="搜索版本..."
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               hide-details
               clearable
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-magnify</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-magnify</v-icon>
               </template>
             </v-text-field>
           </v-col>
@@ -80,10 +74,9 @@ onMounted(() => {
             <v-btn-toggle
               v-model="versionTypeFilter"
               mandatory
-              rounded="lg"
-              density="compact"
-              variant="outlined"
+              density="comfortable"
               divided
+              color="primary"
             >
               <v-btn value="release" size="small">正式版</v-btn>
               <v-btn value="snapshot" size="small">快照</v-btn>
@@ -97,13 +90,10 @@ onMounted(() => {
                 { title: '最新', value: 'newest' },
                 { title: '最旧', value: 'oldest' }
               ]"
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               hide-details
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-sort</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-sort</v-icon>
               </template>
             </v-select>
           </v-col>
@@ -116,35 +106,43 @@ onMounted(() => {
           item-title="id"
           item-value="id"
           placeholder="选择游戏版本"
-          variant="outlined"
-          density="compact"
-          rounded="lg"
-          :loading="loadingVersions"
           hide-details
           return-object
           @update:model-value="fetchModLoaderVersions"
         >
           <template #prepend-inner>
-            <v-icon size="18">mdi-gamepad-variant</v-icon>
+            <v-icon size="20" color="on-surface-variant">mdi-gamepad-variant</v-icon>
           </template>
           <template #no-data>
             <v-list-item>
-              <v-list-item-title class="text-medium-emphasis">
+              <v-list-item-title class="text-on-surface-variant">
                 没有找到版本
               </v-list-item-title>
             </v-list-item>
           </template>
         </v-select>
+
+        <!-- 版本加载进度条 -->
+        <div v-if="loadingVersions" class="d-flex align-center mt-3">
+          <v-progress-linear
+            indeterminate
+            height="4"
+            rounded
+            color="primary"
+            class="flex-grow-1"
+          />
+          <span class="text-caption text-on-surface-variant ml-3 text-no-wrap">加载版本中...</span>
+        </div>
       </v-card-text>
     </v-card>
 
     <!-- Mod 加载器 -->
-    <v-card variant="outlined" rounded="lg" class="mb-4">
+    <v-card color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
-        <div class="d-flex align-center mb-3">
-          <v-icon size="18" class="mr-2">mdi-puzzle</v-icon>
-          <span class="text-body-2 font-weight-medium">Mod 加载器</span>
-          <span class="text-caption text-medium-emphasis ml-2">(可选)</span>
+        <div class="d-flex align-center mb-4">
+          <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-puzzle</v-icon>
+          <span class="text-body-1 font-weight-medium">Mod 加载器</span>
+          <v-chip size="x-small" class="ml-2" color="secondary" variant="tonal">可选</v-chip>
         </div>
 
         <v-row dense>
@@ -153,15 +151,12 @@ onMounted(() => {
               v-model="selectedModLoaderType"
               :items="modLoaderTypes"
               placeholder="选择加载器类型"
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               :disabled="!selectedVersion"
               hide-details
               @update:model-value="fetchModLoaderVersions"
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-cog</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-cog</v-icon>
               </template>
             </v-select>
           </v-col>
@@ -170,19 +165,16 @@ onMounted(() => {
               v-model="selectedModLoaderVersion"
               :items="modLoaderVersions"
               placeholder="选择加载器版本"
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               :loading="loadingModLoaderVersions"
               :disabled="!selectedModLoaderType || selectedModLoaderType === 'None'"
               hide-details
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-tag</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-tag</v-icon>
               </template>
               <template #no-data>
                 <v-list-item>
-                  <v-list-item-title class="text-medium-emphasis">
+                  <v-list-item-title class="text-on-surface-variant">
                     {{ selectedModLoaderType === 'None' ? '无需选择' : '没有可用版本' }}
                   </v-list-item-title>
                 </v-list-item>
@@ -194,7 +186,7 @@ onMounted(() => {
     </v-card>
 
     <!-- 进度条 -->
-    <v-card v-if="showProgress" variant="outlined" rounded="lg" class="mb-4">
+    <v-card v-if="showProgress" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-2">
           <span class="text-body-2">{{ progressText }}</span>
@@ -204,6 +196,7 @@ onMounted(() => {
           :model-value="progressValue"
           height="8"
           rounded
+          color="primary"
           :indeterminate="progressIndeterminate"
         />
       </v-card-text>
@@ -213,13 +206,13 @@ onMounted(() => {
     <div class="d-flex justify-end">
       <v-btn
         variant="flat"
-        rounded="lg"
+        color="primary"
         size="large"
         @click="createInstance"
         :disabled="!selectedVersion || installing"
         :loading="installing"
       >
-        <v-icon start size="20">mdi-download</v-icon>
+        <v-icon start size="22">mdi-download</v-icon>
         开始安装
       </v-btn>
     </div>

@@ -24,6 +24,46 @@ const formatDateTime = (value: string) => {
   return date.toLocaleDateString();
 };
 
+// 根据版本类型获取对应图标
+const getVersionIcon = (type: string) => {
+  switch (type) {
+    case 'release':
+      return '/icons/grass_block.svg';
+    case 'snapshot':
+      return '/icons/dirt_path.svg';
+    default:
+      return '/icons/snow_grass.svg';
+  }
+};
+
+// 获取版本类型名称
+const getVersionTypeName = (type: string) => {
+  switch (type) {
+    case 'release':
+      return '正式版';
+    case 'snapshot':
+      return '快照';
+    case 'old_alpha':
+      return 'Alpha';
+    case 'old_beta':
+      return 'Beta';
+    default:
+      return '其他';
+  }
+};
+
+// 获取版本标签颜色
+const getVersionChipColor = (type: string) => {
+  switch (type) {
+    case 'release':
+      return 'primary';
+    case 'snapshot':
+      return 'warning';
+    default:
+      return 'secondary';
+  }
+};
+
 const isDownloading = computed(() => downloadStore.isDownloading);
 const selectedVersion = computed(() => downloadStore.selectedVersion);
 
@@ -84,44 +124,45 @@ onMounted(async () => {
 <template>
   <v-container fluid class="download-container pa-4">
     <!-- 页面标题 -->
-    <div class="d-flex align-center justify-space-between mb-4">
+    <div class="d-flex align-center justify-space-between mb-5">
       <div class="d-flex align-center">
-        <v-avatar size="40" class="mr-3 avatar-outlined">
-          <v-icon size="20">mdi-download</v-icon>
+        <v-avatar size="48" color="primary-container" class="mr-3">
+          <v-icon size="24" color="on-primary-container">mdi-download</v-icon>
         </v-avatar>
         <div>
           <h1 class="text-h6 font-weight-bold">下载 Minecraft</h1>
-          <p class="text-body-2 text-medium-emphasis mb-0">选择并下载游戏版本</p>
+          <p class="text-body-2 text-on-surface-variant mb-0">选择并下载游戏版本</p>
         </div>
       </div>
       <v-btn
         icon
-        variant="outlined"
+        variant="tonal"
+        color="secondary"
         size="small"
         :loading="loading"
         :disabled="isDownloading"
         @click="fetchVersions"
       >
-        <v-icon size="18">mdi-refresh</v-icon>
+        <v-icon size="20">mdi-refresh</v-icon>
       </v-btn>
     </div>
 
     <!-- 下载进度提示 -->
     <v-alert
       v-if="isDownloading"
-      variant="outlined"
-      rounded="lg"
+      color="primary-container"
       density="compact"
       class="mb-4"
     >
       <template #prepend>
-        <v-progress-circular indeterminate size="20" width="2" class="mr-2" />
+        <v-progress-circular indeterminate size="20" width="2" color="primary" class="mr-2" />
       </template>
       <div class="d-flex align-center justify-space-between">
-        <span class="text-body-2">正在下载 {{ selectedVersion }}...</span>
+        <span class="text-body-2 text-on-primary-container">正在下载 {{ selectedVersion }}...</span>
         <v-btn
           variant="text"
           size="small"
+          color="primary"
           @click="downloadStore.showDownloadNotification()"
         >
           查看进度
@@ -130,23 +171,20 @@ onMounted(async () => {
     </v-alert>
 
     <!-- 搜索和筛选 -->
-    <v-card variant="outlined" rounded="lg" class="mb-4">
-      <v-card-text class="pa-3">
+    <v-card color="surface-container" class="mb-4">
+      <v-card-text class="pa-4">
         <v-row dense align="center">
           <v-col cols="12" sm="5">
             <v-text-field
               v-model="searchQuery"
               placeholder="搜索版本号..."
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               hide-details
               clearable
               :disabled="isDownloading"
               @update:model-value="currentPage = 1"
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-magnify</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-magnify</v-icon>
               </template>
             </v-text-field>
           </v-col>
@@ -154,10 +192,9 @@ onMounted(async () => {
             <v-btn-toggle
               v-model="versionType"
               mandatory
-              rounded="lg"
-              density="compact"
-              variant="outlined"
+              density="comfortable"
               divided
+              color="primary"
               :disabled="isDownloading"
               @update:model-value="currentPage = 1"
             >
@@ -173,14 +210,11 @@ onMounted(async () => {
                 { title: '最新优先', value: 'newest' },
                 { title: '最旧优先', value: 'oldest' }
               ]"
-              variant="outlined"
-              density="compact"
-              rounded="lg"
               hide-details
               :disabled="isDownloading"
             >
               <template #prepend-inner>
-                <v-icon size="18">mdi-sort</v-icon>
+                <v-icon size="20" color="on-surface-variant">mdi-sort</v-icon>
               </template>
             </v-select>
           </v-col>
@@ -190,16 +224,16 @@ onMounted(async () => {
 
     <!-- 版本列表 -->
     <div v-if="loading" class="text-center py-12">
-      <v-progress-circular indeterminate size="40" />
-      <div class="text-body-2 text-medium-emphasis mt-3">加载版本列表...</div>
+      <v-progress-circular indeterminate size="48" color="primary" />
+      <div class="text-body-2 text-on-surface-variant mt-4">加载版本列表...</div>
     </div>
 
     <div v-else-if="paginatedVersions.length === 0" class="text-center py-12">
-      <v-avatar size="64" class="mb-3 avatar-outlined">
-        <v-icon size="32">mdi-magnify-close</v-icon>
+      <v-avatar size="80" color="surface-container-high" class="mb-4">
+        <v-icon size="40" color="on-surface-variant">mdi-magnify-close</v-icon>
       </v-avatar>
       <div class="text-body-1 font-weight-medium">没有找到匹配的版本</div>
-      <div class="text-body-2 text-medium-emphasis">尝试调整搜索条件</div>
+      <div class="text-body-2 text-on-surface-variant">尝试调整搜索条件</div>
     </div>
 
     <template v-else>
@@ -213,58 +247,55 @@ onMounted(async () => {
           md="4"
         >
           <v-card
-            variant="outlined"
-            rounded="lg"
+            color="surface-container"
             class="version-card h-100"
             :class="{ 'version-card--downloading': isDownloading && selectedVersion === item.id }"
           >
-            <v-card-text class="pa-3">
-              <div class="d-flex align-center justify-space-between mb-2">
+            <v-card-text class="pa-4">
+              <div class="d-flex align-center justify-space-between mb-3">
                 <div class="d-flex align-center">
-                  <v-avatar
-                    size="36"
-                    class="mr-2"
-                    :class="item.type === 'release' ? 'avatar-release' : 'avatar-snapshot'"
-                  >
-                    <v-icon size="18">
-                      {{ item.type === 'release' ? 'mdi-check-decagram' : 'mdi-flask' }}
-                    </v-icon>
+                  <v-avatar size="40" class="mr-3 version-icon-avatar">
+                    <img 
+                      :src="getVersionIcon(item.type)" 
+                      :alt="getVersionTypeName(item.type)"
+                      class="version-icon"
+                    />
                   </v-avatar>
                   <div>
                     <div class="text-subtitle-2 font-weight-bold">{{ item.id }}</div>
-                    <div class="text-caption text-medium-emphasis">{{ formatDateTime(item.releaseTime) }}</div>
+                    <div class="text-caption text-on-surface-variant">{{ formatDateTime(item.releaseTime) }}</div>
                   </div>
                 </div>
                 <v-chip
-                  size="x-small"
-                  :variant="item.type === 'release' ? 'flat' : 'outlined'"
-                  :class="item.type === 'release' ? '' : 'text-medium-emphasis'"
+                  size="small"
+                  :color="getVersionChipColor(item.type)"
+                  variant="tonal"
                 >
-                  {{ item.type === 'release' ? '正式版' : '快照' }}
+                  {{ getVersionTypeName(item.type) }}
                 </v-chip>
               </div>
 
               <v-btn
                 v-if="isDownloading && selectedVersion === item.id"
-                variant="outlined"
+                variant="tonal"
+                color="error"
                 block
                 size="small"
-                rounded="lg"
                 @click="cancelDownload"
               >
-                <v-icon start size="16">mdi-close</v-icon>
+                <v-icon start size="18">mdi-close</v-icon>
                 取消下载
               </v-btn>
               <v-btn
                 v-else
-                variant="outlined"
+                variant="tonal"
+                color="primary"
                 block
                 size="small"
-                rounded="lg"
                 :disabled="isDownloading"
                 @click="startDownload(item.id)"
               >
-                <v-icon start size="16">mdi-download</v-icon>
+                <v-icon start size="18">mdi-download</v-icon>
                 下载
               </v-btn>
             </v-card-text>
@@ -273,19 +304,19 @@ onMounted(async () => {
       </v-row>
 
       <!-- 分页 -->
-      <div v-if="totalPages > 1" class="d-flex justify-center mt-4">
+      <div v-if="totalPages > 1" class="d-flex justify-center mt-5">
         <v-pagination
           v-model="currentPage"
           :length="totalPages"
           :disabled="isDownloading"
           :total-visible="5"
-          density="compact"
-          rounded="lg"
+          density="comfortable"
+          color="primary"
         />
       </div>
 
       <!-- 统计信息 -->
-      <div class="text-center text-caption text-medium-emphasis mt-3">
+      <div class="text-center text-caption text-on-surface-variant mt-3">
         共 {{ filteredVersions.length }} 个版本
       </div>
     </template>
@@ -298,27 +329,27 @@ onMounted(async () => {
   margin: 0 auto;
 }
 
-.avatar-outlined {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-
-.avatar-release {
-  background: rgba(var(--v-theme-on-surface), 0.08);
-}
-
-.avatar-snapshot {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-
 .version-card {
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .version-card:hover {
   transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .version-card--downloading {
-  border-color: rgb(var(--v-theme-primary));
+  border: 2px solid rgb(var(--v-theme-primary));
+}
+
+.version-icon-avatar {
+  background: transparent;
+}
+
+.version-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
 }
 </style>

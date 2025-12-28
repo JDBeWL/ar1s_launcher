@@ -115,33 +115,30 @@ onUnmounted(() => {
 <template>
   <div class="settings-group">
     <!-- 标题 -->
-    <div class="group-header mb-4">
+    <div class="group-header mb-5">
       <div class="d-flex align-center">
-        <v-avatar size="40" class="mr-3 avatar-outlined">
-          <v-icon>mdi-cog-outline</v-icon>
+        <v-avatar size="48" color="primary-container" class="mr-3">
+          <v-icon size="24" color="on-primary-container">mdi-cog-outline</v-icon>
         </v-avatar>
         <div>
           <h2 class="text-h6 font-weight-bold">常规设置</h2>
-          <p class="text-body-2 text-medium-emphasis mb-0">游戏目录和下载配置</p>
+          <p class="text-body-2 text-on-surface-variant mb-0">游戏目录和下载配置</p>
         </div>
       </div>
     </div>
 
     <!-- 游戏目录 -->
-    <v-card variant="outlined" rounded="lg" class="mb-4">
+    <v-card color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-3">
-          <v-icon class="mr-2">mdi-folder-outline</v-icon>
+          <v-icon class="mr-2" color="on-surface-variant">mdi-folder-outline</v-icon>
           <span class="text-subtitle-1 font-weight-medium">游戏目录</span>
         </div>
         <v-text-field
           v-model="gameDir"
-          variant="outlined"
-          density="comfortable"
           placeholder="选择游戏安装目录"
           readonly
           hide-details
-          rounded="lg"
         >
           <template #append-inner>
             <v-btn
@@ -158,27 +155,28 @@ onUnmounted(() => {
     </v-card>
 
     <!-- 版本隔离 -->
-    <v-card variant="outlined" rounded="lg" class="mb-4">
+    <v-card color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-1">
           <div class="d-flex align-center">
-            <v-icon class="mr-2">mdi-folder-multiple-outline</v-icon>
+            <v-icon class="mr-2" color="on-surface-variant">mdi-folder-multiple-outline</v-icon>
             <span class="text-subtitle-1 font-weight-medium">版本隔离</span>
           </div>
           <v-switch
             v-model="versionIsolation"
             hide-details
             density="compact"
+            color="primary"
           />
         </div>
-        <p class="text-body-2 text-medium-emphasis mb-0">
+        <p class="text-body-2 text-on-surface-variant mb-0">
           为每个游戏版本创建独立的文件夹，避免配置冲突
         </p>
 
         <!-- 隔离选项 -->
         <v-expand-transition>
-          <div v-if="versionIsolation" class="mt-4 pt-4" style="border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity))">
-            <div class="text-body-2 text-medium-emphasis mb-3">选择需要隔离的内容：</div>
+          <div v-if="versionIsolation" class="mt-4 pt-4 isolation-options">
+            <div class="text-body-2 text-on-surface-variant mb-3">选择需要隔离的内容：</div>
             <v-row dense>
               <v-col cols="12" sm="4">
                 <v-checkbox
@@ -186,6 +184,7 @@ onUnmounted(() => {
                   label="存档"
                   density="compact"
                   hide-details
+                  color="primary"
                 />
               </v-col>
               <v-col cols="12" sm="4">
@@ -194,6 +193,7 @@ onUnmounted(() => {
                   label="资源包"
                   density="compact"
                   hide-details
+                  color="primary"
                 />
               </v-col>
               <v-col cols="12" sm="4">
@@ -202,6 +202,7 @@ onUnmounted(() => {
                   label="日志"
                   density="compact"
                   hide-details
+                  color="primary"
                 />
               </v-col>
             </v-row>
@@ -211,18 +212,18 @@ onUnmounted(() => {
     </v-card>
 
     <!-- 下载设置 -->
-    <v-card variant="outlined" rounded="lg">
+    <v-card color="surface-container">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
-          <v-icon class="mr-2">mdi-download-outline</v-icon>
+          <v-icon class="mr-2" color="on-surface-variant">mdi-download-outline</v-icon>
           <span class="text-subtitle-1 font-weight-medium">下载设置</span>
         </div>
 
         <!-- 下载线程 -->
-        <div class="mb-6">
+        <div class="mb-5">
           <div class="d-flex align-center justify-space-between mb-2">
             <span class="text-body-2">下载线程数</span>
-            <v-chip size="small" variant="outlined">{{ downloadThreads }}</v-chip>
+            <v-chip size="small" color="primary" variant="tonal">{{ downloadThreads }}</v-chip>
           </div>
           <v-slider
             v-model="downloadThreads"
@@ -230,13 +231,14 @@ onUnmounted(() => {
             :max="64"
             :step="1"
             hide-details
+            color="primary"
             @end="saveDownloadThreads"
           >
             <template #prepend>
-              <span class="text-caption text-medium-emphasis">1</span>
+              <span class="text-caption text-on-surface-variant">1</span>
             </template>
             <template #append>
-              <span class="text-caption text-medium-emphasis">64</span>
+              <span class="text-caption text-on-surface-variant">64</span>
             </template>
           </v-slider>
         </div>
@@ -247,20 +249,20 @@ onUnmounted(() => {
           <v-btn-toggle
             v-model="settingsStore.downloadMirror"
             mandatory
-            rounded="lg"
             density="comfortable"
-            variant="outlined"
+            divided
+            color="primary"
           >
             <v-btn value="official" class="px-4">
-              <v-icon start>mdi-web</v-icon>
+              <v-icon start size="18">mdi-web</v-icon>
               官方源
             </v-btn>
             <v-btn value="bmcl" class="px-4">
-              <v-icon start>mdi-lightning-bolt</v-icon>
+              <v-icon start size="18">mdi-lightning-bolt</v-icon>
               BMCL 镜像
             </v-btn>
           </v-btn-toggle>
-          <p class="text-caption text-medium-emphasis mt-2 mb-0">
+          <p class="text-caption text-on-surface-variant mt-2 mb-0">
             BMCL 镜像通常在国内访问更快
           </p>
         </div>
@@ -276,10 +278,10 @@ onUnmounted(() => {
 
 .group-header {
   padding-bottom: 16px;
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-bottom: 1px solid rgb(var(--v-theme-outline-variant));
 }
 
-.avatar-outlined {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+.isolation-options {
+  border-top: 1px solid rgb(var(--v-theme-outline-variant));
 }
 </style>

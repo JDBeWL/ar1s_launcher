@@ -28,18 +28,17 @@ function scrollToSection(sectionId: string) {
       <v-col cols="12" md="3" lg="2" class="settings-nav">
         <div class="nav-header pa-4">
           <h1 class="text-h5 font-weight-bold">设置</h1>
-          <p class="text-body-2 text-medium-emphasis mt-1">管理启动器配置</p>
+          <p class="text-body-2 text-on-surface-variant mt-1">管理启动器配置</p>
         </div>
         
-        <v-list nav density="comfortable" class="px-2">
+        <v-list nav density="comfortable" class="px-2" bg-color="transparent">
           <v-list-item
             v-for="section in sections"
             :key="section.id"
             :active="activeSection === section.id"
             :prepend-icon="section.icon"
             :title="section.title"
-            rounded="lg"
-            class="mb-1"
+            class="mb-1 settings-nav-item"
             @click="scrollToSection(section.id)"
           />
         </v-list>
@@ -75,13 +74,18 @@ function scrollToSection(sectionId: string) {
 }
 
 .settings-nav {
-  border-right: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  background-color: rgb(var(--v-theme-surface-container));
   height: 100%;
   overflow-y: auto;
 }
 
 .nav-header {
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-bottom: 1px solid rgb(var(--v-theme-outline-variant));
+}
+
+.settings-nav-item.v-list-item--active {
+  background: rgb(var(--v-theme-secondary-container));
+  color: rgb(var(--v-theme-on-secondary-container));
 }
 
 .settings-content {

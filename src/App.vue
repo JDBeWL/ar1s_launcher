@@ -59,41 +59,87 @@ onUnmounted(() => {
 
 <template>
   <v-app>
-    <v-navigation-drawer :rail="rail" :mobile-breakpoint="0" rail-width="64">
-      <v-list nav>
-        <v-list-item prepend-icon="mdi-minecraft" title="启动" to="/" rounded="lg"></v-list-item>
-        <v-list-item prepend-icon="mdi-download" title="下载" to="/download" rounded="lg"></v-list-item>
-        <v-list-item prepend-icon="mdi-plus" title="添加实例" to="/add-instance" rounded="lg"></v-list-item>
-        <v-list-item prepend-icon="mdi-layers-outline" title="实例管理" to="/instance-manager" rounded="lg"></v-list-item>
+    <v-navigation-drawer 
+      :rail="rail" 
+      :mobile-breakpoint="0" 
+      rail-width="64"
+      width="220"
+      color="surface-container"
+    >
+      <v-list nav class="nav-list">
+        <v-list-item 
+          prepend-icon="mdi-minecraft" 
+          title="启动" 
+          to="/" 
+          class="nav-item mb-1"
+        />
+        <v-list-item 
+          prepend-icon="mdi-download" 
+          title="下载" 
+          to="/download" 
+          class="nav-item mb-1"
+        />
+        <v-list-item 
+          prepend-icon="mdi-plus-circle-outline" 
+          title="添加实例" 
+          to="/add-instance" 
+          class="nav-item mb-1"
+        />
+        <v-list-item 
+          prepend-icon="mdi-folder-multiple-outline" 
+          title="实例管理" 
+          to="/instance-manager" 
+          class="nav-item"
+        />
       </v-list>
 
       <template v-slot:append>
-        <v-list nav>
-          <v-list-item prepend-icon="mdi-cog" title="设置" to="/settings" rounded="lg"></v-list-item>
+        <v-list nav class="nav-list">
+          <v-list-item 
+            prepend-icon="mdi-cog-outline" 
+            title="设置" 
+            to="/settings" 
+            class="nav-item"
+          />
         </v-list>
       </template>
     </v-navigation-drawer>
 
-    <v-app-bar class="titlebar" data-tauri-drag-region elevation="0">
-      <v-app-bar-nav-icon @click="rail = !rail" data-tauri-no-drag></v-app-bar-nav-icon>
-      <v-toolbar-title class="font-weight-bold">Ar1s Launcher</v-toolbar-title>
-      <v-spacer></v-spacer>
-      <v-btn icon data-tauri-no-drag @click="toggleTheme" class="theme-toggle-btn" :color="isDarkMode ? 'amber' : 'indigo'">
+    <v-app-bar class="titlebar" data-tauri-drag-region elevation="0" color="surface">
+      <template v-slot:prepend>
+        <v-app-bar-nav-icon @click="rail = !rail" data-tauri-no-drag />
+      </template>
+      <v-app-bar-title class="font-weight-bold">Ar1s Launcher</v-app-bar-title>
+      <v-spacer />
+      
+      <!-- 主题切换按钮 -->
+      <v-btn 
+        icon 
+        data-tauri-no-drag 
+        @click="toggleTheme" 
+        class="theme-toggle-btn mr-1"
+        variant="text"
+      >
         <v-icon>{{ isDarkMode ? 'mdi-weather-sunny' : 'mdi-weather-night' }}</v-icon>
+        <v-tooltip activator="parent" location="bottom">
+          {{ isDarkMode ? '切换到浅色模式' : '切换到深色模式' }}
+        </v-tooltip>
       </v-btn>
-      <v-btn icon data-tauri-no-drag @click="window.minimize()" class="window-control-btn">
-        <v-icon>mdi-window-minimize</v-icon>
+      
+      <!-- 窗口控制按钮 -->
+      <v-btn icon data-tauri-no-drag @click="window.minimize()" variant="text">
+        <v-icon size="20">mdi-minus</v-icon>
       </v-btn>
-      <v-btn icon data-tauri-no-drag @click="window.toggleMaximize()" class="window-control-btn">
-        <v-icon>mdi-window-maximize</v-icon>
+      <v-btn icon data-tauri-no-drag @click="window.toggleMaximize()" variant="text">
+        <v-icon size="18">mdi-square-outline</v-icon>
       </v-btn>
-      <v-btn icon data-tauri-no-drag @click="window.close()" class="window-control-btn">
-        <v-icon>mdi-close</v-icon>
+      <v-btn icon data-tauri-no-drag @click="window.close()" variant="text" class="close-btn">
+        <v-icon size="20">mdi-close</v-icon>
       </v-btn>
     </v-app-bar>
 
     <v-main>
-      <router-view></router-view>
+      <router-view />
     </v-main>
     
     <!-- 全局下载状态组件 -->
@@ -113,6 +159,7 @@ onUnmounted(() => {
   display: none;
 }
 
+/* Titlebar styles */
 .titlebar .v-toolbar__content {
   pointer-events: none;
 }
@@ -122,65 +169,83 @@ onUnmounted(() => {
   pointer-events: auto;
 }
 
+/* Navigation list padding */
+.nav-list {
+  padding: 8px;
+}
+
+/* Theme toggle animation */
 .theme-toggle-btn {
-  margin: 0 4px;
-  transition: transform 0.3s ease, color 0.3s ease;
+  transition: transform 0.3s ease;
 }
 
 .theme-toggle-btn:hover {
   transform: rotate(30deg);
 }
 
-.window-control-btn {
-  transition: background-color 0.2s ease;
+/* Close button hover */
+.close-btn:hover {
+  background-color: rgb(var(--v-theme-error)) !important;
+  color: rgb(var(--v-theme-on-error)) !important;
 }
 
-/* MD3 风格自定义 */
-.v-theme--light {
-  --v-theme-primary: #6750a4;
-  --v-theme-secondary: #625b71;
-  --v-theme-surface: #f5f5f8;
-  --v-theme-surface-variant: #e7e0ec;
-  --v-theme-on-surface: #1c1b1f;
-  --v-theme-on-surface-variant: #49454f;
-  --v-theme-background: #f0f0f4;
+/* Navigation item styles - MD3 */
+.nav-item {
+  margin-bottom: 4px;
 }
 
-.v-theme--dark {
-  --v-theme-primary: #d0bcff;
-  --v-theme-secondary: #ccc2dc;
-  --v-theme-surface: #1c1b1f;
-  --v-theme-surface-variant: #49454f;
-  --v-theme-on-surface: #e6e1e5;
-  --v-theme-on-surface-variant: #cac4d0;
-  --v-theme-background: #1c1b1f;
+.nav-item.v-list-item--active {
+  background: rgb(var(--v-theme-secondary-container));
+  color: rgb(var(--v-theme-on-secondary-container));
 }
 
-/* MD3 圆角和阴影 */
+.nav-item.v-list-item--active .v-icon {
+  color: rgb(var(--v-theme-on-secondary-container));
+}
+
+/* MD3 elevation and transitions */
 .v-btn {
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.v-btn:hover {
-  /* transform: translateY(-2px); */
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+.v-card {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* 动画过渡效果 */
+/* MD3 Surface tones */
+.surface-container {
+  background-color: rgb(var(--v-theme-surface-container)) !important;
+}
+
+.surface-container-high {
+  background-color: rgb(var(--v-theme-surface-container-high)) !important;
+}
+
+.surface-container-highest {
+  background-color: rgb(var(--v-theme-surface-container-highest)) !important;
+}
+
+/* Navigation drawer rail mode - center icons */
+.v-navigation-drawer--rail .nav-list {
+  padding: 8px;
+}
+
+.v-navigation-drawer--rail .nav-list .v-list-item {
+  padding: 0 !important;
+  min-height: 48px;
+}
+
+.v-navigation-drawer--rail .nav-list .v-list-item > .v-list-item__prepend {
+  margin-left: 12px !important;
+}
+
+.v-navigation-drawer--rail .nav-list .v-list-item .v-list-item-title,
+.v-navigation-drawer--rail .nav-list .v-list-item .v-list-item__content {
+  display: none !important;
+}
+
+/* Smooth theme transition */
 .v-application {
-  transition: background-color 0.3s ease;
-}
-
-/* 导航栏图标间距调整 */
-.v-navigation-drawer:not(.v-navigation-drawer--rail) .v-list-item {
-  padding-inline: 12px !important;
-}
-
-.v-navigation-drawer--rail .v-list-item {
-  padding-inline: 12px !important;
-}
-
-.v-navigation-drawer--rail .v-list-item .v-list-item-title {
-  display: none;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 </style>

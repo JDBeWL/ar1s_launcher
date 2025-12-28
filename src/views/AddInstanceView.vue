@@ -12,14 +12,13 @@
     </div>
 
     <!-- 安装方式选择 -->
-    <v-card variant="outlined" rounded="lg" class="mb-4">
+    <v-card color="surface-container" rounded="lg" class="mb-4">
       <v-card-text class="pa-2">
         <v-btn-toggle
           v-model="installType"
           mandatory
           rounded="lg"
           density="compact"
-          variant="outlined"
           divided
           class="w-100"
         >
@@ -43,12 +42,12 @@
     <!-- 从互联网安装内容 -->
     <div v-if="installType === 'online'">
       <!-- 平台选择 -->
-      <v-card variant="outlined" rounded="lg" class="mb-4">
+      <v-card color="surface-container" rounded="lg" class="mb-4">
         <v-card-text class="pa-3">
           <div class="text-body-2 text-medium-emphasis mb-2">选择平台</div>
           <div class="d-flex ga-2">
             <v-btn
-              :variant="selectedPlatform === 'modrinth' ? 'flat' : 'outlined'"
+              :variant="selectedPlatform === 'modrinth' ? 'flat' : 'tonal'"
               rounded="lg"
               @click="selectedPlatform = 'modrinth'"
               class="platform-btn"
@@ -57,14 +56,14 @@
               Modrinth
             </v-btn>
             <v-btn
-              variant="outlined"
+              variant="tonal"
               rounded="lg"
               disabled
               class="platform-btn"
             >
               <v-icon start size="18">mdi-fire</v-icon>
               CurseForge
-              <v-chip size="x-small" class="ml-2" variant="outlined">开发中</v-chip>
+              <v-chip size="x-small" class="ml-2" variant="tonal">开发中</v-chip>
             </v-btn>
           </div>
         </v-card-text>
@@ -77,7 +76,7 @@
 
       <!-- CurseForge整合包搜索 (占位) -->
       <div v-if="selectedPlatform === 'curseforge'">
-        <v-alert variant="outlined" rounded="lg">
+        <v-alert variant="tonal" rounded="lg">
           <template #prepend>
             <v-icon>mdi-information-outline</v-icon>
           </template>

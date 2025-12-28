@@ -92,47 +92,47 @@ onMounted(() => {
 <template>
   <v-container fluid class="instance-container pa-4">
     <!-- 页面标题 -->
-    <div class="d-flex align-center justify-space-between mb-4">
+    <div class="d-flex align-center justify-space-between mb-5">
       <div class="d-flex align-center">
-        <v-avatar size="40" class="mr-3 avatar-outlined">
-          <v-icon size="20">mdi-folder-multiple</v-icon>
+        <v-avatar size="48" color="primary-container" class="mr-3">
+          <v-icon size="24" color="on-primary-container">mdi-folder-multiple</v-icon>
         </v-avatar>
         <div>
           <h1 class="text-h6 font-weight-bold">实例管理</h1>
-          <p class="text-body-2 text-medium-emphasis mb-0">管理你的游戏实例</p>
+          <p class="text-body-2 text-on-surface-variant mb-0">管理你的游戏实例</p>
         </div>
       </div>
       <v-btn
-        variant="outlined"
-        rounded="lg"
+        variant="flat"
+        color="primary"
         to="/add-instance"
       >
-        <v-icon start size="18">mdi-plus</v-icon>
+        <v-icon start size="20">mdi-plus</v-icon>
         新建实例
       </v-btn>
     </div>
 
     <!-- 加载状态 -->
     <div v-if="loading" class="text-center py-12">
-      <v-progress-circular indeterminate size="40" />
-      <div class="text-body-2 text-medium-emphasis mt-3">加载实例中...</div>
+      <v-progress-circular indeterminate size="48" color="primary" />
+      <div class="text-body-2 text-on-surface-variant mt-4">加载实例中...</div>
     </div>
 
     <!-- 空状态 -->
     <div v-else-if="instances.length === 0" class="text-center py-12">
-      <v-avatar size="80" class="mb-4 avatar-outlined">
-        <v-icon size="40">mdi-cube-outline</v-icon>
+      <v-avatar size="96" color="surface-container-high" class="mb-4">
+        <v-icon size="48" color="on-surface-variant">mdi-cube-outline</v-icon>
       </v-avatar>
-      <div class="text-h6 font-weight-medium mb-1">没有找到实例</div>
-      <div class="text-body-2 text-medium-emphasis mb-4">
+      <div class="text-h6 font-weight-medium mb-2">没有找到实例</div>
+      <div class="text-body-2 text-on-surface-variant mb-5">
         创建你的第一个 Minecraft 实例来开始游戏
       </div>
       <v-btn
-        variant="outlined"
-        rounded="lg"
+        variant="flat"
+        color="primary"
         to="/add-instance"
       >
-        <v-icon start size="18">mdi-plus</v-icon>
+        <v-icon start size="20">mdi-plus</v-icon>
         创建新实例
       </v-btn>
     </div>
@@ -157,12 +157,12 @@ onMounted(() => {
     </v-row>
 
     <!-- 重命名对话框 -->
-    <v-dialog v-model="renameDialog" max-width="360">
-      <v-card rounded="xl">
-        <v-card-text class="pa-5">
-          <div class="text-center mb-4">
-            <v-avatar size="56" class="mb-3 avatar-outlined">
-              <v-icon size="28">mdi-pencil</v-icon>
+    <v-dialog v-model="renameDialog" max-width="400">
+      <v-card color="surface-container-high">
+        <v-card-text class="pa-6">
+          <div class="text-center mb-5">
+            <v-avatar size="64" color="primary-container" class="mb-4">
+              <v-icon size="32" color="on-primary-container">mdi-pencil</v-icon>
             </v-avatar>
             <div class="text-h6 font-weight-bold">重命名实例</div>
           </div>
@@ -170,16 +170,13 @@ onMounted(() => {
             v-model="renameInstanceName"
             label="新名称"
             autofocus
-            variant="outlined"
-            density="compact"
-            rounded="lg"
             hide-details
           />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-btn
-            variant="outlined"
-            rounded="lg"
+            variant="tonal"
+            color="secondary"
             class="flex-grow-1"
             @click="renameDialog = false"
           >
@@ -187,7 +184,7 @@ onMounted(() => {
           </v-btn>
           <v-btn
             variant="flat"
-            rounded="lg"
+            color="primary"
             class="flex-grow-1"
             @click="renameInstance"
           >
@@ -198,26 +195,26 @@ onMounted(() => {
     </v-dialog>
 
     <!-- 删除确认对话框 -->
-    <v-dialog v-model="deleteDialog" max-width="360">
-      <v-card rounded="xl">
-        <v-card-text class="pa-5">
-          <div class="text-center mb-4">
-            <v-avatar size="56" color="error" variant="tonal" class="mb-3">
-              <v-icon size="28">mdi-alert</v-icon>
+    <v-dialog v-model="deleteDialog" max-width="400">
+      <v-card color="surface-container-high">
+        <v-card-text class="pa-6">
+          <div class="text-center mb-5">
+            <v-avatar size="64" color="error-container" class="mb-4">
+              <v-icon size="32" color="on-error-container">mdi-alert</v-icon>
             </v-avatar>
             <div class="text-h6 font-weight-bold">删除实例</div>
           </div>
           <div class="text-body-2 text-center">
             确定要删除实例 <strong>"{{ currentInstance?.name }}"</strong> 吗？
           </div>
-          <div class="text-caption text-medium-emphasis text-center mt-2">
+          <div class="text-caption text-on-surface-variant text-center mt-2">
             此操作无法撤销，所有数据将被永久删除
           </div>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-btn
-            variant="outlined"
-            rounded="lg"
+            variant="tonal"
+            color="secondary"
             class="flex-grow-1"
             @click="deleteDialog = false"
           >
@@ -225,7 +222,6 @@ onMounted(() => {
           </v-btn>
           <v-btn
             variant="flat"
-            rounded="lg"
             color="error"
             class="flex-grow-1"
             @click="deleteInstance"
@@ -242,9 +238,5 @@ onMounted(() => {
 .instance-container {
   max-width: 900px;
   margin: 0 auto;
-}
-
-.avatar-outlined {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 </style>

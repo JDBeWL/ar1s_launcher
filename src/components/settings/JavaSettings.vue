@@ -96,42 +96,44 @@ onMounted(async () => {
 <template>
   <div class="settings-group">
     <!-- 标题 -->
-    <div class="group-header mb-4">
+    <div class="group-header mb-5">
       <div class="d-flex align-center">
-        <v-avatar size="40" class="mr-3 avatar-outlined">
-          <v-icon>mdi-language-java</v-icon>
+        <v-avatar size="48" color="secondary-container" class="mr-3">
+          <v-icon size="24" color="on-secondary-container">mdi-language-java</v-icon>
         </v-avatar>
         <div>
           <h2 class="text-h6 font-weight-bold">Java 配置</h2>
-          <p class="text-body-2 text-medium-emphasis mb-0">选择用于启动游戏的 Java 运行时</p>
+          <p class="text-body-2 text-on-surface-variant mb-0">选择用于启动游戏的 Java 运行时</p>
         </div>
       </div>
     </div>
 
     <!-- Java 路径选择 -->
-    <v-card variant="outlined" rounded="lg" class="mb-4">
+    <v-card color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
-        <div class="d-flex align-center justify-space-between mb-3">
+        <div class="d-flex align-center justify-space-between mb-4">
           <div class="d-flex align-center">
-            <v-icon class="mr-2">mdi-file-cog-outline</v-icon>
+            <v-icon class="mr-2" color="on-surface-variant">mdi-file-cog-outline</v-icon>
             <span class="text-subtitle-1 font-weight-medium">Java 路径</span>
           </div>
           <div class="d-flex ga-2">
             <v-btn
-              variant="outlined"
+              variant="tonal"
+              color="primary"
               size="small"
               :loading="loadingJava"
               @click="findJavaInstallations"
             >
-              <v-icon start>mdi-magnify</v-icon>
+              <v-icon start size="18">mdi-magnify</v-icon>
               自动查找
             </v-btn>
             <v-btn
-              variant="outlined"
+              variant="tonal"
+              color="secondary"
               size="small"
               @click="browseJavaPath"
             >
-              <v-icon start>mdi-folder-open-outline</v-icon>
+              <v-icon start size="18">mdi-folder-open-outline</v-icon>
               浏览
             </v-btn>
           </div>
@@ -139,17 +141,16 @@ onMounted(async () => {
 
         <!-- 已检测到的 Java -->
         <div v-if="settingsStore.javaInstallations.length > 0" class="mb-4">
-          <div class="text-body-2 text-medium-emphasis mb-2">检测到的 Java 安装：</div>
-          <v-list density="compact" rounded="lg" class="java-list">
+          <div class="text-body-2 text-on-surface-variant mb-2">检测到的 Java 安装：</div>
+          <v-list density="compact" class="java-list" bg-color="surface-container-high">
             <v-list-item
               v-for="(path, index) in settingsStore.javaInstallations"
               :key="index"
               :active="javaPath === path"
-              rounded="lg"
               @click="selectJavaPath(path)"
             >
               <template #prepend>
-                <v-icon>
+                <v-icon :color="javaPath === path ? 'primary' : 'on-surface-variant'">
                   {{ javaPath === path ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank' }}
                 </v-icon>
               </template>
@@ -161,24 +162,24 @@ onMounted(async () => {
         </div>
 
         <!-- 当前选择 -->
-        <div v-if="javaPath" class="current-java pa-3 rounded-lg">
+        <div v-if="javaPath" class="current-java pa-4">
           <div class="d-flex align-center justify-space-between">
             <div>
-              <div class="text-body-2 text-medium-emphasis">当前选择</div>
+              <div class="text-body-2 text-on-surface-variant">当前选择</div>
               <div class="text-body-1 font-mono">{{ formattedJavaPath }}</div>
             </div>
             <v-chip
               :color="isJavaPathValid ? 'success' : 'error'"
-              variant="outlined"
+              variant="tonal"
               size="small"
             >
-              <v-icon start size="small">
+              <v-icon start size="16">
                 {{ isJavaPathValid ? 'mdi-check-circle' : 'mdi-alert-circle' }}
               </v-icon>
               {{ isJavaPathValid ? '有效' : '无效' }}
             </v-chip>
           </div>
-          <div v-if="javaVersion" class="text-caption text-medium-emphasis mt-1">
+          <div v-if="javaVersion" class="text-caption text-on-surface-variant mt-1">
             版本: {{ javaVersion }}
           </div>
         </div>
@@ -186,30 +187,26 @@ onMounted(async () => {
         <!-- 未选择提示 -->
         <v-alert
           v-else
-          variant="outlined"
+          color="warning-container"
           density="compact"
-          rounded="lg"
         >
           <template #prepend>
-            <v-icon>mdi-alert-outline</v-icon>
+            <v-icon color="on-warning-container">mdi-alert-outline</v-icon>
           </template>
-          未检测到 Java，请点击"自动查找"或手动选择 Java 路径
+          <span class="text-on-warning-container">未检测到 Java，请点击"自动查找"或手动选择 Java 路径</span>
         </v-alert>
       </v-card-text>
     </v-card>
 
     <!-- Java 提示 -->
-    <v-alert
-      variant="outlined"
-      rounded="lg"
-    >
+    <v-alert color="tertiary-container">
       <template #prepend>
-        <v-icon>mdi-information-outline</v-icon>
+        <v-icon color="on-tertiary-container">mdi-information-outline</v-icon>
       </template>
       <template #title>
-        <span class="text-body-2 font-weight-medium">Java 版本建议</span>
+        <span class="text-body-2 font-weight-medium text-on-tertiary-container">Java 版本建议</span>
       </template>
-      <ul class="text-body-2 pl-4 mb-0 mt-1">
+      <ul class="text-body-2 pl-4 mb-0 mt-1 text-on-tertiary-container">
         <li>Minecraft 1.17+ 需要 Java 17 或更高版本</li>
         <li>Minecraft 1.16.5 及以下版本建议使用 Java 8</li>
         <li>推荐使用 Adoptium (Eclipse Temurin) 或 Azul Zulu</li>
@@ -225,21 +222,17 @@ onMounted(async () => {
 
 .group-header {
   padding-bottom: 16px;
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-}
-
-.avatar-outlined {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-bottom: 1px solid rgb(var(--v-theme-outline-variant));
 }
 
 .java-list {
-  background: transparent;
   max-height: 200px;
   overflow-y: auto;
 }
 
 .current-java {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  background: rgb(var(--v-theme-surface-container-high));
+  border-radius: 12px;
 }
 
 .font-mono {

@@ -25,59 +25,60 @@ function truncateText(text: string, length: number): string {
 
 <template>
   <v-card 
-    variant="outlined"
-    rounded="lg"
+    color="surface-container"
     class="modpack-card h-100"
     :class="{ 'modpack-card--selected': selected }"
     @click="emit('select', modpack)"
   >
-    <v-card-text class="pa-3">
-      <div class="d-flex align-start mb-2">
+    <v-card-text class="pa-4">
+      <div class="d-flex align-start mb-3">
         <!-- 图标 -->
         <v-avatar
-          size="48"
+          size="56"
           rounded="lg"
           class="mr-3 flex-shrink-0"
-          :class="modpack.icon_url ? '' : 'avatar-outlined'"
+          :color="modpack.icon_url ? undefined : 'secondary-container'"
         >
           <v-img v-if="modpack.icon_url" :src="modpack.icon_url" cover />
-          <v-icon v-else size="24">mdi-package-variant</v-icon>
+          <v-icon v-else size="28" color="on-secondary-container">mdi-package-variant</v-icon>
         </v-avatar>
 
         <!-- 标题和作者 -->
         <div class="flex-grow-1 min-width-0">
-          <div class="text-subtitle-2 font-weight-bold text-truncate">{{ modpack.title }}</div>
-          <div class="text-caption text-medium-emphasis">{{ modpack.author }}</div>
+          <div class="text-subtitle-1 font-weight-bold text-truncate">{{ modpack.title }}</div>
+          <div class="text-caption text-on-surface-variant">{{ modpack.author }}</div>
         </div>
       </div>
 
       <!-- 描述 -->
-      <div class="text-caption text-medium-emphasis mb-2 modpack-desc">
+      <div class="text-body-2 text-on-surface-variant mb-3 modpack-desc">
         {{ truncateText(modpack.description, 80) }}
       </div>
 
       <!-- 标签 -->
-      <div class="d-flex flex-wrap ga-1 mb-2">
+      <div class="d-flex flex-wrap ga-1 mb-3">
         <v-chip
           v-for="loader in modpack.loaders.slice(0, 2)"
           :key="loader"
-          size="x-small"
-          variant="outlined"
+          size="small"
+          color="primary"
+          variant="tonal"
         >
           {{ loader }}
         </v-chip>
         <v-chip
           v-if="modpack.game_versions.length > 0"
-          size="x-small"
-          variant="outlined"
+          size="small"
+          color="secondary"
+          variant="tonal"
         >
           {{ modpack.game_versions[0] }}
         </v-chip>
       </div>
 
       <!-- 统计 -->
-      <div class="d-flex align-center text-caption text-medium-emphasis">
-        <v-icon size="14" class="mr-1">mdi-download</v-icon>
+      <div class="d-flex align-center text-caption text-on-surface-variant">
+        <v-icon size="16" class="mr-1">mdi-download</v-icon>
         <span>{{ formatNumber(modpack.downloads) }}</span>
       </div>
     </v-card-text>
@@ -87,19 +88,17 @@ function truncateText(text: string, length: number): string {
 <style scoped>
 .modpack-card {
   cursor: pointer;
-  transition: transform 0.2s ease, border-color 0.2s ease;
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .modpack-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-4px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .modpack-card--selected {
-  border-color: rgb(var(--v-theme-on-surface));
-}
-
-.avatar-outlined {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border: 2px solid rgb(var(--v-theme-primary));
 }
 
 .min-width-0 {
@@ -111,6 +110,6 @@ function truncateText(text: string, length: number): string {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  line-height: 1.4;
+  line-height: 1.5;
 }
 </style>
