@@ -51,6 +51,7 @@ onMounted(async () => {
   theme.change(themeName)
 })
 
+// 清理监听器防止内存泄漏
 onUnmounted(() => {
   downloadStore.unsubscribe()
   launcherStore.unsubscribe()

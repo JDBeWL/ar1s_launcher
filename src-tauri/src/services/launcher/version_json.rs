@@ -100,6 +100,11 @@ fn merge_arguments(version_json: &mut serde_json::Value, parent_json: &serde_jso
         if let Some(parent_game_arr) = parent_args.get("game").and_then(|g| g.as_array()).cloned() {
             merge_game_arguments(version_json, parent_game_arr);
         }
+
+        // 合并 jvm 数组（新版 Forge 1.13+ 需要）
+        if let Some(parent_jvm_arr) = parent_args.get("jvm").and_then(|j| j.as_array()).cloned() {
+            merge_jvm_arguments(version_json, parent_jvm_arr);
+        }
     } else if let Some(parent_mc_args) = parent_json.get("minecraftArguments") {
         // 父级使用旧式 minecraftArguments
         if let Some(mc_args_str) = parent_mc_args.as_str() {
@@ -147,6 +152,38 @@ fn merge_game_arguments(version_json: &mut serde_json::Value, parent_game_arr: V
             merged.push(c);
         }
         version_json["arguments"]["game"] = serde_json::Value::Array(merged);
+    }
+}
+
+/// 合并 jvm 参数数组（新版 Forge 1.13+ 需要 --module-path 等参数）
+fn merge_jvm_arguments(version_json: &mut serde_json::Value, parent_jvm_arr: Vec<serde_json::Value>) {
+    if version_json
+        .get("arguments")
+        .and_then(|a| a.get("jvm"))
+        .is_none()
+    {
+        version_json["arguments"]["jvm"] = serde_json::Value::Array(parent_jvm_arr);
+        return;
+    }
+
+    if let Some(child_jvm_arr) = version_json
+        .get("arguments")
+        .and_then(|a| a.get("jvm"))
+        .and_then(|j| j.as_array())
+        .cloned()
+    {
+        // 子版本的 JVM 参数优先，父版本的参数追加到前面
+        let mut merged: Vec<serde_json::Value> = Vec::new();
+        for p in parent_jvm_arr {
+            // 避免重复添加相同的参数
+            if !child_jvm_arr.contains(&p) {
+                merged.push(p);
+            }
+        }
+        for c in child_jvm_arr {
+            merged.push(c);
+        }
+        version_json["arguments"]["jvm"] = serde_json::Value::Array(merged);
     }
 }
 

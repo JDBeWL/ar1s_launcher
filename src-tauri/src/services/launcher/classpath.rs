@@ -1,12 +1,42 @@
 //! Classpath 构建和库预检逻辑
 
 use crate::errors::LauncherError;
+use std::fs;
 use std::path::{Path, PathBuf};
+
+/// 递归查找最终的 JAR 版本（处理多层继承链）
+fn find_jar_version_recursive(version_json: &serde_json::Value, versions_dir: &Path, default_version: &str) -> String {
+    // 优先使用 jar 字段
+    if let Some(jar) = version_json["jar"].as_str() {
+        return jar.to_string();
+    }
+    
+    // 如果有 inheritsFrom，递归查找
+    if let Some(inherits_from) = version_json["inheritsFrom"].as_str() {
+        let parent_json_path = versions_dir
+            .join(inherits_from)
+            .join(format!("{}.json", inherits_from));
+        
+        if parent_json_path.exists() {
+            if let Ok(parent_str) = fs::read_to_string(&parent_json_path) {
+                if let Ok(parent_json) = serde_json::from_str::<serde_json::Value>(&parent_str) {
+                    return find_jar_version_recursive(&parent_json, versions_dir, inherits_from);
+                }
+            }
+        }
+        
+        // 如果父版本 JSON 不存在，假设 inheritsFrom 就是最终版本
+        return inherits_from.to_string();
+    }
+    
+    // 没有 jar 也没有 inheritsFrom，使用默认版本
+    default_version.to_string()
+}
 
 /// 通用库文件查找函数
 /// 递归扫描指定目录，查找匹配指定模式的JAR文件
 pub fn find_library_jar(dir: &Path, patterns: &[&str]) -> Option<PathBuf> {
-    let read_dir = std::fs::read_dir(dir).ok()?;
+    let read_dir = fs::read_dir(dir).ok()?;
 
     for entry in read_dir.flatten() {
         let path = entry.path();
@@ -104,11 +134,21 @@ pub fn build_classpath(
         }
     }
 
-    // 添加主游戏 JAR
-    let main_game_jar_path = version_dir.join(format!("{}.jar", version));
+    // 确定主游戏 JAR 的版本（递归查找继承链）
+    let jar_version = find_jar_version_recursive(version_json, version_dir.parent().unwrap(), version);
+    
+    // 主游戏 JAR 路径
+    let main_game_jar_path = if jar_version != version {
+        // 如果 JAR 版本与当前版本不同，需要从基础版本目录获取
+        let game_dir = version_dir.parent().unwrap(); // versions 目录
+        game_dir.join(&jar_version).join(format!("{}.jar", jar_version))
+    } else {
+        version_dir.join(format!("{}.jar", version))
+    };
+    
     emit(
         "log-debug",
-        format!("主游戏JAR路径: {}", main_game_jar_path.display()),
+        format!("主游戏JAR路径: {} (jar_version: {})", main_game_jar_path.display(), jar_version),
     );
 
     if !main_game_jar_path.exists() {

@@ -164,10 +164,12 @@ onMounted(() => {
             <v-select
               v-model="selectedModLoaderVersion"
               :items="modLoaderVersions"
+              item-title="version"
+              item-value="version"
               placeholder="选择加载器版本"
-              :loading="loadingModLoaderVersions"
               :disabled="!selectedModLoaderType || selectedModLoaderType === 'None'"
               hide-details
+              return-object
             >
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-tag</v-icon>

@@ -5,6 +5,7 @@ use super::http::get_http_client;
 use crate::errors::LauncherError;
 use crate::models::{DownloadJob, VersionManifest};
 use crate::services::config::load_config;
+use log::info;
 use std::fs;
 use std::path::PathBuf;
 use tauri::Window;
@@ -34,39 +35,67 @@ pub async fn process_and_download_version(
     // 使用全局 HTTP 客户端
     let client = get_http_client()?;
 
-    // 获取版本清单
-    let manifest: VersionManifest = client
-        .get(&format!("{}/mc/game/version_manifest.json", base_url))
-        .send()
-        .await?
-        .json()
-        .await?;
-
-    let version = manifest
-        .versions
-        .iter()
-        .find(|v| v.id == version_id)
-        .ok_or_else(|| LauncherError::Custom(format!("版本 {} 不存在", version_id)))?;
-
-    // 获取版本 JSON
-    let version_json_url = if is_mirror {
-        version
-            .url
-            .replace("https://launchermeta.mojang.com", base_url)
+    // 检查是否是整合包/mod加载器版本（本地版本 JSON 存在且有 inheritsFrom）
+    let local_version_json_path = version_dir.join(format!("{}.json", version_id));
+    let (actual_version_id, version_json, text) = if local_version_json_path.exists() {
+        let local_text = fs::read_to_string(&local_version_json_path)?;
+        let local_json: serde_json::Value = serde_json::from_str(&local_text)
+            .map_err(|e| LauncherError::Custom(format!("解析本地版本JSON失败: {}", e)))?;
+        
+        // 检查是否有 inheritsFrom 字段
+        if let Some(inherits_from) = local_json["inheritsFrom"].as_str() {
+            info!("版本 {} 继承自 {}", version_id, inherits_from);
+            // 递归下载基础版本
+            Box::pin(process_and_download_version(
+                inherits_from.to_string(),
+                mirror.clone(),
+                window,
+            )).await?;
+            
+            // 返回，因为基础版本已经下载完成
+            // 整合包的库文件需要单独处理
+            return download_modpack_libraries(&local_json, &libraries_base_dir, is_mirror, base_url, window).await;
+        }
+        
+        (version_id.clone(), local_json, local_text)
     } else {
-        version.url.clone()
-    };
+        // 从网络获取版本信息
+        let manifest: VersionManifest = client
+            .get(&format!("{}/mc/game/version_manifest.json", base_url))
+            .send()
+            .await?
+            .json()
+            .await?;
 
-    let text = client.get(&version_json_url).send().await?.text().await?;
-    let version_json: serde_json::Value = serde_json::from_str(&text)
-        .or_else(|_| serde_json::from_str(text.trim_start_matches('\u{feff}')))
-        .map_err(|_| LauncherError::Custom(format!("无法解析版本JSON for {}", version_id)))?;
+        let version = manifest
+            .versions
+            .iter()
+            .find(|v| v.id == version_id)
+            .ok_or_else(|| LauncherError::Custom(format!("版本 {} 不存在", version_id)))?;
+
+        // 获取版本 JSON
+        let version_json_url = if is_mirror {
+            version
+                .url
+                .replace("https://launchermeta.mojang.com", base_url)
+                .replace("https://piston-meta.mojang.com", base_url)
+        } else {
+            version.url.clone()
+        };
+
+        let text = client.get(&version_json_url).send().await?.text().await?;
+        let version_json: serde_json::Value = serde_json::from_str(&text)
+            .or_else(|_| serde_json::from_str(text.trim_start_matches('\u{feff}')))
+            .map_err(|_| LauncherError::Custom(format!("无法解析版本JSON for {}", version_id)))?;
+        
+        (version_id.clone(), version_json, text)
+    };
 
     // 收集下载任务
     let mut downloads = Vec::new();
 
     // 添加客户端 JAR
-    collect_client_jar(&version_json, &version_dir, &version_id, is_mirror, base_url, &mut downloads)?;
+    collect_client_jar(&version_json, &version_dir, &actual_version_id, is_mirror, base_url, &mut downloads)?;
 
     // 添加资源文件
     collect_assets(
@@ -86,7 +115,7 @@ pub async fn process_and_download_version(
     match download_all_files(downloads.clone(), window, downloads.len() as u64, mirror).await {
         Ok(_) => {
             // 保存版本元数据文件
-            let version_json_path = version_dir.join(format!("{}.json", version_id));
+            let version_json_path = version_dir.join(format!("{}.json", actual_version_id));
             fs::write(version_json_path, text)?;
             Ok(())
         }
@@ -101,6 +130,30 @@ pub async fn process_and_download_version(
             Err(e)
         }
     }
+}
+
+/// 下载整合包/mod加载器的库文件
+async fn download_modpack_libraries(
+    version_json: &serde_json::Value,
+    libraries_base_dir: &PathBuf,
+    is_mirror: bool,
+    base_url: &str,
+    window: &Window,
+) -> Result<(), LauncherError> {
+    let mut downloads = Vec::new();
+    
+    // 收集库文件
+    collect_libraries(version_json, libraries_base_dir, is_mirror, base_url, &mut downloads)?;
+    
+    if downloads.is_empty() {
+        return Ok(());
+    }
+    
+    info!("下载整合包库文件: {} 个", downloads.len());
+    
+    // 执行批量下载
+    let mirror = if is_mirror { Some(base_url.to_string()) } else { None };
+    download_all_files(downloads.clone(), window, downloads.len() as u64, mirror).await
 }
 
 /// 收集客户端 JAR 下载任务
@@ -158,7 +211,9 @@ async fn collect_assets(
         .ok_or_else(|| LauncherError::Custom("无法获取资源索引URL".to_string()))?;
 
     let assets_index_url = if is_mirror {
-        assets_index_url.replace("https://launchermeta.mojang.com", base_url)
+        assets_index_url
+            .replace("https://launchermeta.mojang.com", base_url)
+            .replace("https://piston-meta.mojang.com", base_url)
     } else {
         assets_index_url.to_string()
     };
@@ -236,6 +291,11 @@ fn collect_libraries(
             if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url) {
                 downloads.push(job);
             }
+        } else {
+            // 没有 downloads.artifact，尝试从 name 构建下载任务 (Forge 库常见情况)
+            if let Some(job) = create_library_job_from_name(lib, libraries_base_dir, is_mirror, base_url) {
+                downloads.push(job);
+            }
         }
 
         // 处理 natives 库
@@ -243,6 +303,80 @@ fn collect_libraries(
     }
 
     Ok(())
+}
+
+/// 将 Maven 坐标转换为文件路径
+fn maven_name_to_path(name: &str) -> Option<String> {
+    let parts: Vec<&str> = name.split(':').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    
+    let group = parts[0].replace('.', "/");
+    let artifact = parts[1];
+    let version = parts[2];
+    let classifier = if parts.len() > 3 { Some(parts[3]) } else { None };
+    
+    let filename = if let Some(c) = classifier {
+        format!("{}-{}-{}.jar", artifact, version, c)
+    } else {
+        format!("{}-{}.jar", artifact, version)
+    };
+    
+    Some(format!("{}/{}/{}/{}", group, artifact, version, filename))
+}
+
+/// 从库名称创建下载任务 (用于没有 downloads.artifact 的 Forge 库)
+fn create_library_job_from_name(
+    lib: &serde_json::Value,
+    libraries_base_dir: &PathBuf,
+    is_mirror: bool,
+    base_url: &str,
+) -> Option<DownloadJob> {
+    let name = lib["name"].as_str()?;
+    let maven_path = maven_name_to_path(name)?;
+    
+    let target_path = libraries_base_dir.join(&maven_path);
+    
+    // 如果文件已存在，跳过
+    if target_path.exists() {
+        return None;
+    }
+    
+    // 获取库的 URL 基础路径
+    let lib_url = lib.get("url").and_then(|u| u.as_str());
+    
+    // 构建下载 URL，优先使用 BMCLAPI 镜像
+    let download_url = if is_mirror {
+        format!("{}/maven/{}", base_url, maven_path)
+    } else if let Some(url) = lib_url {
+        let base = if url.ends_with('/') { url.to_string() } else { format!("{}/", url) };
+        format!("{}{}", base, maven_path)
+    } else {
+        // 默认使用 Maven Central
+        format!("https://repo1.maven.org/maven2/{}", maven_path)
+    };
+    
+    // 构建 fallback URL
+    let fallback_url = if is_mirror {
+        if let Some(url) = lib_url {
+            let base = if url.ends_with('/') { url.to_string() } else { format!("{}/", url) };
+            Some(format!("{}{}", base, maven_path))
+        } else {
+            Some(format!("https://repo1.maven.org/maven2/{}", maven_path))
+        }
+    } else {
+        // 非镜像模式，使用 BMCLAPI 作为 fallback
+        Some(format!("https://bmclapi2.bangbang93.com/maven/{}", maven_path))
+    };
+    
+    Some(DownloadJob {
+        url: download_url,
+        fallback_url,
+        path: target_path,
+        size: 0,
+        hash: String::new(),
+    })
 }
 
 /// 检查是否应该下载库
@@ -292,10 +426,10 @@ fn create_library_job(
     let hash = artifact["sha1"].as_str().unwrap_or("").to_string();
 
     let download_url = if is_mirror {
-        url.replace(
-            "https://libraries.minecraft.net",
-            &format!("{}/maven", base_url),
-        )
+        // 替换各种库源为镜像
+        url.replace("https://libraries.minecraft.net", &format!("{}/libraries", base_url))
+           .replace("https://maven.minecraftforge.net", &format!("{}/maven", base_url))
+           .replace("https://maven.neoforged.net/releases", &format!("{}/maven", base_url))
     } else {
         url.to_string()
     };
@@ -404,7 +538,7 @@ fn create_natives_job_from_name(
 
     let natives_url = format!("https://libraries.minecraft.net/{}", natives_path);
     let download_url = if is_mirror {
-        format!("{}/maven/{}", base_url, natives_path)
+        format!("{}/libraries/{}", base_url, natives_path)
     } else {
         natives_url.clone()
     };

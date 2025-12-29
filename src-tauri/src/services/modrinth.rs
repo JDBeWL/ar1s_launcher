@@ -199,11 +199,21 @@ impl ModrinthService {
             title: project["title"].as_str().ok_or_else(|| LauncherError::Custom("缺少title字段".to_string()))?.to_string(),
             description: project["description"].as_str().unwrap_or("").to_string(),
             icon_url: project["icon_url"].as_str().map(|s| s.to_string()),
-            author: project["author"].as_str().ok_or_else(|| LauncherError::Custom("缺少author字段".to_string()))?.to_string(),
+            // author 字段在 project API 中不存在，使用 team 或默认值
+            author: project["author"].as_str()
+                .or_else(|| project["team"].as_str())
+                .unwrap_or("Unknown")
+                .to_string(),
             downloads: project["downloads"].as_u64().unwrap_or(0),
-            date_created: project["date_created"].as_str().ok_or_else(|| LauncherError::Custom("缺少date_created字段".to_string()))?.to_string(),
-            date_modified: project["date_modified"].as_str().ok_or_else(|| LauncherError::Custom("缺少date_modified字段".to_string()))?.to_string(),
-            latest_version: project["latest_version"].as_str().ok_or_else(|| LauncherError::Custom("缺少latest_version字段".to_string()))?.to_string(),
+            date_created: project["date_created"].as_str().unwrap_or("").to_string(),
+            date_modified: project["date_modified"].as_str().unwrap_or("").to_string(),
+            // versions 是版本 ID 数组，latest_version 可能不存在
+            latest_version: project["versions"]
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             game_versions: project["game_versions"]
                 .as_array()
                 .map(|arr| {

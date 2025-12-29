@@ -32,7 +32,8 @@ const emit = defineEmits(['update:modelValue', 'cancel'])
 
 const progressPercentage = computed(() => {
   if (props.total === 0) return 0
-  return (props.progress / props.total) * 100
+  const percentage = (props.progress / props.total) * 100
+  return Math.min(percentage, 100) // 限制最大值为 100%
 })
 
 const formattedSpeed = computed(() => {

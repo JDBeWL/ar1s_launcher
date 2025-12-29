@@ -183,11 +183,42 @@ pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
                     let json_path = path.join(format!("{}.json", name));
 
                     if json_path.exists() {
-                        let version_id = fs::read_to_string(&json_path)
-                            .ok()
-                            .and_then(|c| serde_json::from_str::<Value>(&c).ok())
+                        let json_content = fs::read_to_string(&json_path).ok();
+                        let json_value = json_content
+                            .as_ref()
+                            .and_then(|c| serde_json::from_str::<Value>(c).ok());
+
+                        let version_id = json_value
+                            .as_ref()
                             .and_then(|v| v["id"].as_str().map(String::from))
                             .unwrap_or_else(|| name.clone());
+
+                        // 解析加载器类型和游戏版本
+                        let (loader_type, game_version) = json_value
+                            .as_ref()
+                            .map(|v| {
+                                let inherits = v["inheritsFrom"].as_str();
+                                let id = v["id"].as_str().unwrap_or("");
+                                
+                                if let Some(base_version) = inherits {
+                                    // 有继承关系，说明是模组加载器版本
+                                    let loader = if id.contains("forge") || id.contains("Forge") {
+                                        "Forge"
+                                    } else if id.contains("fabric") || id.contains("Fabric") {
+                                        "Fabric"
+                                    } else if id.contains("quilt") || id.contains("Quilt") {
+                                        "Quilt"
+                                    } else if id.contains("neoforge") || id.contains("NeoForge") {
+                                        "NeoForge"
+                                    } else {
+                                        "None"
+                                    };
+                                    (Some(loader.to_string()), Some(base_version.to_string()))
+                                } else {
+                                    (Some("None".to_string()), Some(version_id.clone()))
+                                }
+                            })
+                            .unwrap_or((None, None));
 
                         let created = entry.metadata()
                             .and_then(|m| m.created())
@@ -201,6 +232,9 @@ pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
                             version: version_id,
                             path: path.to_string_lossy().to_string(),
                             created_time: created,
+                            loader_type,
+                            game_version,
+                            last_played: None, // TODO: 从配置文件读取
                         });
                     }
                 }

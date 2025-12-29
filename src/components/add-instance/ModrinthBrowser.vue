@@ -41,6 +41,8 @@ function selectModpack(modpack: ModrinthModpack) {
 
 onMounted(async () => {
   await fetchGameVersions();
+  // 初始加载整合包列表
+  await searchModpacks();
 });
 </script>
 

@@ -3,6 +3,41 @@
 use crate::models::{GameConfig, LaunchOptions};
 use std::path::Path;
 
+/// 从版本 JSON 中获取基础 Minecraft 版本名
+/// 用于 Forge 的 ignoreList 参数（需要原版 MC jar 文件名）
+fn get_base_minecraft_version(version_json: &serde_json::Value, fallback: &str) -> String {
+    // 1. 优先使用 jar 字段（直接指定了使用哪个 jar）
+    if let Some(jar) = version_json.get("jar").and_then(|j| j.as_str()) {
+        return jar.to_string();
+    }
+    
+    // 2. 从 inheritsFrom 链中查找基础 MC 版本
+    // Forge 版本格式通常是 "1.20.2-forge-48.0.48"，我们需要提取 "1.20.2"
+    if let Some(inherits) = version_json.get("inheritsFrom").and_then(|i| i.as_str()) {
+        // 如果 inheritsFrom 包含 "forge"，提取前面的 MC 版本
+        if inherits.contains("-forge") || inherits.contains("-neoforge") {
+            if let Some(mc_ver) = inherits.split('-').next() {
+                return mc_ver.to_string();
+            }
+        }
+        // 如果 inheritsFrom 看起来像纯 MC 版本号（如 "1.20.2"）
+        if inherits.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) 
+           && !inherits.contains("forge") {
+            return inherits.to_string();
+        }
+    }
+    
+    // 3. 从当前版本 ID 尝试提取
+    if fallback.contains("-forge") {
+        if let Some(mc_ver) = fallback.split("-forge").next() {
+            return mc_ver.to_string();
+        }
+    }
+    
+    // 4. 回退到传入的版本名
+    fallback.to_string()
+}
+
 /// 构建 JVM 和游戏参数
 pub fn build_arguments(
     version_json: &serde_json::Value,
@@ -17,6 +52,13 @@ pub fn build_arguments(
     classpath: &[std::path::PathBuf],
     emit: &impl Fn(&str, String),
 ) -> (Vec<String>, Vec<String>) {
+    let libraries_dir = game_dir.join("libraries");
+    let classpath_separator = if cfg!(windows) { ";" } else { ":" };
+    
+    // 获取原版 Minecraft 版本名（用于 Forge 的 ignoreList）
+    // 优先使用 jar 字段，其次从 inheritsFrom 链中查找基础 MC 版本
+    let base_mc_version = get_base_minecraft_version(version_json, &options.version);
+    
     let replace_placeholders = |arg: &str| -> String {
         let actual_game_dir = if config.version_isolation {
             version_dir.to_string_lossy().to_string()
@@ -25,7 +67,7 @@ pub fn build_arguments(
         };
 
         arg.replace("${auth_player_name}", &options.username)
-            .replace("${version_name}", &options.version)
+            .replace("${version_name}", &base_mc_version)
             .replace("${game_directory}", &actual_game_dir)
             .replace("${assets_root}", &assets_dir.to_string_lossy())
             .replace("${assets_index_name}", assets_index)
@@ -37,6 +79,9 @@ pub fn build_arguments(
                 version_json["type"].as_str().unwrap_or("release"),
             )
             .replace("${user_properties}", "{}")
+            // 新版 Forge (1.13+) 需要的占位符
+            .replace("${library_directory}", &libraries_dir.to_string_lossy())
+            .replace("${classpath_separator}", classpath_separator)
     };
 
     let mut jvm_args = vec![];

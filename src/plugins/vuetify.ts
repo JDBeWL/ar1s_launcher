@@ -128,6 +128,25 @@ const vuetify = createVuetify({
       rounded: 'xl',
       variant: 'outlined',
       density: 'comfortable',
+      menuProps: {
+        contentClass: 'v-select-menu-content',
+      },
+    },
+    VAutocomplete: {
+      rounded: 'xl',
+      variant: 'outlined',
+      density: 'comfortable',
+      menuProps: {
+        contentClass: 'v-select-menu-content',
+      },
+    },
+    VCombobox: {
+      rounded: 'xl',
+      variant: 'outlined',
+      density: 'comfortable',
+      menuProps: {
+        contentClass: 'v-select-menu-content',
+      },
     },
     VChip: {
       rounded: 'xl',
@@ -138,8 +157,11 @@ const vuetify = createVuetify({
     VDialog: {
       rounded: 'xl',
     },
+    VMenu: {
+      rounded: 'lg',
+    },
     VList: {
-      rounded: 'xl',
+      rounded: 'lg',
     },
     VListItem: {
       rounded: 'lg',

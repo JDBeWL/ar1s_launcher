@@ -5,3 +5,20 @@
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
 }
+
+/* 修复 v-select 下拉菜单圆角问题 */
+.v-select-menu-content {
+  border-radius: 12px !important;
+  overflow: hidden;
+}
+
+.v-select-menu-content .v-list {
+  padding: 0 !important;
+  border-radius: 0 !important;
+  background: rgb(var(--v-theme-surface-container)) !important;
+}
+
+.v-select-menu-content .v-list-item {
+  border-radius: 0 !important;
+  margin: 0 !important;
+}

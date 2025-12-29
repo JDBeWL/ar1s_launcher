@@ -132,12 +132,16 @@ pub struct InstanceConfig {
 
 // 实例信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct InstanceInfo {
     pub id: String,
     pub name: String,
     pub version: String,
     pub path: String,
     pub created_time: Option<String>,
+    pub loader_type: Option<String>,
+    pub game_version: Option<String>,
+    pub last_played: Option<i64>,
 }
 
 // Forge版本

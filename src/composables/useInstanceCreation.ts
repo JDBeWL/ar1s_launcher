@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useNotificationStore } from '../stores/notificationStore';
-import type { MinecraftVersion, VersionManifest, CreateInstancePayload, InstallProgressPayload } from '../types/events';
+import type { MinecraftVersion, VersionManifest, CreateInstancePayload, InstallProgressPayload, ForgeVersion } from '../types/events';
 
 export function useInstanceCreation() {
     const versions = ref<MinecraftVersion[]>([]);
@@ -22,9 +22,9 @@ export function useInstanceCreation() {
 
     const modLoaderTypes = ["None", "Forge", "Fabric", "Quilt"];
     const selectedModLoaderType = ref("None");
-    const modLoaderVersions = ref<string[]>([]);
+    const modLoaderVersions = ref<ForgeVersion[]>([]);
     const loadingModLoaderVersions = ref(false);
-    const selectedModLoaderVersion = ref<string | null>(null);
+    const selectedModLoaderVersion = ref<ForgeVersion | null>(null);
 
     const filteredVersions = computed(() => {
         let filtered = versions.value.filter((version) => {
@@ -58,6 +58,9 @@ export function useInstanceCreation() {
 
     const defaultInstanceName = computed(() => {
         if (selectedVersion.value) {
+            if (selectedModLoaderType.value && selectedModLoaderType.value !== 'None') {
+                return `${selectedVersion.value.id}-${selectedModLoaderType.value}`;
+            }
             return selectedVersion.value.id;
         }
         return "";
@@ -93,7 +96,7 @@ export function useInstanceCreation() {
 
         try {
             if (selectedModLoaderType.value === "Forge") {
-                const result = await invoke<string[]>("get_forge_versions", {
+                const result = await invoke<ForgeVersion[]>("get_forge_versions", {
                     minecraftVersion: selectedVersion.value.id,
                 });
                 modLoaderVersions.value = result;

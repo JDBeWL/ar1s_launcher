@@ -41,13 +41,12 @@ export interface GameInstance {
   name: string;
   version: string;
   path: string;
-  created_time?: string;
-  loader_type?: string;
-  game_version?: string;
-  last_played?: number;
+  createdTime?: string;
+  loaderType?: string;
+  gameVersion?: string;
+  lastPlayed?: number;
   modLoader?: string;
   modLoaderVersion?: string;
-  lastPlayed?: string;
   icon?: string;
 }
 
@@ -55,7 +54,7 @@ export interface GameInstance {
 export interface CreateInstancePayload {
   newInstanceName: string;
   baseVersionId: string;
-  forgeVersion?: string;
+  forgeVersion?: ForgeVersion;
   fabricVersion?: string;
   quiltVersion?: string;
 }
@@ -65,4 +64,11 @@ export interface InstallProgressPayload {
   progress: number;
   message: string;
   indeterminate: boolean;
+}
+
+// Forge 版本信息
+export interface ForgeVersion {
+  version: string;
+  mcversion: string;
+  build: number;
 }

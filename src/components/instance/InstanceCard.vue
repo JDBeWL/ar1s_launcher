@@ -35,14 +35,14 @@ function getLoaderIcon(loaderType?: string) {
       <!-- 头部：图标和名称 -->
       <div class="d-flex align-center mb-3">
         <v-avatar size="48" color="primary-container" class="mr-3">
-          <v-icon size="24" color="on-primary-container">{{ getLoaderIcon(instance.loader_type) }}</v-icon>
+          <v-icon size="24" color="on-primary-container">{{ getLoaderIcon(instance.loaderType) }}</v-icon>
         </v-avatar>
         <div class="flex-grow-1 overflow-hidden">
           <div class="text-subtitle-1 font-weight-bold text-truncate">
             {{ instance.name }}
           </div>
           <div class="text-body-2 text-on-surface-variant">
-            {{ instance.loader_type && instance.loader_type !== 'None' ? instance.loader_type + ' ' : '' }}{{ instance.game_version || instance.version }}
+            {{ instance.loaderType && instance.loaderType !== 'None' ? instance.loaderType + ' ' : '' }}{{ instance.gameVersion || instance.version }}
           </div>
         </div>
         <v-menu>
@@ -78,7 +78,7 @@ function getLoaderIcon(loaderType?: string) {
       <!-- 最后运行时间 -->
       <div class="d-flex align-center text-caption text-on-surface-variant mb-4">
         <v-icon size="14" class="mr-1">mdi-clock-outline</v-icon>
-        {{ formatLastPlayed(instance.last_played) }}
+        {{ formatLastPlayed(instance.lastPlayed) }}
       </div>
 
       <!-- 启动按钮 -->
