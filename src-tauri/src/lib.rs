@@ -62,7 +62,11 @@ pub fn run() {
             controllers::instance_controller::rename_instance,
             controllers::instance_controller::open_instance_folder,
             controllers::instance_controller::launch_instance,
-            controllers::forge_controller::get_forge_versions,
+            controllers::loader_controller::get_forge_versions,
+            controllers::loader_controller::get_fabric_versions,
+            controllers::loader_controller::get_quilt_versions,
+            controllers::loader_controller::get_neoforge_versions,
+            controllers::loader_controller::get_available_loaders,
             controllers::modpack_controller::search_modrinth_modpacks,
             controllers::modpack_controller::get_modrinth_modpack_versions,
             controllers::modpack_controller::install_modrinth_modpack

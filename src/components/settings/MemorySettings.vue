@@ -94,8 +94,8 @@ onMounted(async () => {
     <!-- 标题 -->
     <div class="group-header mb-5">
       <div class="d-flex align-center">
-        <v-avatar size="48" color="tertiary-container" class="mr-3">
-          <v-icon size="24" color="on-tertiary-container">mdi-memory</v-icon>
+        <v-avatar size="48" color="primary-container" class="mr-3">
+          <v-icon size="24" color="on-primary-container">mdi-memory</v-icon>
         </v-avatar>
         <div>
           <h2 class="text-h6 font-weight-bold">内存管理</h2>

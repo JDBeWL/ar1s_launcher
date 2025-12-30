@@ -1,9 +1,18 @@
-import { ref, computed, onUnmounted } from 'vue';
+import { ref, computed, onUnmounted, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useNotificationStore } from '../stores/notificationStore';
-import type { MinecraftVersion, VersionManifest, CreateInstancePayload, InstallProgressPayload, ForgeVersion } from '../types/events';
+import type { 
+    MinecraftVersion, 
+    VersionManifest, 
+    InstallProgressPayload, 
+    ForgeVersion,
+    LoaderVersionInfo,
+    AvailableLoaders,
+    ModLoaderType,
+    LoaderPayload
+} from '../types/events';
 
 export function useInstanceCreation() {
     const versions = ref<MinecraftVersion[]>([]);
@@ -20,11 +29,25 @@ export function useInstanceCreation() {
     const progressIndeterminate = ref(false);
     const progressText = ref("");
 
-    const modLoaderTypes = ["None", "Forge", "Fabric", "Quilt"];
-    const selectedModLoaderType = ref("None");
-    const modLoaderVersions = ref<ForgeVersion[]>([]);
+    // 加载器相关
+    const availableLoaders = ref<AvailableLoaders | null>(null);
+    const loadingAvailableLoaders = ref(false);
+    const selectedModLoaderType = ref<ModLoaderType>("None");
+    const modLoaderVersions = ref<(ForgeVersion | LoaderVersionInfo)[]>([]);
     const loadingModLoaderVersions = ref(false);
-    const selectedModLoaderVersion = ref<ForgeVersion | null>(null);
+    const selectedModLoaderVersion = ref<ForgeVersion | LoaderVersionInfo | null>(null);
+
+    // 动态计算可用的加载器类型
+    const modLoaderTypes = computed<{ title: string; value: ModLoaderType; disabled: boolean }[]>(() => {
+        const loaders = availableLoaders.value;
+        return [
+            { title: '无', value: 'None' as ModLoaderType, disabled: false },
+            { title: 'Forge', value: 'Forge' as ModLoaderType, disabled: !loaders?.forge },
+            { title: 'Fabric', value: 'Fabric' as ModLoaderType, disabled: !loaders?.fabric },
+            { title: 'Quilt', value: 'Quilt' as ModLoaderType, disabled: !loaders?.quilt },
+            { title: 'NeoForge', value: 'NeoForge' as ModLoaderType, disabled: !loaders?.neoforge },
+        ];
+    });
 
     const filteredVersions = computed(() => {
         let filtered = versions.value.filter((version) => {
@@ -47,10 +70,6 @@ export function useInstanceCreation() {
                 (a, b) =>
                     new Date(a.releaseTime).getTime() - new Date(b.releaseTime).getTime()
             );
-        } else if (sortOrder.value === "az") {
-            filtered.sort((a, b) => a.id.localeCompare(b.id));
-        } else if (sortOrder.value === "za") {
-            filtered.sort((a, b) => b.id.localeCompare(a.id));
         }
 
         return filtered;
@@ -81,6 +100,34 @@ export function useInstanceCreation() {
         }
     }
 
+    async function fetchAvailableLoaders() {
+        if (!selectedVersion.value) {
+            availableLoaders.value = null;
+            return;
+        }
+
+        loadingAvailableLoaders.value = true;
+        try {
+            const loaders = await invoke<AvailableLoaders>("get_available_loaders", {
+                minecraftVersion: selectedVersion.value.id,
+            });
+            availableLoaders.value = loaders;
+            
+            // 如果当前选择的加载器不可用，重置为 None
+            if (selectedModLoaderType.value !== 'None') {
+                const loaderKey = selectedModLoaderType.value.toLowerCase() as keyof AvailableLoaders;
+                if (!loaders[loaderKey]) {
+                    selectedModLoaderType.value = 'None';
+                }
+            }
+        } catch (error) {
+            console.error("Failed to fetch available loaders:", error);
+            availableLoaders.value = null;
+        } finally {
+            loadingAvailableLoaders.value = false;
+        }
+    }
+
     async function fetchModLoaderVersions() {
         if (
             !selectedVersion.value ||
@@ -88,6 +135,7 @@ export function useInstanceCreation() {
             selectedModLoaderType.value === "None"
         ) {
             modLoaderVersions.value = [];
+            selectedModLoaderVersion.value = null;
             return;
         }
 
@@ -95,17 +143,36 @@ export function useInstanceCreation() {
         selectedModLoaderVersion.value = null;
 
         try {
-            if (selectedModLoaderType.value === "Forge") {
-                const result = await invoke<ForgeVersion[]>("get_forge_versions", {
-                    minecraftVersion: selectedVersion.value.id,
-                });
-                modLoaderVersions.value = result;
-            } else {
-                modLoaderVersions.value = [];
+            const mcVersion = selectedVersion.value.id;
+            let result: (ForgeVersion | LoaderVersionInfo)[] = [];
+
+            switch (selectedModLoaderType.value) {
+                case "Forge":
+                    result = await invoke<ForgeVersion[]>("get_forge_versions", {
+                        minecraftVersion: mcVersion,
+                    });
+                    break;
+                case "Fabric":
+                    result = await invoke<LoaderVersionInfo[]>("get_fabric_versions", {
+                        minecraftVersion: mcVersion,
+                    });
+                    break;
+                case "Quilt":
+                    result = await invoke<LoaderVersionInfo[]>("get_quilt_versions", {
+                        minecraftVersion: mcVersion,
+                    });
+                    break;
+                case "NeoForge":
+                    result = await invoke<LoaderVersionInfo[]>("get_neoforge_versions", {
+                        minecraftVersion: mcVersion,
+                    });
+                    break;
             }
 
-            if (modLoaderVersions.value.length > 0) {
-                selectedModLoaderVersion.value = modLoaderVersions.value[0];
+            modLoaderVersions.value = result;
+
+            if (result.length > 0) {
+                selectedModLoaderVersion.value = result[0];
             }
         } catch (error) {
             console.error(
@@ -118,6 +185,19 @@ export function useInstanceCreation() {
         }
     }
 
+    // 当选择的 MC 版本变化时，获取可用加载器
+    watch(selectedVersion, () => {
+        selectedModLoaderType.value = 'None';
+        modLoaderVersions.value = [];
+        selectedModLoaderVersion.value = null;
+        fetchAvailableLoaders();
+    });
+
+    // 当选择的加载器类型变化时，获取加载器版本
+    watch(selectedModLoaderType, () => {
+        fetchModLoaderVersions();
+    });
+
     let unlistenProgress: UnlistenFn | null = null;
 
     function cleanup() {
@@ -127,7 +207,6 @@ export function useInstanceCreation() {
         }
     }
 
-    // 组件卸载时自动清理
     onUnmounted(cleanup);
 
     async function createInstance() {
@@ -161,16 +240,50 @@ export function useInstanceCreation() {
                 }
             );
 
-            const payload: CreateInstancePayload = {
+            const payload: {
+                newInstanceName: string;
+                baseVersionId: string;
+                loader?: LoaderPayload;
+            } = {
                 newInstanceName: finalInstanceName,
                 baseVersionId: selectedVersion.value.id,
             };
 
-            if (
-                selectedModLoaderType.value === "Forge" &&
-                selectedModLoaderVersion.value
-            ) {
-                payload.forgeVersion = selectedModLoaderVersion.value;
+            // 根据加载器类型设置对应的版本
+            if (selectedModLoaderVersion.value && selectedModLoaderType.value !== 'None') {
+                const mcVersion = selectedVersion.value.id;
+                const loaderVersion = (selectedModLoaderVersion.value as any).version;
+                
+                switch (selectedModLoaderType.value) {
+                    case 'Forge':
+                        payload.loader = {
+                            type: 'forge',
+                            mc_version: mcVersion,
+                            loader_version: loaderVersion,
+                        };
+                        break;
+                    case 'Fabric':
+                        payload.loader = {
+                            type: 'fabric',
+                            mc_version: mcVersion,
+                            loader_version: loaderVersion,
+                        };
+                        break;
+                    case 'Quilt':
+                        payload.loader = {
+                            type: 'quilt',
+                            mc_version: mcVersion,
+                            loader_version: loaderVersion,
+                        };
+                        break;
+                    case 'NeoForge':
+                        payload.loader = {
+                            type: 'neoforge',
+                            mc_version: mcVersion,
+                            loader_version: loaderVersion,
+                        };
+                        break;
+                }
             }
 
             await invoke("create_instance", { ...payload });
@@ -210,12 +323,15 @@ export function useInstanceCreation() {
         progressValue,
         progressIndeterminate,
         progressText,
+        availableLoaders,
+        loadingAvailableLoaders,
         modLoaderTypes,
         selectedModLoaderType,
         modLoaderVersions,
         loadingModLoaderVersions,
         selectedModLoaderVersion,
         fetchVersions,
+        fetchAvailableLoaders,
         fetchModLoaderVersions,
         createInstance
     };

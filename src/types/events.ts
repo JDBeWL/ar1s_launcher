@@ -54,10 +54,15 @@ export interface GameInstance {
 export interface CreateInstancePayload {
   newInstanceName: string;
   baseVersionId: string;
-  forgeVersion?: ForgeVersion;
-  fabricVersion?: string;
-  quiltVersion?: string;
+  loader?: LoaderPayload;
 }
+
+// 加载器参数（匹配后端 LoaderType）
+export type LoaderPayload = 
+  | { type: 'forge'; mc_version: string; loader_version: string }
+  | { type: 'fabric'; mc_version: string; loader_version: string }
+  | { type: 'quilt'; mc_version: string; loader_version: string }
+  | { type: 'neoforge'; mc_version: string; loader_version: string };
 
 // 安装进度事件
 export interface InstallProgressPayload {
@@ -72,3 +77,20 @@ export interface ForgeVersion {
   mcversion: string;
   build: number;
 }
+
+// 通用加载器版本信息
+export interface LoaderVersionInfo {
+  version: string;
+  stable?: boolean;
+}
+
+// 可用加载器信息
+export interface AvailableLoaders {
+  forge: boolean;
+  fabric: boolean;
+  quilt: boolean;
+  neoforge: boolean;
+}
+
+// 加载器类型
+export type ModLoaderType = 'None' | 'Forge' | 'Fabric' | 'Quilt' | 'NeoForge';

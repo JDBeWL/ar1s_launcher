@@ -2,12 +2,12 @@
   <v-container fluid class="add-instance-container pa-4">
     <!-- 页面标题 -->
     <div class="d-flex align-center mb-4">
-      <v-avatar size="40" class="mr-3 avatar-outlined">
-        <v-icon size="20">mdi-plus-circle</v-icon>
+      <v-avatar size="48" color="primary-container" class="mr-3">
+        <v-icon size="24" color="on-primary-container">mdi-plus-circle</v-icon>
       </v-avatar>
       <div>
         <h1 class="text-h6 font-weight-bold">添加新实例</h1>
-        <p class="text-body-2 text-medium-emphasis mb-0">创建自定义游戏实例或从网络安装整合包</p>
+        <p class="text-body-2 text-on-surface-variant mb-0">创建自定义游戏实例或从网络安装整合包</p>
       </div>
     </div>
 
@@ -101,10 +101,6 @@ const selectedPlatform = ref("modrinth");
 .add-instance-container {
   max-width: 900px;
   margin: 0 auto;
-}
-
-.avatar-outlined {
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
 .platform-btn {

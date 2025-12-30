@@ -173,8 +173,8 @@ onMounted(async () => {
               to="/download"
             >
               <v-card-text class="pa-4 text-center">
-                <v-avatar size="48" color="secondary-container" class="mb-3">
-                  <v-icon size="24" color="on-secondary-container">mdi-download</v-icon>
+                <v-avatar size="48" color="primary-container" class="mb-3">
+                  <v-icon size="24" color="on-primary-container">mdi-download</v-icon>
                 </v-avatar>
                 <div class="text-body-2 font-weight-medium">下载版本</div>
                 <div class="text-caption text-on-surface-variant d-none d-sm-block">获取新的游戏版本</div>
@@ -188,8 +188,8 @@ onMounted(async () => {
               to="/add-instance"
             >
               <v-card-text class="pa-4 text-center">
-                <v-avatar size="48" color="tertiary-container" class="mb-3">
-                  <v-icon size="24" color="on-tertiary-container">mdi-plus-circle</v-icon>
+                <v-avatar size="48" color="primary-container" class="mb-3">
+                  <v-icon size="24" color="on-primary-container">mdi-plus-circle</v-icon>
                 </v-avatar>
                 <div class="text-body-2 font-weight-medium">添加实例</div>
                 <div class="text-caption text-on-surface-variant d-none d-sm-block">创建自定义游戏实例</div>
@@ -220,8 +220,8 @@ onMounted(async () => {
         <v-card color="surface-container" class="mb-4">
           <v-card-text class="pa-4">
             <div class="d-flex align-center mb-4">
-              <v-avatar size="40" color="secondary-container" class="mr-3">
-                <v-icon size="20" color="on-secondary-container">mdi-cog</v-icon>
+              <v-avatar size="40" color="primary-container" class="mr-3">
+                <v-icon size="20" color="on-primary-container">mdi-cog</v-icon>
               </v-avatar>
               <div class="text-body-1 font-weight-medium">游戏设置</div>
             </div>
@@ -258,8 +258,8 @@ onMounted(async () => {
         <v-card color="surface-container">
           <v-card-text class="pa-4">
             <div class="d-flex align-center mb-4">
-              <v-avatar size="40" color="tertiary-container" class="mr-3">
-                <v-icon size="20" color="on-tertiary-container">mdi-information</v-icon>
+              <v-avatar size="40" color="primary-container" class="mr-3">
+                <v-icon size="20" color="on-primary-container">mdi-information</v-icon>
               </v-avatar>
               <div class="text-body-1 font-weight-medium">状态信息</div>
             </div>

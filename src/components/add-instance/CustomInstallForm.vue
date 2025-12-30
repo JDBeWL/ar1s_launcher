@@ -16,15 +16,26 @@ const {
   progressValue,
   progressIndeterminate,
   progressText,
+  loadingAvailableLoaders,
   modLoaderTypes,
   selectedModLoaderType,
   modLoaderVersions,
   loadingModLoaderVersions,
   selectedModLoaderVersion,
   fetchVersions,
-  fetchModLoaderVersions,
   createInstance
 } = useInstanceCreation();
+
+function getLoaderVersionText(item: any): string {
+  if (item.version) {
+    if (item.mcversion) {
+      return item.version;
+    }
+    const stableText = item.stable === true ? ' (稳定)' : item.stable === false ? ' (测试)' : '';
+    return item.version + stableText;
+  }
+  return String(item);
+}
 
 onMounted(() => {
   fetchVersions();
@@ -33,7 +44,6 @@ onMounted(() => {
 
 <template>
   <div>
-    <!-- 实例名称 -->
     <v-card color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-3">
@@ -48,7 +58,6 @@ onMounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 版本选择 -->
     <v-card color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -56,7 +65,6 @@ onMounted(() => {
           <span class="text-body-1 font-weight-medium">游戏版本</span>
         </div>
 
-        <!-- 搜索和筛选 -->
         <v-row dense class="mb-3">
           <v-col cols="12" sm="5">
             <v-text-field
@@ -99,7 +107,6 @@ onMounted(() => {
           </v-col>
         </v-row>
 
-        <!-- 版本选择器 -->
         <v-select
           v-model="selectedVersion"
           :items="filteredVersions"
@@ -108,7 +115,6 @@ onMounted(() => {
           placeholder="选择游戏版本"
           hide-details
           return-object
-          @update:model-value="fetchModLoaderVersions"
         >
           <template #prepend-inner>
             <v-icon size="20" color="on-surface-variant">mdi-gamepad-variant</v-icon>
@@ -122,7 +128,6 @@ onMounted(() => {
           </template>
         </v-select>
 
-        <!-- 版本加载进度条 -->
         <div v-if="loadingVersions" class="d-flex align-center mt-3">
           <v-progress-linear
             indeterminate
@@ -136,13 +141,19 @@ onMounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- Mod 加载器 -->
     <v-card color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-puzzle</v-icon>
           <span class="text-body-1 font-weight-medium">Mod 加载器</span>
           <v-chip size="x-small" class="ml-2" color="secondary" variant="tonal">可选</v-chip>
+          <v-progress-circular
+            v-if="loadingAvailableLoaders"
+            indeterminate
+            size="16"
+            width="2"
+            class="ml-2"
+          />
         </div>
 
         <v-row dense>
@@ -150,13 +161,22 @@ onMounted(() => {
             <v-select
               v-model="selectedModLoaderType"
               :items="modLoaderTypes"
+              item-title="title"
+              item-value="value"
+              :item-props="(item: any) => ({ disabled: item.disabled })"
               placeholder="选择加载器类型"
-              :disabled="!selectedVersion"
+              :disabled="!selectedVersion || loadingAvailableLoaders"
               hide-details
-              @update:model-value="fetchModLoaderVersions"
             >
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-cog</v-icon>
+              </template>
+              <template #item="{ item, props }">
+                <v-list-item v-bind="props">
+                  <template #append v-if="item.raw.disabled">
+                    <v-chip size="x-small" color="warning" variant="tonal">不支持</v-chip>
+                  </template>
+                </v-list-item>
               </template>
             </v-select>
           </v-col>
@@ -164,10 +184,11 @@ onMounted(() => {
             <v-select
               v-model="selectedModLoaderVersion"
               :items="modLoaderVersions"
-              item-title="version"
+              :item-title="getLoaderVersionText"
               item-value="version"
               placeholder="选择加载器版本"
               :disabled="!selectedModLoaderType || selectedModLoaderType === 'None'"
+              :loading="loadingModLoaderVersions"
               hide-details
               return-object
             >
@@ -177,7 +198,7 @@ onMounted(() => {
               <template #no-data>
                 <v-list-item>
                   <v-list-item-title class="text-on-surface-variant">
-                    {{ selectedModLoaderType === 'None' ? '无需选择' : '没有可用版本' }}
+                    {{ selectedModLoaderType === 'None' ? '无需选择' : loadingModLoaderVersions ? '加载中...' : '没有可用版本' }}
                   </v-list-item-title>
                 </v-list-item>
               </template>
@@ -187,7 +208,6 @@ onMounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 进度条 -->
     <v-card v-if="showProgress" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-2">
@@ -204,15 +224,14 @@ onMounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 开始安装按钮 -->
     <div class="d-flex justify-end">
       <v-btn
         variant="flat"
         color="primary"
         size="large"
-        @click="createInstance"
         :disabled="!selectedVersion || installing"
         :loading="installing"
+        @click="createInstance"
       >
         <v-icon start size="22">mdi-download</v-icon>
         开始安装

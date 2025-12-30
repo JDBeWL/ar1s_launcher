@@ -1,13 +1,11 @@
 use crate::errors::LauncherError;
 use crate::models::modpack::*;
-use crate::services::{config, download, forge, modrinth};
+use crate::services::{config, download, loaders, modrinth};
 use crate::utils::file_utils;
 use log::{debug, error, info, warn};
 use reqwest::Client;
 use serde::Deserialize;
-use serde_json::Value;
 use std::fs;
-use std::io::Read;
 use std::path::PathBuf;
 use tauri::Emitter;
 
@@ -399,23 +397,47 @@ impl ModpackInstaller {
         )
         .await?;
 
-        // 安装加载器
+        // 安装加载器（使用统一的 loaders 模块）
         if let Some(forge_version) = &deps.forge {
             info!("安装 Forge {}", forge_version);
-            self.install_forge_loader(mc_version, forge_version, instance_name, game_dir)
-                .await?;
+            loaders::install_loader(
+                &loaders::LoaderType::Forge {
+                    mc_version: mc_version.clone(),
+                    loader_version: forge_version.clone(),
+                },
+                instance_name,
+                game_dir,
+            ).await?;
         } else if let Some(fabric_version) = deps.fabric_loader.as_ref().or(deps.fabric.as_ref()) {
             info!("安装 Fabric {}", fabric_version);
-            self.install_fabric_loader(mc_version, fabric_version, instance_name, game_dir)
-                .await?;
+            loaders::install_loader(
+                &loaders::LoaderType::Fabric {
+                    mc_version: mc_version.clone(),
+                    loader_version: fabric_version.clone(),
+                },
+                instance_name,
+                game_dir,
+            ).await?;
         } else if let Some(quilt_version) = deps.quilt_loader.as_ref().or(deps.quilt.as_ref()) {
             info!("安装 Quilt {}", quilt_version);
-            self.install_quilt_loader(mc_version, quilt_version, instance_name, game_dir)
-                .await?;
+            loaders::install_loader(
+                &loaders::LoaderType::Quilt {
+                    mc_version: mc_version.clone(),
+                    loader_version: quilt_version.clone(),
+                },
+                instance_name,
+                game_dir,
+            ).await?;
         } else if let Some(neoforge_version) = &deps.neoforge {
             info!("安装 NeoForge {}", neoforge_version);
-            self.install_neoforge_loader(mc_version, neoforge_version, instance_name, game_dir)
-                .await?;
+            loaders::install_loader(
+                &loaders::LoaderType::NeoForge {
+                    mc_version: mc_version.clone(),
+                    loader_version: neoforge_version.clone(),
+                },
+                instance_name,
+                game_dir,
+            ).await?;
         } else {
             // 纯净版，创建版本 JSON
             self.create_vanilla_version_json(mc_version, instance_name, game_dir)?;
@@ -424,302 +446,31 @@ impl ModpackInstaller {
         Ok(())
     }
 
-    /// 安装 Forge 加载器
-    async fn install_forge_loader(
+    /// 创建指向加载器版本的版本 JSON
+    fn create_loader_version_json(
         &self,
-        mc_version: &str,
-        forge_version: &str,
         instance_name: &str,
+        inherits_from: &str,
         game_dir: &PathBuf,
     ) -> Result<(), LauncherError> {
-        use crate::models::ForgeVersion;
-
-        info!("安装 Forge: MC {} + Forge {}", mc_version, forge_version);
-
-        // 构造 ForgeVersion 结构
-        let forge_ver = ForgeVersion {
-            version: forge_version.to_string(),
-            mcversion: mc_version.to_string(),
-            build: 0, // 从版本号解析 build 号不是必须的
-        };
-
-        // 调用 Forge 安装服务
-        let instance_path = game_dir.join("versions").join(instance_name);
-        forge::install_forge(instance_path, forge_ver).await?;
-
-        // 验证 Forge 版本是否被正确创建
-        let version_id = format!("{}-forge-{}", mc_version, forge_version);
-        let forge_version_json_path = game_dir
-            .join("versions")
-            .join(&version_id)
-            .join(format!("{}.json", &version_id));
-        
-        if !forge_version_json_path.exists() {
-            warn!("Forge 版本 JSON 未找到: {}", forge_version_json_path.display());
-            // Forge 安装可能创建了不同格式的版本 ID，尝试查找
-            let versions_dir = game_dir.join("versions");
-            if let Ok(entries) = fs::read_dir(&versions_dir) {
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.contains("forge") && name.contains(mc_version) {
-                        info!("找到可能的 Forge 版本: {}", name);
-                    }
-                }
-            }
-        } else {
-            info!("Forge 版本 JSON 已创建: {}", forge_version_json_path.display());
-        }
-
-        // 创建指向 Forge 版本的版本 JSON
-        self.create_loader_version_json(instance_name, &version_id, game_dir)?;
-
-        Ok(())
-    }
-
-    /// 安装 Fabric 加载器
-    async fn install_fabric_loader(
-        &self,
-        mc_version: &str,
-        fabric_version: &str,
-        instance_name: &str,
-        game_dir: &PathBuf,
-    ) -> Result<(), LauncherError> {
-        // Fabric 安装：下载 Fabric loader JSON
-        let fabric_meta_url = format!(
-            "https://meta.fabricmc.net/v2/versions/loader/{}/{}/profile/json",
-            mc_version, fabric_version
-        );
-
-        info!("获取 Fabric 版本信息: {}", fabric_meta_url);
-
-        let response = self
-            .http_client
-            .get(&fabric_meta_url)
-            .send()
-            .await
-            .map_err(|e| LauncherError::Custom(format!("获取 Fabric 信息失败: {}", e)))?;
-
-        if !response.status().is_success() {
-            return Err(LauncherError::Custom(format!(
-                "获取 Fabric 信息失败: {}",
-                response.status()
-            )));
-        }
-
-        let mut version_json: Value = response
-            .json()
-            .await
-            .map_err(|e| LauncherError::Custom(format!("解析 Fabric JSON 失败: {}", e)))?;
-
-        // 修改版本 ID 为实例名称
-        let _version_id = format!("fabric-loader-{}-{}", fabric_version, mc_version);
-        if let Some(obj) = version_json.as_object_mut() {
-            obj.insert("id".to_string(), serde_json::json!(instance_name));
-        }
-
-        // 保存版本 JSON
         let version_dir = game_dir.join("versions").join(instance_name);
         fs::create_dir_all(&version_dir)?;
 
         let json_path = version_dir.join(format!("{}.json", instance_name));
-        fs::write(&json_path, serde_json::to_string_pretty(&version_json)?)?;
-
-        info!("Fabric 版本 JSON 已创建: {}", json_path.display());
-
-        Ok(())
-    }
-
-    /// 安装 Quilt 加载器
-    async fn install_quilt_loader(
-        &self,
-        mc_version: &str,
-        quilt_version: &str,
-        instance_name: &str,
-        game_dir: &PathBuf,
-    ) -> Result<(), LauncherError> {
-        // Quilt 安装：下载 Quilt loader JSON
-        let quilt_meta_url = format!(
-            "https://meta.quiltmc.org/v3/versions/loader/{}/{}/profile/json",
-            mc_version, quilt_version
-        );
-
-        info!("获取 Quilt 版本信息: {}", quilt_meta_url);
-
-        let response = self
-            .http_client
-            .get(&quilt_meta_url)
-            .send()
-            .await
-            .map_err(|e| LauncherError::Custom(format!("获取 Quilt 信息失败: {}", e)))?;
-
-        if !response.status().is_success() {
-            return Err(LauncherError::Custom(format!(
-                "获取 Quilt 信息失败: {}",
-                response.status()
-            )));
-        }
-
-        let mut version_json: Value = response
-            .json()
-            .await
-            .map_err(|e| LauncherError::Custom(format!("解析 Quilt JSON 失败: {}", e)))?;
-
-        // 修改版本 ID
-        if let Some(obj) = version_json.as_object_mut() {
-            obj.insert("id".to_string(), serde_json::json!(instance_name));
-        }
-
-        // 保存版本 JSON
-        let version_dir = game_dir.join("versions").join(instance_name);
-        fs::create_dir_all(&version_dir)?;
-
-        let json_path = version_dir.join(format!("{}.json", instance_name));
-        fs::write(&json_path, serde_json::to_string_pretty(&version_json)?)?;
-
-        info!("Quilt 版本 JSON 已创建: {}", json_path.display());
-
-        Ok(())
-    }
-
-    /// 安装 NeoForge 加载器
-    async fn install_neoforge_loader(
-        &self,
-        mc_version: &str,
-        neoforge_version: &str,
-        instance_name: &str,
-        game_dir: &PathBuf,
-    ) -> Result<(), LauncherError> {
-        info!("安装 NeoForge {} for MC {}", neoforge_version, mc_version);
         
-        // NeoForge 版本格式：
-        // - 1.20.1 之前: mc_version-neoforge_version (如 1.20.1-47.1.100)
-        // - 1.20.2 之后: neoforge_version (如 20.2.88, 21.0.1)
-        
-        // 判断版本格式
-        let (full_version, installer_url) = if neoforge_version.contains('.') && !neoforge_version.contains('-') {
-            // 新版本格式 (20.2.88, 21.0.1 等)
-            let full_ver = neoforge_version.to_string();
-            let url = format!(
-                "https://maven.neoforged.net/releases/net/neoforged/neoforge/{}/neoforge-{}-installer.jar",
-                neoforge_version, neoforge_version
-            );
-            (full_ver, url)
-        } else {
-            // 旧版本格式或带 MC 版本的格式
-            let full_ver = if neoforge_version.contains('-') {
-                neoforge_version.to_string()
-            } else {
-                format!("{}-{}", mc_version, neoforge_version)
-            };
-            let url = format!(
-                "https://maven.neoforged.net/releases/net/neoforged/neoforge/{}/neoforge-{}-installer.jar",
-                full_ver, full_ver
-            );
-            (full_ver, url)
-        };
-
-        info!("NeoForge installer URL: {}", installer_url);
-
-        // 下载 installer
-        let temp_dir = game_dir.join("temp");
-        fs::create_dir_all(&temp_dir)?;
-        let installer_path = temp_dir.join(format!("neoforge-{}-installer.jar", full_version));
-
-        // 尝试从 BMCLAPI 镜像下载
-        let bmclapi_url = format!(
-            "https://bmclapi2.bangbang93.com/neoforge/version/{}/download/installer.jar",
-            full_version
-        );
-
-        let mut downloaded = false;
-        
-        // 先尝试 BMCLAPI
-        info!("尝试从 BMCLAPI 下载 NeoForge installer");
-        if let Ok(response) = self.http_client.get(&bmclapi_url).send().await {
-            if response.status().is_success() {
-                if let Ok(bytes) = response.bytes().await {
-                    fs::write(&installer_path, &bytes)?;
-                    downloaded = true;
-                    info!("从 BMCLAPI 下载成功");
-                }
-            }
+        // 如果已经存在，不覆盖
+        if json_path.exists() {
+            return Ok(());
         }
 
-        // 如果 BMCLAPI 失败，尝试官方源
-        if !downloaded {
-            info!("尝试从官方源下载 NeoForge installer");
-            let response = self.http_client.get(&installer_url).send().await
-                .map_err(|e| LauncherError::Custom(format!("下载 NeoForge installer 失败: {}", e)))?;
-            
-            if !response.status().is_success() {
-                return Err(LauncherError::Custom(format!(
-                    "下载 NeoForge installer 失败: {}",
-                    response.status()
-                )));
-            }
-            
-            let bytes = response.bytes().await
-                .map_err(|e| LauncherError::Custom(format!("读取 NeoForge installer 失败: {}", e)))?;
-            fs::write(&installer_path, &bytes)?;
-        }
+        let version_json = serde_json::json!({
+            "id": instance_name,
+            "inheritsFrom": inherits_from,
+            "type": "release"
+        });
 
-        // 解压 installer 获取版本 JSON
-        let extract_dir = temp_dir.join(format!("neoforge-{}-extract", full_version));
-        if extract_dir.exists() {
-            fs::remove_dir_all(&extract_dir)?;
-        }
-        fs::create_dir_all(&extract_dir)?;
-
-        let file = fs::File::open(&installer_path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
-
-        // 查找版本 JSON 文件
-        let mut version_json_content: Option<String> = None;
-
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)?;
-            let name = file.name().to_string();
-            
-            if name == "version.json" {
-                let mut content = String::new();
-                file.read_to_string(&mut content)?;
-                version_json_content = Some(content);
-            } else if name.starts_with("maven/") {
-                // 解压 maven 库文件
-                let outpath = game_dir.join("libraries").join(&name[6..]);
-                if let Some(p) = outpath.parent() {
-                    fs::create_dir_all(p)?;
-                }
-                if !name.ends_with('/') {
-                    let mut outfile = fs::File::create(&outpath)?;
-                    std::io::copy(&mut file, &mut outfile)?;
-                }
-            }
-        }
-
-        let version_json_str = version_json_content
-            .ok_or_else(|| LauncherError::Custom("NeoForge installer 中未找到 version.json".to_string()))?;
-
-        let mut version_json: Value = serde_json::from_str(&version_json_str)
-            .map_err(|e| LauncherError::Custom(format!("解析 NeoForge version.json 失败: {}", e)))?;
-
-        // 修改版本 ID 为实例名称
-        if let Some(obj) = version_json.as_object_mut() {
-            obj.insert("id".to_string(), serde_json::json!(instance_name));
-        }
-
-        // 保存版本 JSON
-        let version_dir = game_dir.join("versions").join(instance_name);
-        fs::create_dir_all(&version_dir)?;
-
-        let json_path = version_dir.join(format!("{}.json", instance_name));
         fs::write(&json_path, serde_json::to_string_pretty(&version_json)?)?;
-
-        info!("NeoForge 版本 JSON 已创建: {}", json_path.display());
-
-        // 清理临时文件
-        let _ = fs::remove_file(&installer_path);
-        let _ = fs::remove_dir_all(&extract_dir);
+        info!("创建版本 JSON: {}", json_path.display());
 
         Ok(())
     }
@@ -731,41 +482,7 @@ impl ModpackInstaller {
         instance_name: &str,
         game_dir: &PathBuf,
     ) -> Result<(), LauncherError> {
-        let version_json = serde_json::json!({
-            "id": instance_name,
-            "inheritsFrom": mc_version,
-            "type": "release"
-        });
-
-        let version_dir = game_dir.join("versions").join(instance_name);
-        fs::create_dir_all(&version_dir)?;
-
-        let json_path = version_dir.join(format!("{}.json", instance_name));
-        fs::write(&json_path, serde_json::to_string_pretty(&version_json)?)?;
-
-        Ok(())
-    }
-
-    /// 创建加载器版本 JSON（指向已安装的加载器版本）
-    fn create_loader_version_json(
-        &self,
-        instance_name: &str,
-        loader_version_id: &str,
-        game_dir: &PathBuf,
-    ) -> Result<(), LauncherError> {
-        let version_json = serde_json::json!({
-            "id": instance_name,
-            "inheritsFrom": loader_version_id,
-            "type": "release"
-        });
-
-        let version_dir = game_dir.join("versions").join(instance_name);
-        fs::create_dir_all(&version_dir)?;
-
-        let json_path = version_dir.join(format!("{}.json", instance_name));
-        fs::write(&json_path, serde_json::to_string_pretty(&version_json)?)?;
-
-        Ok(())
+        self.create_loader_version_json(instance_name, mc_version, game_dir)
     }
 
     /// 解压整合包文件

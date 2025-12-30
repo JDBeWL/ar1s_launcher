@@ -1,11 +1,17 @@
 use crate::errors::LauncherError;
-use crate::models::{ForgeVersion, InstanceInfo};
-use crate::services::instance; 
+use crate::models::InstanceInfo;
+use crate::services::instance;
+use crate::services::loaders::LoaderType;
 
 
 #[tauri::command]
-pub async fn create_instance(new_instance_name: String, base_version_id: String, forge_version: Option<ForgeVersion>, window: tauri::Window) -> Result<(), LauncherError> {
-    instance::create_instance(new_instance_name, base_version_id, forge_version, &window).await
+pub async fn create_instance(
+    new_instance_name: String,
+    base_version_id: String,
+    loader: Option<LoaderType>,
+    window: tauri::Window
+) -> Result<(), LauncherError> {
+    instance::create_instance(new_instance_name, base_version_id, loader, &window).await
 }
 
 #[tauri::command]

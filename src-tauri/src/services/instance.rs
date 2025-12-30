@@ -1,6 +1,6 @@
 use crate::errors::LauncherError;
-use crate::models::{DownloadJob, ForgeVersion, InstanceInfo, LaunchOptions};
-use crate::services::{config, download, forge, launcher};
+use crate::models::{DownloadJob, InstanceInfo, LaunchOptions};
+use crate::services::{config, download, launcher, loaders::{self, LoaderType}};
 use crate::utils::file_utils;
 use log::{info, warn};
 use serde::Serialize;
@@ -29,7 +29,7 @@ fn get_dirs() -> Result<(PathBuf, PathBuf), LauncherError> {
 pub async fn create_instance(
     new_instance_name: String,
     base_version_id: String,
-    forge_version: Option<ForgeVersion>,
+    loader: Option<LoaderType>,
     window: &Window,
 ) -> Result<(), LauncherError> {
     let (game_dir, versions_dir) = get_dirs()?;
@@ -112,52 +112,56 @@ pub async fn create_instance(
         return Err(e);
     }
 
-    if let Some(forge_ver) = forge_version {
-        send_progress(60, "安装 Forge 加载器...", true);
-        if let Err(e) = forge::install_forge(dest_dir.clone(), forge_ver.clone()).await {
+    if let Some(ref loader_type) = loader {
+        send_progress(60, &format!("安装 {} 加载器...", loader_type.name()), true);
+        
+        if let Err(e) = loaders::install_loader(loader_type, &new_instance_name, &game_dir).await {
             cleanup();
             return Err(e);
         }
 
-        let forge_id_prefix = format!("{}-forge", forge_ver.mcversion);
-        let forge_id_exact = format!("{}-forge-{}", forge_ver.mcversion, forge_ver.version);
-        
-        let found_forge_id = fs::read_dir(&versions_dir)
-            .ok()
-            .and_then(|entries| {
-                entries.flatten()
-                    .filter_map(|e| e.file_name().to_str().map(String::from))
-                    .find(|name| name == &forge_id_exact || name.starts_with(&forge_id_prefix))
-            });
+        // 对于 Forge，需要合并配置
+        if let LoaderType::Forge { mc_version, loader_version } = loader_type {
+            let forge_id_prefix = format!("{}-forge", mc_version);
+            let forge_id_exact = format!("{}-forge-{}", mc_version, loader_version);
+            
+            let found_forge_id = fs::read_dir(&versions_dir)
+                .ok()
+                .and_then(|entries| {
+                    entries.flatten()
+                        .filter_map(|e| e.file_name().to_str().map(String::from))
+                        .find(|name| name == &forge_id_exact || name.starts_with(&forge_id_prefix))
+                });
 
-        if let Some(fid) = found_forge_id {
-            let forge_json_path = versions_dir.join(&fid).join(format!("{}.json", fid));
-            let base_json_path = versions_dir.join(&base_version_id).join(format!("{}.json", base_version_id));
+            if let Some(fid) = found_forge_id {
+                let forge_json_path = versions_dir.join(&fid).join(format!("{}.json", fid));
+                let base_json_path = versions_dir.join(&base_version_id).join(format!("{}.json", base_version_id));
 
-            if forge_json_path.exists() && base_json_path.exists() {
-                send_progress(70, "合并配置并补全依赖...", true);
-                
-                if let Err(e) = merge_and_complete_instance(
-                    &new_instance_name,
-                    &new_json_path,
-                    &base_json_path,
-                    &forge_json_path,
-                    &game_dir,
-                    window
-                ).await {
-                    cleanup();
-                    return Err(e);
-                }
+                if forge_json_path.exists() && base_json_path.exists() {
+                    send_progress(70, "合并配置并补全依赖...", true);
+                    
+                    if let Err(e) = merge_and_complete_instance(
+                        &new_instance_name,
+                        &new_json_path,
+                        &base_json_path,
+                        &forge_json_path,
+                        &game_dir,
+                        window
+                    ).await {
+                        cleanup();
+                        return Err(e);
+                    }
 
-                let forge_dir = versions_dir.join(&fid);
-                if forge_dir.exists() && forge_dir != dest_dir {
-                    let _ = fs::remove_dir_all(forge_dir);
+                    let forge_dir = versions_dir.join(&fid);
+                    if forge_dir.exists() && forge_dir != dest_dir {
+                        let _ = fs::remove_dir_all(forge_dir);
+                    }
+                } else {
+                    warn!("未找到 Forge 或 基础版本的 JSON 文件，跳过合并");
                 }
             } else {
-                warn!("未找到 Forge 或 基础版本的 JSON 文件，跳过合并");
+                warn!("未找到安装后的 Forge 目录");
             }
-        } else {
-            warn!("未找到安装后的 Forge 目录");
         }
     }
 

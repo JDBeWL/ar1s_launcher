@@ -98,8 +98,8 @@ onMounted(async () => {
     <!-- 标题 -->
     <div class="group-header mb-5">
       <div class="d-flex align-center">
-        <v-avatar size="48" color="secondary-container" class="mr-3">
-          <v-icon size="24" color="on-secondary-container">mdi-language-java</v-icon>
+        <v-avatar size="48" color="primary-container" class="mr-3">
+          <v-icon size="24" color="on-primary-container">mdi-language-java</v-icon>
         </v-avatar>
         <div>
           <h2 class="text-h6 font-weight-bold">Java 配置</h2>
