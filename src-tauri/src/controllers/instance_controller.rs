@@ -2,7 +2,19 @@ use crate::errors::LauncherError;
 use crate::models::InstanceInfo;
 use crate::services::instance;
 use crate::services::loaders::LoaderType;
+use crate::utils::file_utils::{validate_instance_name, InstanceNameValidation};
 
+/// 验证实例名称是否有效
+#[tauri::command]
+pub fn validate_instance_name_cmd(name: String) -> InstanceNameValidation {
+    validate_instance_name(&name)
+}
+
+/// 检查实例名称是否可用（验证格式并检查是否已存在）
+#[tauri::command]
+pub fn check_instance_name_available(name: String) -> InstanceNameValidation {
+    instance::check_instance_name_available(&name)
+}
 
 #[tauri::command]
 pub async fn create_instance(

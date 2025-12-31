@@ -94,3 +94,9 @@ export interface AvailableLoaders {
 
 // 加载器类型
 export type ModLoaderType = 'None' | 'Forge' | 'Fabric' | 'Quilt' | 'NeoForge';
+
+// 实例名称验证结果
+export interface InstanceNameValidation {
+  is_valid: boolean;
+  error_message: string | null;
+}

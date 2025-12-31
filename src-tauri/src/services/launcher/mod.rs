@@ -17,7 +17,7 @@ mod version_json;
 
 use crate::errors::LauncherError;
 use crate::models::LaunchOptions;
-use crate::services::config::{load_config, save_config};
+use crate::services::config::{load_config, save_config, update_instance_last_played, set_last_selected_version};
 use crate::services::memory::{is_memory_setting_safe, optimize_jvm_memory_args};
 use std::path::PathBuf;
 use tauri::Emitter;
@@ -39,6 +39,11 @@ pub async fn launch_minecraft(
     config.username = Some(options.username.clone());
     config.uuid = Some(uuid.clone());
     save_config(&config)?;
+
+    // 更新实例的上次启动时间
+    let _ = update_instance_last_played(&options.version);
+    // 保存上次选择的版本
+    let _ = set_last_selected_version(&options.version);
 
     // 设置路径
     let game_dir = PathBuf::from(&config.game_dir);
@@ -154,6 +159,19 @@ pub async fn launch_minecraft(
     final_args.push(classpath_str);
     final_args.push(main_class.to_string());
     final_args.extend(game_args_vec);
+
+    // 添加窗口大小参数
+    if let Some(width) = options.window_width.or(config.window_width) {
+        final_args.push("--width".to_string());
+        final_args.push(width.to_string());
+    }
+    if let Some(height) = options.window_height.or(config.window_height) {
+        final_args.push("--height".to_string());
+        final_args.push(height.to_string());
+    }
+    if options.fullscreen.unwrap_or(config.fullscreen) {
+        final_args.push("--fullscreen".to_string());
+    }
 
     // 6. 启动游戏
     let working_dir = if config.version_isolation {

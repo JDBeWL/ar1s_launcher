@@ -1,7 +1,7 @@
 <template>
   <v-container fluid class="add-instance-container pa-4">
     <!-- 页面标题 -->
-    <div class="d-flex align-center mb-4">
+    <div class="d-flex align-center mb-5">
       <v-avatar size="48" color="primary-container" class="mr-3">
         <v-icon size="24" color="on-primary-container">mdi-plus-circle</v-icon>
       </v-avatar>
@@ -11,79 +11,73 @@
       </div>
     </div>
 
-    <!-- 安装方式选择 -->
-    <v-card color="surface-container" rounded="lg" class="mb-4">
-      <v-card-text class="pa-2">
-        <v-btn-toggle
-          v-model="installType"
+    <!-- 安装方式选择 - 使用 Tab 样式 -->
+    <v-tabs
+      v-model="installType"
+      color="primary"
+      class="mb-4"
+      grow
+    >
+      <v-tab value="custom">
+        <v-icon start size="20">mdi-cog</v-icon>
+        自定义安装
+      </v-tab>
+      <v-tab value="online">
+        <v-icon start size="20">mdi-cloud-download</v-icon>
+        整合包
+      </v-tab>
+    </v-tabs>
+
+    <!-- 内容区域 -->
+    <v-window v-model="installType">
+      <!-- 自定义安装 -->
+      <v-window-item value="custom">
+        <CustomInstallForm />
+      </v-window-item>
+
+      <!-- 从互联网安装 -->
+      <v-window-item value="online">
+        <!-- 平台选择 -->
+        <v-chip-group
+          v-model="selectedPlatform"
           mandatory
-          rounded="lg"
-          density="compact"
-          divided
-          class="w-100"
+          selected-class="text-primary"
+          class="mb-4"
         >
-          <v-btn value="custom" class="flex-grow-1">
-            <v-icon start size="18">mdi-cog</v-icon>
-            自定义安装
-          </v-btn>
-          <v-btn value="online" class="flex-grow-1">
-            <v-icon start size="18">mdi-cloud-download</v-icon>
-            从互联网安装
-          </v-btn>
-        </v-btn-toggle>
-      </v-card-text>
-    </v-card>
+          <v-chip
+            value="modrinth"
+            variant="tonal"
+            filter
+            size="large"
+          >
+            <v-icon start size="18">mdi-alpha-m-circle</v-icon>
+            Modrinth
+          </v-chip>
+          <v-chip
+            value="curseforge"
+            variant="tonal"
+            disabled
+            size="large"
+          >
+            <v-icon start size="18">mdi-fire</v-icon>
+            CurseForge
+            <v-chip size="x-small" class="ml-1" color="warning" variant="flat">开发中</v-chip>
+          </v-chip>
+        </v-chip-group>
 
-    <!-- 自定义安装内容 -->
-    <div v-if="installType === 'custom'">
-      <CustomInstallForm />
-    </div>
+        <!-- Modrinth 整合包浏览 -->
+        <ModrinthBrowser v-if="selectedPlatform === 'modrinth'" />
 
-    <!-- 从互联网安装内容 -->
-    <div v-if="installType === 'online'">
-      <!-- 平台选择 -->
-      <v-card color="surface-container" rounded="lg" class="mb-4">
-        <v-card-text class="pa-3">
-          <div class="text-body-2 text-medium-emphasis mb-2">选择平台</div>
-          <div class="d-flex ga-2">
-            <v-btn
-              :variant="selectedPlatform === 'modrinth' ? 'flat' : 'tonal'"
-              rounded="lg"
-              @click="selectedPlatform = 'modrinth'"
-              class="platform-btn"
-            >
-              <v-icon start size="18">mdi-alpha-m-circle</v-icon>
-              Modrinth
-            </v-btn>
-            <v-btn
-              variant="tonal"
-              rounded="lg"
-              disabled
-              class="platform-btn"
-            >
-              <v-icon start size="18">mdi-fire</v-icon>
-              CurseForge
-              <v-chip size="x-small" class="ml-2" variant="tonal">开发中</v-chip>
-            </v-btn>
-          </div>
-        </v-card-text>
-      </v-card>
-
-      <!-- Modrinth整合包搜索 -->
-      <div v-if="selectedPlatform === 'modrinth'">
-        <ModrinthBrowser />
-      </div>
-
-      <!-- CurseForge整合包搜索 (占位) -->
-      <div v-if="selectedPlatform === 'curseforge'">
-        <v-alert variant="tonal" rounded="lg">
-          <template #prepend>
-            <v-icon>mdi-information-outline</v-icon>
-          </template>
+        <!-- CurseForge 占位 -->
+        <v-alert
+          v-else-if="selectedPlatform === 'curseforge'"
+          type="info"
+          variant="tonal"
+        >
           CurseForge 整合包支持正在开发中...
         </v-alert>
-      </div>
-    </div>
+      </v-window-item>
+    </v-window>
   </v-container>
 </template>
 
@@ -101,9 +95,5 @@ const selectedPlatform = ref("modrinth");
 .add-instance-container {
   max-width: 900px;
   margin: 0 auto;
-}
-
-.platform-btn {
-  min-width: 140px;
 }
 </style>

@@ -6,6 +6,37 @@
   -webkit-text-size-adjust: 100%;
 }
 
+/* 主题切换时禁用所有过渡 - 使用高优先级选择器 */
+html.no-transition,
+html.no-transition *,
+html.no-transition *::before,
+html.no-transition *::after,
+.no-transition,
+.no-transition *,
+.no-transition *::before,
+.no-transition *::after {
+  transition: none !important;
+  transition-duration: 0s !important;
+  transition-delay: 0s !important;
+  animation: none !important;
+  animation-duration: 0s !important;
+}
+
+/* 进度条动画 */
+.v-progress-linear__determinate,
+.v-progress-linear__indeterminate,
+.v-progress-circular__overlay {
+  animation-duration: 1s !important;
+}
+
+/* 弹窗和通知动画 */
+.v-snackbar__wrapper,
+.v-dialog,
+.v-overlay__content,
+.v-menu__content {
+  transition: opacity 0.15s ease, transform 0.15s ease !important;
+}
+
 /* 修复 v-select 下拉菜单圆角问题 */
 .v-select-menu-content {
   border-radius: 12px !important;

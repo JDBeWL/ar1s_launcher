@@ -1,7 +1,7 @@
 use crate::errors::LauncherError;
 use crate::models::{DownloadJob, InstanceInfo, LaunchOptions};
 use crate::services::{config, download, launcher, loaders::{self, LoaderType}};
-use crate::utils::file_utils;
+use crate::utils::file_utils::{self, validate_instance_name_or_error, validate_instance_name, InstanceNameValidation};
 use log::{info, warn};
 use serde::Serialize;
 use serde_json::Value;
@@ -25,6 +25,31 @@ fn get_dirs() -> Result<(PathBuf, PathBuf), LauncherError> {
     Ok((game_dir, versions_dir))
 }
 
+/// 检查实例名称是否可用（验证格式并检查是否已存在）
+pub fn check_instance_name_available(name: &str) -> InstanceNameValidation {
+    // 首先验证名称格式
+    let validation = validate_instance_name(name);
+    if !validation.is_valid {
+        return validation;
+    }
+    
+    // 然后检查实例是否已存在
+    if let Ok((_, versions_dir)) = get_dirs() {
+        let instance_dir = versions_dir.join(name);
+        if instance_dir.exists() {
+            return InstanceNameValidation {
+                is_valid: false,
+                error_message: Some(format!("名为 '{}' 的实例已存在，请使用其他名称", name)),
+            };
+        }
+    }
+    
+    InstanceNameValidation {
+        is_valid: true,
+        error_message: None,
+    }
+}
+
 /// 创建新实例
 pub async fn create_instance(
     new_instance_name: String,
@@ -32,6 +57,9 @@ pub async fn create_instance(
     loader: Option<LoaderType>,
     window: &Window,
 ) -> Result<(), LauncherError> {
+    // 验证实例名称
+    validate_instance_name_or_error(&new_instance_name)?;
+    
     let (game_dir, versions_dir) = get_dirs()?;
     let source_dir = versions_dir.join(&base_version_id);
     let dest_dir = versions_dir.join(&new_instance_name);
@@ -169,16 +197,27 @@ pub async fn create_instance(
     Ok(())
 }
 
-/// 获取实例列表
+/// 获取实例列表（使用 spawn_blocking 避免阻塞异步运行时）
 pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
     let (_, versions_dir) = get_dirs()?;
+    
+    // 将 CPU 密集型的文件系统操作和 JSON 解析移到阻塞线程池
+    let instances = tokio::task::spawn_blocking(move || {
+        get_instances_sync(&versions_dir)
+    }).await.map_err(|e| LauncherError::Custom(format!("获取实例列表失败: {}", e)))??;
+    
+    Ok(instances)
+}
+
+/// 同步获取实例列表（在阻塞线程池中执行）
+fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, LauncherError> {
     let mut instances = Vec::new();
 
     if !versions_dir.exists() {
         return Ok(instances);
     }
 
-    if let Ok(entries) = fs::read_dir(&versions_dir) {
+    if let Ok(entries) = fs::read_dir(versions_dir) {
         for entry in entries.flatten() {
             if let Ok(file_type) = entry.file_type() {
                 if file_type.is_dir() {
@@ -232,13 +271,13 @@ pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
 
                         instances.push(InstanceInfo {
                             id: name.clone(),
-                            name,
+                            name: name.clone(),
                             version: version_id,
                             path: path.to_string_lossy().to_string(),
                             created_time: created,
                             loader_type,
                             game_version,
-                            last_played: None, // TODO: 从配置文件读取
+                            last_played: config::get_instance_last_played(&name),
                         });
                     }
                 }
@@ -260,12 +299,18 @@ pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError>
     fs::remove_dir_all(&instance_dir)
         .map_err(|e| LauncherError::Custom(format!("删除实例失败: {}", e)))?;
     
+    // 删除上次启动时间记录
+    let _ = config::remove_instance_last_played(&instance_name);
+    
     info!("实例 {} 已删除", instance_name);
     Ok(())
 }
 
 /// 重命名实例
 pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), LauncherError> {
+    // 验证新实例名称
+    validate_instance_name_or_error(&new_name)?;
+    
     let (_, versions_dir) = get_dirs()?;
     let old_dir = versions_dir.join(&old_name);
     let new_dir = versions_dir.join(&new_name);
@@ -295,10 +340,13 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
     if json_path.exists() {
         let content = fs::read_to_string(&json_path)?;
         if let Ok(mut json) = serde_json::from_str::<Value>(&content) {
-            json["id"] = Value::String(new_name);
+            json["id"] = Value::String(new_name.clone());
             fs::write(&json_path, serde_json::to_string_pretty(&json)?)?;
         }
     }
+
+    // 重命名上次启动时间记录
+    let _ = config::rename_instance_last_played(&old_name, &new_name);
 
     Ok(())
 }
@@ -328,10 +376,16 @@ pub async fn launch_instance(instance_name: String, window: Window) -> Result<()
         return Err(LauncherError::Custom(format!("实例 '{}' 的配置文件不存在", instance_name)));
     }
 
+    // 更新上次启动时间
+    let _ = config::update_instance_last_played(&instance_name);
+
     let launch_options = LaunchOptions {
         version: instance_name,
         username: config.username.unwrap_or_else(|| "Player".to_string()),
         memory: Some(config.max_memory),
+        window_width: config.window_width,
+        window_height: config.window_height,
+        fullscreen: Some(config.fullscreen),
     };
 
     launcher::launch_minecraft(launch_options, window).await

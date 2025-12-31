@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, onScopeDispose } from 'vue'
 import { listen, emit } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
@@ -34,6 +34,11 @@ export const useDownloadStore = defineStore('download', () => {
 
   // Listeners
   let unlistenDownloadProgress: UnlistenFn | null = null;
+
+  // 当 store 的作用域销毁时自动清理监听器
+  onScopeDispose(() => {
+    unsubscribe();
+  });
 
   async function subscribe() {
     if (unlistenDownloadProgress) return;

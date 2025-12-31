@@ -1,128 +1,298 @@
 <template>
-  <v-container fluid class="pa-4">
+  <v-container fluid class="install-modpack-container pa-4">
     <v-card color="surface-container">
+      <!-- 标题栏 -->
       <v-card-title class="d-flex align-center pa-4">
-        <v-btn variant="text" icon="mdi-arrow-left" @click="goBack" class="mr-2"></v-btn>
-        <span>安装整合包</span>
-      </v-card-title>
-      <v-card-text class="pa-4">
-        <v-row class="mb-4">
-          <v-col cols="12">
-            <div class="text-h6">{{ title }}</div>
-            <div class="text-caption text-on-surface-variant">项目 ID: {{ projectId }}</div>
-          </v-col>
-        </v-row>
-
-        <!-- 安装进度 -->
-        <v-card v-if="installing" color="surface-container-high" class="mb-4">
-          <v-card-text class="pa-4">
-            <div class="d-flex align-center justify-space-between mb-2">
-              <span class="text-body-2">{{ installProgress.message }}</span>
-              <span class="text-body-2 font-weight-medium">{{ installProgress.progress }}%</span>
-            </div>
-            <v-progress-linear
-              :model-value="installProgress.progress"
-              :indeterminate="installProgress.indeterminate"
-              height="8"
-              rounded
-              color="primary"
-            />
-          </v-card-text>
-        </v-card>
-
-        <!-- 加载版本中 -->
-        <div v-if="loadingVersions && !installing" class="d-flex align-center mb-4">
-          <v-progress-circular indeterminate size="20" width="2" color="primary" class="mr-3" />
-          <span class="text-body-2 text-on-surface-variant">加载版本信息...</span>
+        <v-btn 
+          variant="text" 
+          icon="mdi-arrow-left" 
+          :disabled="installing"
+          @click="goBack" 
+          class="mr-2"
+        />
+        <div class="flex-grow-1">
+          <div class="d-flex align-center">
+            <span class="text-h6">{{ title }}</span>
+            <v-chip v-if="installing" color="primary" variant="tonal" size="small" class="ml-2">
+              安装中
+            </v-chip>
+          </div>
+          <div class="text-caption text-on-surface-variant">Modrinth · {{ projectId }}</div>
         </div>
+      </v-card-title>
 
-        <v-row no-gutters class="align-center mb-4" v-if="!installing && !loadingVersions">
-          <!-- 加载器选择 -->
-          <v-col class="shrink pr-2" style="max-width: 150px">
-            <v-select
-              v-model="selectedLoader"
-              :items="loaderOptions"
-              label="加载器"
-              hide-details
-              @update:model-value="onLoaderChange"
-            ></v-select>
-          </v-col>
+      <v-divider />
 
-          <!-- 游戏版本选择 -->
-          <v-col class="shrink pr-2" style="max-width: 150px">
-            <v-select
-              v-model="selectedGameVersion"
-              :items="filteredGameVersions"
-              label="游戏版本"
-              :disabled="!selectedLoader"
-              clearable
-              hide-details
-              @update:model-value="onGameVersionChange"
-            ></v-select>
-          </v-col>
+      <v-card-text class="pa-4">
+        <!-- 安装进度 -->
+        <v-expand-transition>
+          <v-card v-if="installing" color="surface-container-high" class="mb-4" variant="flat">
+            <v-card-text class="pa-4">
+              <div class="d-flex align-center justify-space-between mb-2">
+                <div class="d-flex align-center">
+                  <v-progress-circular
+                    v-if="installProgress.indeterminate"
+                    indeterminate
+                    size="18"
+                    width="2"
+                    color="primary"
+                    class="mr-2"
+                  />
+                  <v-icon v-else size="18" color="primary" class="mr-2">mdi-download</v-icon>
+                  <span class="text-body-2">{{ installProgress.message }}</span>
+                </div>
+                <span class="text-body-2 font-weight-medium text-primary">{{ installProgress.progress }}%</span>
+              </div>
+              <v-progress-linear
+                :model-value="installProgress.progress"
+                :indeterminate="installProgress.indeterminate"
+                height="6"
+                rounded
+                color="primary"
+                bg-color="surface-container"
+              />
+              <div class="d-flex justify-end mt-3">
+                <v-btn
+                  variant="text"
+                  color="error"
+                  size="small"
+                  :loading="cancelling"
+                  :disabled="cancelling"
+                  @click="cancelInstall"
+                >
+                  <v-icon start size="16">mdi-close</v-icon>
+                  取消
+                </v-btn>
+              </div>
+            </v-card-text>
+          </v-card>
+        </v-expand-transition>
 
-          <!-- 整合包版本选择 -->
-          <v-col class="shrink pr-2" style="min-width: 200px">
-            <v-select
-              v-model="selectedVersionId"
-              :items="filteredModpackVersions"
-              item-title="displayName"
-              item-value="id"
-              label="整合包版本"
-              :disabled="!selectedLoader"
-              hide-details
-            ></v-select>
-          </v-col>
+        <!-- 加载骨架屏 -->
+        <template v-if="loadingVersions">
+          <v-skeleton-loader type="text" class="mb-4" />
+          <v-row>
+            <v-col cols="12" md="6">
+              <v-skeleton-loader type="text" />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-skeleton-loader type="text" />
+            </v-col>
+          </v-row>
+        </template>
 
-          <!-- 实例名称 -->
-          <v-col class="flex-grow-1 pl-2">
-            <v-text-field
-              v-model="instanceName"
-              :label="`实例名称 (默认: ${title})`"
-              :placeholder="title"
-              hide-details
-            ></v-text-field>
-          </v-col>
-        </v-row>
+        <!-- 版本选择表单 -->
+        <template v-else-if="!installing">
+          <!-- 无可用版本 -->
+          <v-alert
+            v-if="modpackVersions.length === 0"
+            type="warning"
+            variant="tonal"
+            class="mb-4"
+          >
+            <template #title>无可用版本</template>
+            该整合包暂无可安装的版本，请返回重新选择
+          </v-alert>
 
-        <v-row>
-          <v-col cols="12" class="text-right">
-            <v-btn 
-              v-if="!installing"
-              color="primary" 
-              size="large" 
-              :disabled="!selectedVersionId" 
-              @click="install"
-            >
-              <v-icon start>mdi-download</v-icon>
-              安装整合包
-            </v-btn>
-          </v-col>
-        </v-row>
+          <template v-else>
+            <!-- 版本配置区域 -->
+            <div class="config-section mb-4">
+              <div class="text-subtitle-2 text-on-surface-variant mb-3">
+                <v-icon size="18" class="mr-1">mdi-tune</v-icon>
+                版本配置
+              </div>
+              
+              <v-row dense>
+                <!-- 加载器 -->
+                <v-col cols="6" sm="4" md="3">
+                  <v-select
+                    v-model="selectedLoader"
+                    :items="loaderOptions"
+                    label="加载器"
+                    density="comfortable"
+                    variant="outlined"
+                    hide-details
+                    @update:model-value="onLoaderChange"
+                  >
+                    <template #prepend-inner>
+                      <v-icon size="18" color="on-surface-variant">mdi-puzzle</v-icon>
+                    </template>
+                  </v-select>
+                </v-col>
+
+                <!-- 游戏版本 -->
+                <v-col cols="6" sm="4" md="3">
+                  <v-select
+                    v-model="selectedGameVersion"
+                    :items="filteredGameVersions"
+                    label="游戏版本"
+                    density="comfortable"
+                    variant="outlined"
+                    :disabled="!selectedLoader"
+                    clearable
+                    hide-details
+                    @update:model-value="onGameVersionChange"
+                  >
+                    <template #prepend-inner>
+                      <v-icon size="18" color="on-surface-variant">mdi-minecraft</v-icon>
+                    </template>
+                  </v-select>
+                </v-col>
+
+                <!-- 整合包版本 -->
+                <v-col cols="12" sm="4" md="6">
+                  <v-select
+                    v-model="selectedVersionId"
+                    :items="filteredModpackVersions"
+                    item-title="displayName"
+                    item-value="id"
+                    label="整合包版本"
+                    density="comfortable"
+                    variant="outlined"
+                    :disabled="!selectedLoader"
+                    hide-details
+                  >
+                    <template #prepend-inner>
+                      <v-icon size="18" color="on-surface-variant">mdi-package-variant</v-icon>
+                    </template>
+                    <template #item="{ item, props }">
+                      <v-list-item v-bind="props">
+                        <template #subtitle>
+                          <span class="text-caption">
+                            {{ item.raw.game_versions?.slice(0, 3).join(', ') }}
+                            {{ item.raw.game_versions?.length > 3 ? '...' : '' }}
+                          </span>
+                        </template>
+                      </v-list-item>
+                    </template>
+                  </v-select>
+                </v-col>
+              </v-row>
+            </div>
+
+            <!-- 实例配置区域 -->
+            <div class="config-section mb-4">
+              <div class="text-subtitle-2 text-on-surface-variant mb-3">
+                <v-icon size="18" class="mr-1">mdi-folder-cog</v-icon>
+                实例配置
+              </div>
+              
+              <v-text-field
+                v-model="instanceName"
+                label="实例名称"
+                :placeholder="title"
+                density="comfortable"
+                variant="outlined"
+                :error-messages="instanceNameError || undefined"
+                :loading="checkingInstanceName"
+                hide-details="auto"
+                counter="64"
+                maxlength="64"
+              >
+                <template #prepend-inner>
+                  <v-icon size="18" color="on-surface-variant">mdi-rename</v-icon>
+                </template>
+                <template #append-inner>
+                  <v-fade-transition>
+                    <v-icon 
+                      v-if="instanceName && !instanceNameError && !checkingInstanceName" 
+                      size="18" 
+                      color="success"
+                    >
+                      mdi-check-circle
+                    </v-icon>
+                  </v-fade-transition>
+                </template>
+              </v-text-field>
+              
+              <div class="text-caption text-on-surface-variant mt-2">
+                留空将使用整合包名称作为实例名称
+              </div>
+            </div>
+
+            <!-- 选中版本信息预览 -->
+            <v-expand-transition>
+              <v-card 
+                v-if="selectedVersionInfo" 
+                color="surface-container-high" 
+                variant="flat"
+                class="mb-4"
+              >
+                <v-card-text class="pa-3">
+                  <div class="d-flex align-center justify-space-between">
+                    <div>
+                      <div class="text-body-2 font-weight-medium">{{ selectedVersionInfo.name }}</div>
+                      <div class="text-caption text-on-surface-variant">
+                        版本号: {{ selectedVersionInfo.version_number }}
+                      </div>
+                    </div>
+                    <div class="d-flex ga-1">
+                      <v-chip
+                        v-for="loader in selectedVersionInfo.loaders.slice(0, 2)"
+                        :key="loader"
+                        size="x-small"
+                        color="primary"
+                        variant="tonal"
+                      >
+                        {{ loader }}
+                      </v-chip>
+                    </div>
+                  </div>
+                </v-card-text>
+              </v-card>
+            </v-expand-transition>
+          </template>
+        </template>
+
+        <!-- 操作按钮 -->
+        <div class="d-flex justify-end ga-2 mt-4">
+          <v-btn
+            v-if="!installing"
+            variant="text"
+            @click="goBack"
+          >
+            取消
+          </v-btn>
+          <v-btn 
+            v-if="!installing"
+            color="primary" 
+            :disabled="!canInstall" 
+            :loading="checkingInstanceName"
+            @click="install"
+          >
+            <v-icon start>mdi-download</v-icon>
+            安装
+          </v-btn>
+        </div>
       </v-card-text>
     </v-card>
   </v-container>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useNotificationStore } from '../stores/notificationStore'
 
 interface ModrinthVersion {
-  id: string;
-  name: string;
-  version_number: string;
-  game_versions: string[];
-  loaders: string[];
+  id: string
+  name: string
+  version_number: string
+  game_versions: string[]
+  loaders: string[]
 }
 
 interface InstallProgress {
-  progress: number;
-  message: string;
-  indeterminate: boolean;
+  progress: number
+  message: string
+  indeterminate: boolean
+}
+
+interface InstanceNameValidation {
+  is_valid: boolean
+  error_message: string | null
 }
 
 const route = useRoute()
@@ -137,21 +307,97 @@ const modpackVersions = ref<ModrinthVersion[]>([])
 const selectedVersionId = ref<string | null>(null)
 const selectedLoader = ref<string | null>(null)
 const selectedGameVersion = ref<string | null>(null)
-const instanceName = ref<string>(title)
+const instanceName = ref<string>('')
 const installing = ref(false)
+const cancelling = ref(false)
 const installProgress = ref<InstallProgress>({
   progress: 0,
   message: '准备安装...',
   indeterminate: false
 })
 
+const instanceNameError = ref<string | null>(null)
+const checkingInstanceName = ref(false)
+
 let unlistenProgress: UnlistenFn | null = null
+let instanceNameCheckTimeout: ReturnType<typeof setTimeout> | null = null
+
+// 获取选中版本的详细信息
+const selectedVersionInfo = computed(() => {
+  if (!selectedVersionId.value) return null
+  return modpackVersions.value.find(v => v.id === selectedVersionId.value) || null
+})
+
+// 获取实际使用的实例名称
+const effectiveInstanceName = computed(() => {
+  return instanceName.value.trim() || title
+})
+
+// 监听实例名称变化
+watch(instanceName, (newName) => {
+  if (instanceNameCheckTimeout) {
+    clearTimeout(instanceNameCheckTimeout)
+  }
+  
+  instanceNameError.value = null
+  
+  // 使用实际名称进行检查
+  const nameToCheck = newName.trim() || title
+  if (!nameToCheck) return
+  
+  instanceNameCheckTimeout = setTimeout(async () => {
+    await checkInstanceName(nameToCheck)
+  }, 300)
+})
+
+async function checkInstanceName(name: string) {
+  if (!name) return
+  
+  checkingInstanceName.value = true
+  try {
+    const result = await invoke('check_instance_name_available', { name }) as InstanceNameValidation
+    instanceNameError.value = result.is_valid ? null : result.error_message
+  } catch (e) {
+    console.error('检查实例名称失败:', e)
+  } finally {
+    checkingInstanceName.value = false
+  }
+}
+
+const canInstall = computed(() => {
+  return selectedVersionId.value && 
+         !instanceNameError.value && 
+         !checkingInstanceName.value &&
+         modpackVersions.value.length > 0
+})
+
+onBeforeRouteLeave(() => {
+  if (installing.value && !cancelling.value) {
+    notificationStore.warning('安装进行中', '请先取消安装或等待安装完成')
+    return false
+  }
+  return true
+})
 
 function goBack() {
+  if (installing.value && !cancelling.value) {
+    notificationStore.warning('安装进行中', '请先取消安装或等待安装完成')
+    return
+  }
   router.back()
 }
 
-// 获取所有可用的加载器类型
+async function cancelInstall() {
+  if (cancelling.value) return
+  cancelling.value = true
+  try {
+    await invoke('cancel_modpack_install')
+    notificationStore.info('正在取消', '安装将在当前步骤完成后取消')
+  } catch (e) {
+    console.error('取消安装失败:', e)
+  }
+}
+
 const loaderOptions = computed(() => {
   const loaders = new Set<string>()
   for (const v of modpackVersions.value) {
@@ -159,7 +405,6 @@ const loaderOptions = computed(() => {
       loaders.add(loader)
     }
   }
-  // 按优先级排序
   const priority = ['forge', 'neoforge', 'fabric', 'quilt']
   return Array.from(loaders).sort((a, b) => {
     const ai = priority.indexOf(a.toLowerCase())
@@ -168,7 +413,6 @@ const loaderOptions = computed(() => {
   })
 })
 
-// 根据选择的加载器过滤游戏版本
 const filteredGameVersions = computed(() => {
   if (!selectedLoader.value) return []
   
@@ -183,7 +427,6 @@ const filteredGameVersions = computed(() => {
   return Array.from(versions).sort(compareVersionDesc)
 })
 
-// 根据选择的加载器和游戏版本过滤整合包版本
 const filteredModpackVersions = computed(() => {
   if (!selectedLoader.value) return []
   
@@ -195,7 +438,6 @@ const filteredModpackVersions = computed(() => {
     filtered = filtered.filter(v => v.game_versions.includes(selectedGameVersion.value as string))
   }
   
-  // 添加显示名称
   return filtered.map(v => ({
     ...v,
     displayName: `${v.name} (${v.version_number})`
@@ -203,13 +445,11 @@ const filteredModpackVersions = computed(() => {
 })
 
 function onLoaderChange() {
-  // 重置游戏版本和整合包版本
   selectedGameVersion.value = filteredGameVersions.value[0] || null
   onGameVersionChange()
 }
 
 function onGameVersionChange() {
-  // 选择第一个匹配的整合包版本
   const first = filteredModpackVersions.value[0]
   selectedVersionId.value = first ? first.id : null
 }
@@ -219,43 +459,45 @@ async function loadVersions() {
   loadingVersions.value = true
   try {
     const versions = await invoke('get_modrinth_modpack_versions', {
-      projectId: projectId,
+      projectId,
       gameVersions: undefined,
       loaders: undefined,
     }) as ModrinthVersion[]
     modpackVersions.value = versions || []
 
-    // 默认选择第一个加载器
     if (loaderOptions.value.length > 0) {
       selectedLoader.value = loaderOptions.value[0]
       onLoaderChange()
     }
   } catch (e) {
     console.error('加载整合包版本失败:', e)
+    notificationStore.error('加载失败', '无法获取整合包版本信息')
   } finally {
     loadingVersions.value = false
   }
 }
 
 async function install() {
-  if (!projectId || !selectedVersionId.value) return
+  if (!projectId || !selectedVersionId.value || !canInstall.value) return
+  
   installing.value = true
   installProgress.value = { progress: 0, message: '准备安装...', indeterminate: false }
   
   try {
-    // 监听安装进度
     unlistenProgress = await listen<InstallProgress>('modpack-install-progress', (event) => {
       installProgress.value = event.payload
     })
 
-    const options = {
-      modpack_id: projectId,
-      version_id: selectedVersionId.value,
-      instance_name: instanceName.value || title,
-      install_path: '',
-    }
-    await invoke('install_modrinth_modpack', { options })
-    notificationStore.success('安装成功', '整合包已安装完成')
+    await invoke('install_modrinth_modpack', {
+      options: {
+        modpack_id: projectId,
+        version_id: selectedVersionId.value,
+        instance_name: effectiveInstanceName.value,
+        install_path: '',
+      }
+    })
+    
+    notificationStore.success('安装成功', `${effectiveInstanceName.value} 已安装完成`)
     router.push('/instance-manager')
   } catch (e) {
     console.error('安装整合包失败:', e)
@@ -263,6 +505,7 @@ async function install() {
     notificationStore.error('安装失败', errorMessage, true)
   } finally {
     installing.value = false
+    cancelling.value = false
     if (unlistenProgress) {
       unlistenProgress()
       unlistenProgress = null
@@ -270,19 +513,23 @@ async function install() {
   }
 }
 
-onMounted(() => {
-  loadVersions()
+onMounted(async () => {
+  await loadVersions()
+  // 检查默认实例名称
+  if (title) {
+    await checkInstanceName(title)
+  }
 })
 
 onUnmounted(() => {
   if (unlistenProgress) {
     unlistenProgress()
   }
+  if (instanceNameCheckTimeout) {
+    clearTimeout(instanceNameCheckTimeout)
+  }
 })
 
-/**
- * 比较 Minecraft 版本号（降序）
- */
 function compareVersionDesc(a: string, b: string): number {
   const parseVersion = (v: string) => {
     const snapshotMatch = v.match(/^(\d+)w(\d+)([a-z])$/)
@@ -332,4 +579,15 @@ function compareVersionDesc(a: string, b: string): number {
 }
 </script>
 
+<style scoped>
+.install-modpack-container {
+  max-width: 900px;
+  margin: 0 auto;
+}
 
+.config-section {
+  padding: 16px;
+  background: rgb(var(--v-theme-surface-container-low));
+  border-radius: 12px;
+}
+</style>

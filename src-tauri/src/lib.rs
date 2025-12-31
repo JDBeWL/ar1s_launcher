@@ -35,6 +35,7 @@ pub fn run() {
             controllers::config_controller::select_game_dir,
             controllers::config_controller::set_version_isolation,
             controllers::java_controller::find_java_installations_command,
+            controllers::java_controller::refresh_java_installations,
             controllers::java_controller::set_java_path_command,
             controllers::config_controller::load_config_key,
             controllers::config_controller::save_config_key,
@@ -56,6 +57,12 @@ pub fn run() {
             controllers::config_controller::set_auto_memory_enabled,
             controllers::config_controller::auto_set_memory,
             controllers::config_controller::analyze_memory_efficiency,
+            controllers::config_controller::get_window_settings,
+            controllers::config_controller::set_window_settings,
+            controllers::config_controller::get_last_selected_version,
+            controllers::config_controller::set_last_selected_version,
+            controllers::instance_controller::validate_instance_name_cmd,
+            controllers::instance_controller::check_instance_name_available,
             controllers::instance_controller::create_instance,
             controllers::instance_controller::get_instances,
             controllers::instance_controller::delete_instance,
@@ -69,10 +76,28 @@ pub fn run() {
             controllers::loader_controller::get_available_loaders,
             controllers::modpack_controller::search_modrinth_modpacks,
             controllers::modpack_controller::get_modrinth_modpack_versions,
-            controllers::modpack_controller::install_modrinth_modpack
+            controllers::modpack_controller::install_modrinth_modpack,
+            controllers::modpack_controller::cancel_modpack_install
         ])
         .setup(|_| {
             log::info!("[DEBUG] Tauri应用初始化完成");
+            
+            // 预加载配置文件
+            if let Err(e) = services::config::preload_config() {
+                log::error!("配置预加载失败: {}", e);
+            }
+            
+            // 后台预热 Java 检测缓存（异步执行，不阻塞启动）
+            std::thread::spawn(|| {
+                log::info!("后台预热 Java 检测缓存...");
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    if let Err(e) = services::java::find_java_installations_command().await {
+                        log::warn!("Java 缓存预热失败: {}", e);
+                    }
+                });
+            });
+            
             Ok(())
         })
         .run(tauri::generate_context!())

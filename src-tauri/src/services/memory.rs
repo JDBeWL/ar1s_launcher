@@ -37,7 +37,7 @@ pub struct AutoMemoryConfig {
 /// 获取系统内存信息
 pub fn get_system_memory() -> MemoryStats {
     let mut system = MEMORY_SYSTEM.lock().unwrap();
-    system.refresh_memory_specifics(MemoryRefreshKind::new().with_ram());
+    system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
     
     let total_memory_mb = system.total_memory() / 1024 / 1024;
     let used_memory_mb = system.used_memory() / 1024 / 1024;

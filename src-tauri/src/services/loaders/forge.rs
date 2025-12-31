@@ -633,8 +633,19 @@ async fn manual_install_old_forge(
         };
         let name = file.name().to_string();
 
+        // 安全检查：防止路径遍历攻击
+        if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
+            log::warn!("跳过可疑的 zip 条目: {}", name);
+            continue;
+        }
+
         if name.starts_with("maven/") && !name.ends_with('/') {
             if let Some(rel) = name.strip_prefix("maven/") {
+                // 再次检查相对路径
+                if rel.contains("..") {
+                    log::warn!("跳过可疑的 maven 路径: {}", name);
+                    continue;
+                }
                 let target = libraries_dir.join(rel);
                 if let Some(p) = target.parent() {
                     fs::create_dir_all(p).ok();
@@ -724,8 +735,19 @@ async fn manual_install_new_forge(
         };
         let name = file.name().to_string();
 
+        // 安全检查：防止路径遍历攻击
+        if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
+            log::warn!("跳过可疑的 zip 条目: {}", name);
+            continue;
+        }
+
         if name.starts_with("maven/") && !name.ends_with('/') {
             if let Some(rel) = name.strip_prefix("maven/") {
+                // 再次检查相对路径
+                if rel.contains("..") {
+                    log::warn!("跳过可疑的 maven 路径: {}", name);
+                    continue;
+                }
                 let target = libraries_dir.join(rel);
                 if let Some(p) = target.parent() {
                     fs::create_dir_all(p).ok();
@@ -737,6 +759,11 @@ async fn manual_install_new_forge(
             }
         } else if name.starts_with("data/") && !name.ends_with('/') {
             if let Some(rel) = name.strip_prefix("data/") {
+                // 再次检查相对路径
+                if rel.contains("..") {
+                    log::warn!("跳过可疑的 data 路径: {}", name);
+                    continue;
+                }
                 let target = libraries_dir
                     .join("net/minecraftforge/forge")
                     .join(format!(

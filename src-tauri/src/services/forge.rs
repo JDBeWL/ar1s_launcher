@@ -1,6 +1,7 @@
 ﻿use crate::errors::LauncherError;
 use crate::models::ForgeVersion;
 use crate::services::config;
+use crate::services::http_client::get_client;
 
 use log::{debug, error, info, warn};
 use reqwest::Client;
@@ -126,10 +127,10 @@ async fn download_library(
             .map_err(|e| LauncherError::Custom(format!("创建目录失败: {}", e)))?;
     }
 
-    let client = Client::new();
+    let client = get_client();
     for source_url in &sources {
         debug!("Forge: 尝试下载 {}: {}", lib_name, source_url);
-        if let Ok(response) = download_with_retry(source_url, &client, 3).await {
+        if let Ok(response) = download_with_retry(source_url, client, 3).await {
             if let Ok(bytes) = response.bytes().await {
                 if bytes.len() >= 4 && bytes[0..4] == [0x50, 0x4B, 0x03, 0x04] {
                     fs::write(&target_path, &bytes)
@@ -632,9 +633,20 @@ async fn manual_install_old_forge(
         };
         let file_name = file.name().to_string();
 
+        // 安全检查：防止路径遍历攻击
+        if file_name.contains("..") || file_name.starts_with('/') || file_name.starts_with('\\') {
+            log::warn!("跳过可疑的 zip 条目: {}", file_name);
+            continue;
+        }
+
         // 提取 maven 目录下的库
         if file_name.starts_with("maven/") && !file_name.ends_with('/') {
             if let Some(rel_path) = file_name.strip_prefix("maven/") {
+                // 再次检查相对路径
+                if rel_path.contains("..") {
+                    log::warn!("跳过可疑的 maven 路径: {}", file_name);
+                    continue;
+                }
                 let target = libraries_dir.join(rel_path);
                 if let Some(p) = target.parent() { fs::create_dir_all(p).ok(); }
                 let mut buf = Vec::new();
@@ -743,8 +755,19 @@ async fn manual_install_new_forge(
         };
         let name = file.name().to_string();
 
+        // 安全检查：防止路径遍历攻击
+        if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
+            log::warn!("跳过可疑的 zip 条目: {}", name);
+            continue;
+        }
+
         if name.starts_with("maven/") && !name.ends_with('/') {
             if let Some(rel) = name.strip_prefix("maven/") {
+                // 再次检查相对路径
+                if rel.contains("..") {
+                    log::warn!("跳过可疑的 maven 路径: {}", name);
+                    continue;
+                }
                 let target = libraries_dir.join(rel);
                 if let Some(p) = target.parent() { fs::create_dir_all(p).ok(); }
                 let mut buf = Vec::new();
@@ -756,6 +779,11 @@ async fn manual_install_new_forge(
         // 提取 data 目录中的文件 (BINPATCH 等)
         else if name.starts_with("data/") && !name.ends_with('/') {
             if let Some(rel) = name.strip_prefix("data/") {
+                // 再次检查相对路径
+                if rel.contains("..") {
+                    log::warn!("跳过可疑的 data 路径: {}", name);
+                    continue;
+                }
                 let target = libraries_dir.join("net/minecraftforge/forge")
                     .join(format!("{}-{}", forge_version.mcversion, forge_version.version))
                     .join(rel);

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 // 默认下载线程数
@@ -44,6 +45,18 @@ pub struct GameConfig {
     pub download_mirror: Option<String>,
     #[serde(default = "default_false")]
     pub auto_memory_enabled: bool,
+    /// 游戏窗口宽度
+    pub window_width: Option<u32>,
+    /// 游戏窗口高度
+    pub window_height: Option<u32>,
+    /// 是否全屏启动
+    #[serde(default = "default_false")]
+    pub fullscreen: bool,
+    /// 实例上次启动时间 (实例名 -> 时间戳毫秒)
+    #[serde(default)]
+    pub instance_last_played: HashMap<String, i64>,
+    /// 上次选择的游戏版本
+    pub last_selected_version: Option<String>,
 }
 
 // 游戏目录信息
@@ -86,6 +99,12 @@ pub struct LaunchOptions {
     pub version: String,
     pub username: String,
     pub memory: Option<u32>,
+    /// 窗口宽度
+    pub window_width: Option<u32>,
+    /// 窗口高度
+    pub window_height: Option<u32>,
+    /// 是否全屏
+    pub fullscreen: Option<bool>,
 }
 
 // 下载状态

@@ -106,3 +106,42 @@ pub async fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
 pub async fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError> {
     config::analyze_memory_efficiency(memory_mb).await
 }
+
+
+/// 窗口设置
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct WindowSettings {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub fullscreen: bool,
+}
+
+#[tauri::command]
+pub async fn get_window_settings() -> Result<WindowSettings, LauncherError> {
+    let config = config::load_config()?;
+    Ok(WindowSettings {
+        width: config.window_width,
+        height: config.window_height,
+        fullscreen: config.fullscreen,
+    })
+}
+
+#[tauri::command]
+pub async fn set_window_settings(width: Option<u32>, height: Option<u32>, fullscreen: bool) -> Result<(), LauncherError> {
+    let mut config = config::load_config()?;
+    config.window_width = width;
+    config.window_height = height;
+    config.fullscreen = fullscreen;
+    config::save_config(&config)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_last_selected_version() -> Option<String> {
+    config::get_last_selected_version()
+}
+
+#[tauri::command]
+pub async fn set_last_selected_version(version: String) -> Result<(), LauncherError> {
+    config::set_last_selected_version(&version)
+}

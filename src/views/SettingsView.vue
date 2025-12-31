@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import GeneralSettings from "../components/settings/GeneralSettings.vue";
 import JavaSettings from "../components/settings/JavaSettings.vue";
 import MemorySettings from "../components/settings/MemorySettings.vue";
+import WindowSettings from "../components/settings/WindowSettings.vue";
 
 const activeSection = ref('general');
 
@@ -10,6 +11,7 @@ const sections = [
   { id: 'general', title: '常规设置', icon: 'mdi-cog-outline' },
   { id: 'java', title: 'Java 配置', icon: 'mdi-language-java' },
   { id: 'memory', title: '内存管理', icon: 'mdi-memory' },
+  { id: 'window', title: '窗口设置', icon: 'mdi-monitor' },
 ];
 
 function scrollToSection(sectionId: string) {
@@ -22,60 +24,71 @@ function scrollToSection(sectionId: string) {
 </script>
 
 <template>
-  <v-container fluid class="settings-container pa-0">
-    <v-row no-gutters class="fill-height">
-      <!-- 左侧导航 -->
-      <v-col cols="12" md="3" lg="2" class="settings-nav">
-        <div class="nav-header pa-4">
-          <h1 class="text-h5 font-weight-bold">设置</h1>
-          <p class="text-body-2 text-on-surface-variant mt-1">管理启动器配置</p>
-        </div>
-        
-        <v-list nav density="comfortable" class="px-2" bg-color="transparent">
-          <v-list-item
-            v-for="section in sections"
-            :key="section.id"
-            :active="activeSection === section.id"
-            :prepend-icon="section.icon"
-            :title="section.title"
-            class="mb-1 settings-nav-item"
-            @click="scrollToSection(section.id)"
-          />
-        </v-list>
-      </v-col>
+  <div class="settings-container">
+    <!-- 左侧导航 -->
+    <div class="settings-nav">
+      <div class="nav-header pa-4">
+        <h1 class="text-h5 font-weight-bold">设置</h1>
+        <p class="text-body-2 text-on-surface-variant mt-1">管理启动器配置</p>
+      </div>
+      
+      <v-list nav density="comfortable" class="px-2" bg-color="transparent">
+        <v-list-item
+          v-for="section in sections"
+          :key="section.id"
+          :active="activeSection === section.id"
+          :prepend-icon="section.icon"
+          :title="section.title"
+          class="mb-1 settings-nav-item"
+          @click="scrollToSection(section.id)"
+        />
+      </v-list>
+    </div>
 
-      <!-- 右侧内容 -->
-      <v-col cols="12" md="9" lg="10" class="settings-content">
-        <div class="content-wrapper pa-6">
-          <!-- 常规设置 -->
-          <section id="section-general" class="settings-section mb-8">
-            <GeneralSettings />
-          </section>
+    <!-- 右侧内容 -->
+    <div class="settings-content">
+      <div class="content-wrapper pa-6">
+        <!-- 常规设置 -->
+        <section id="section-general" class="settings-section mb-8">
+          <GeneralSettings />
+        </section>
 
-          <!-- Java 配置 -->
-          <section id="section-java" class="settings-section mb-8">
-            <JavaSettings />
-          </section>
+        <!-- Java 配置 -->
+        <section id="section-java" class="settings-section mb-8">
+          <JavaSettings />
+        </section>
 
-          <!-- 内存管理 -->
-          <section id="section-memory" class="settings-section mb-8">
-            <MemorySettings />
-          </section>
-        </div>
-      </v-col>
-    </v-row>
-  </v-container>
+        <!-- 内存管理 -->
+        <section id="section-memory" class="settings-section mb-8">
+          <MemorySettings />
+        </section>
+
+        <!-- 窗口设置 -->
+        <section id="section-window" class="settings-section mb-8">
+          <WindowSettings />
+        </section>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>
 .settings-container {
-  height: 100%;
+  display: flex;
+  height: calc(100vh - 64px); /* 减去顶部标题栏高度 */
   overflow: hidden;
+  position: fixed;
+  top: 64px;
+  left: 64px; /* 左侧导航栏宽度 */
+  right: 0;
 }
 
 .settings-nav {
+  width: 200px;
+  min-width: 200px;
   background-color: rgb(var(--v-theme-surface-container));
   height: 100%;
+  flex-shrink: 0;
   overflow-y: auto;
 }
 
@@ -89,6 +102,7 @@ function scrollToSection(sectionId: string) {
 }
 
 .settings-content {
+  flex: 1;
   height: 100%;
   overflow-y: auto;
 }

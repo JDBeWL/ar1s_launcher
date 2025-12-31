@@ -303,6 +303,8 @@ Ar1s_Launcher/
 - [BMCLAPI](https://bmclapidoc.bangbang93.com/) - Minecraft镜像下载服务
 - [Modrinth](https://modrinth.com/) - 开源整合包和Mod平台
 
+感谢[M-Crowe](https://github.com/m-crowe)的测试和部分非MD3 UI的设计。
+
 ## 路线图
 
 - [ ] CurseForge 整合包支持

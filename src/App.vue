@@ -27,10 +27,22 @@ const isDarkMode = ref(true)
 
 // 切换主题模式
 function toggleTheme() {
+  // 临时禁用所有过渡效果
+  const html = document.documentElement
+  html.classList.add('no-transition')
+  document.body.classList.add('no-transition')
+  
   isDarkMode.value = !isDarkMode.value
   const newTheme = isDarkMode.value ? 'dark' : 'light'
   theme.change(newTheme)
   localStorage.setItem('theme', newTheme)
+  
+  // 强制重绘后移除禁用类
+  // 使用 setTimeout 确保浏览器有足够时间应用样式
+  setTimeout(() => {
+    html.classList.remove('no-transition')
+    document.body.classList.remove('no-transition')
+  }, 50)
 }
 
 const downloadStore = useDownloadStore()
@@ -177,7 +189,7 @@ onUnmounted(() => {
 
 /* Theme toggle animation */
 .theme-toggle-btn {
-  transition: transform 0.3s ease;
+  transform: rotate(0deg);
 }
 
 .theme-toggle-btn:hover {
@@ -202,15 +214,6 @@ onUnmounted(() => {
 
 .nav-item.v-list-item--active .v-icon {
   color: rgb(var(--v-theme-on-secondary-container));
-}
-
-/* MD3 elevation and transitions */
-.v-btn {
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.v-card {
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* MD3 Surface tones */
@@ -243,10 +246,5 @@ onUnmounted(() => {
 .v-navigation-drawer--rail .nav-list .v-list-item .v-list-item-title,
 .v-navigation-drawer--rail .nav-list .v-list-item .v-list-item__content {
   display: none !important;
-}
-
-/* Smooth theme transition */
-.v-application {
-  transition: background-color 0.3s ease, color 0.3s ease;
 }
 </style>

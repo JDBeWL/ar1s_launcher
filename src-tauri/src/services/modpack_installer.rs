@@ -1,13 +1,50 @@
 use crate::errors::LauncherError;
 use crate::models::modpack::*;
 use crate::services::{config, download, loaders, modrinth};
-use crate::utils::file_utils;
+use crate::utils::file_utils::{self, validate_instance_name_or_error};
 use log::{debug, error, info, warn};
 use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::Emitter;
+
+/// 全局取消标志
+static MODPACK_CANCEL_FLAG: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
+
+/// 获取或初始化取消标志
+fn get_cancel_flag() -> Arc<AtomicBool> {
+    MODPACK_CANCEL_FLAG
+        .get_or_init(|| Arc::new(AtomicBool::new(false)))
+        .clone()
+}
+
+/// 重置取消标志
+pub fn reset_modpack_cancel_flag() {
+    // 确保标志已初始化，然后重置为 false
+    get_cancel_flag().store(false, Ordering::SeqCst);
+}
+
+/// 设置取消标志
+pub fn set_modpack_cancel_flag() {
+    get_cancel_flag().store(true, Ordering::SeqCst);
+}
+
+/// 检查是否已取消
+fn is_cancelled() -> bool {
+    get_cancel_flag().load(Ordering::SeqCst)
+}
+
+/// 检查取消状态，如果已取消则返回错误
+fn check_cancelled() -> Result<(), LauncherError> {
+    if is_cancelled() {
+        Err(LauncherError::Custom("安装已取消".to_string()))
+    } else {
+        Ok(())
+    }
+}
 
 #[derive(Clone, serde::Serialize)]
 pub struct ModpackInstallProgress {
@@ -89,10 +126,61 @@ impl ModpackInstaller {
         options: ModpackInstallOptions,
         window: &tauri::Window,
     ) -> Result<(), LauncherError> {
+        // 重置取消标志
+        reset_modpack_cancel_flag();
+        
+        // 验证实例名称
+        validate_instance_name_or_error(&options.instance_name)?;
+        
         let config = config::load_config()?;
         let game_dir = PathBuf::from(&config.game_dir);
         let instance_dir = game_dir.join("versions").join(&options.instance_name);
+        let temp_dir = game_dir.join("temp");
+        let extract_dir = temp_dir.join(format!("{}_extract", &options.instance_name));
 
+        // 1. 检查实例是否已存在
+        if instance_dir.exists() {
+            return Err(LauncherError::Custom(format!(
+                "名为 '{}' 的实例已存在，请使用其他名称",
+                options.instance_name
+            )));
+        }
+
+        // 执行安装，如果失败或取消则清理
+        let result = self.do_install_modrinth_modpack(&options, window, &game_dir, &instance_dir, &temp_dir, &extract_dir).await;
+        
+        // 如果安装失败或被取消，清理已创建的目录
+        if result.is_err() {
+            info!("安装失败或被取消，清理已创建的文件...");
+            
+            // 清理实例目录
+            if instance_dir.exists() {
+                if let Err(e) = fs::remove_dir_all(&instance_dir) {
+                    warn!("清理实例目录失败: {}", e);
+                } else {
+                    info!("已清理实例目录: {}", instance_dir.display());
+                }
+            }
+            
+            // 清理解压目录
+            if extract_dir.exists() {
+                let _ = fs::remove_dir_all(&extract_dir);
+            }
+        }
+        
+        result
+    }
+    
+    /// 执行实际的整合包安装逻辑
+    async fn do_install_modrinth_modpack(
+        &self,
+        options: &ModpackInstallOptions,
+        window: &tauri::Window,
+        game_dir: &PathBuf,
+        instance_dir: &PathBuf,
+        temp_dir: &PathBuf,
+        extract_dir: &PathBuf,
+    ) -> Result<(), LauncherError> {
         // 发送进度更新
         let send_progress = |progress: u8, message: &str, indeterminate: bool| {
             let _ = window.emit(
@@ -106,16 +194,10 @@ impl ModpackInstaller {
         };
 
         send_progress(5, "检查实例目录...", false);
-
-        // 1. 检查实例是否已存在
-        if instance_dir.exists() {
-            return Err(LauncherError::Custom(format!(
-                "名为 '{}' 的实例已存在",
-                options.instance_name
-            )));
-        }
+        check_cancelled()?;
 
         send_progress(10, "获取整合包信息...", false);
+        check_cancelled()?;
 
         // 2. 获取整合包详细信息
         let modpack = self
@@ -125,6 +207,7 @@ impl ModpackInstaller {
             .map_err(|e| LauncherError::Custom(format!("获取整合包信息失败: {}", e)))?;
 
         send_progress(15, "获取整合包版本...", false);
+        check_cancelled()?;
 
         // 3. 获取指定版本信息
         let versions = self
@@ -139,6 +222,7 @@ impl ModpackInstaller {
             .ok_or_else(|| LauncherError::Custom("未找到指定的整合包版本".to_string()))?;
 
         send_progress(20, "下载整合包文件...", false);
+        check_cancelled()?;
 
         // 4. 下载整合包文件
         let primary_file = selected_version
@@ -148,7 +232,6 @@ impl ModpackInstaller {
             .or_else(|| selected_version.files.first())
             .ok_or_else(|| LauncherError::Custom("整合包没有可用的文件".to_string()))?;
 
-        let temp_dir = game_dir.join("temp");
         if !temp_dir.exists() {
             fs::create_dir_all(&temp_dir)?;
         }
@@ -161,9 +244,9 @@ impl ModpackInstaller {
             .map_err(|e| LauncherError::Custom(format!("下载整合包文件失败: {}", e)))?;
 
         send_progress(35, "解压整合包...", false);
+        check_cancelled()?;
 
         // 5. 解压整合包
-        let extract_dir = temp_dir.join(format!("{}_extract", &options.instance_name));
         if extract_dir.exists() {
             fs::remove_dir_all(&extract_dir)?;
         }
@@ -174,6 +257,7 @@ impl ModpackInstaller {
             .map_err(|e| LauncherError::Custom(format!("解压整合包失败: {}", e)))?;
 
         send_progress(45, "处理整合包配置...", false);
+        check_cancelled()?;
 
         // 6. 处理整合包配置
         let index_path = extract_dir.join("modrinth.index.json");
@@ -191,6 +275,7 @@ impl ModpackInstaller {
         fs::create_dir_all(&instance_dir)?;
 
         send_progress(50, "复制整合包文件...", false);
+        check_cancelled()?;
 
         // 7. 复制 overrides 目录内容
         let overrides_dir = extract_dir.join("overrides");
@@ -209,11 +294,13 @@ impl ModpackInstaller {
         // 8. 下载 mods 和其他依赖文件
         if let Some(ref index) = modrinth_index {
             send_progress(55, "下载模组文件...", false);
+            check_cancelled()?;
             self.download_modpack_files(&index.files, &instance_dir, window)
                 .await?;
         }
 
         send_progress(75, "安装游戏版本...", false);
+        check_cancelled()?;
 
         // 9. 安装基础游戏版本和加载器
         if let Some(ref index) = modrinth_index {
@@ -227,6 +314,7 @@ impl ModpackInstaller {
         }
 
         send_progress(90, "创建实例配置...", false);
+        check_cancelled()?;
 
         // 10. 创建实例配置文件
         let mc_version = modrinth_index
@@ -289,6 +377,9 @@ impl ModpackInstaller {
         info!("开始下载 {} 个文件", total_files);
 
         for (index, file) in files.iter().enumerate() {
+            // 检查是否已取消
+            check_cancelled()?;
+            
             let progress = 55 + ((index as f32 / total_files as f32) * 20.0) as u8;
             let _ = window.emit(
                 "modpack-install-progress",
@@ -315,6 +406,11 @@ impl ModpackInstaller {
             // 尝试从所有下载源下载
             let mut downloaded = false;
             for url in &file.downloads {
+                // 每次下载前检查取消状态
+                if is_cancelled() {
+                    return Err(LauncherError::Custom("安装已取消".to_string()));
+                }
+                
                 match self.download_file_with_retry(url, &dest_path, 3).await {
                     Ok(_) => {
                         downloaded = true;
@@ -496,9 +592,34 @@ impl ModpackInstaller {
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let outpath = extract_dir.join(file.name());
+            let file_name = file.name().to_string();
+            
+            // 安全检查：防止路径遍历攻击
+            // 检查是否包含 ".." 或绝对路径
+            if file_name.contains("..") || file_name.starts_with('/') || file_name.starts_with('\\') {
+                log::warn!("跳过可疑的 zip 条目: {}", file_name);
+                continue;
+            }
+            
+            // 在 Windows 上也检查驱动器路径 (如 C:)
+            #[cfg(windows)]
+            if file_name.len() >= 2 && file_name.chars().nth(1) == Some(':') {
+                log::warn!("跳过可疑的 zip 条目 (绝对路径): {}", file_name);
+                continue;
+            }
+            
+            let outpath = extract_dir.join(&file_name);
+            
+            // 确保解压路径在目标目录内
+            let canonical_extract = extract_dir.canonicalize().unwrap_or_else(|_| extract_dir.clone());
+            if let Ok(canonical_out) = outpath.canonicalize() {
+                if !canonical_out.starts_with(&canonical_extract) {
+                    log::warn!("跳过路径遍历尝试: {} -> {}", file_name, canonical_out.display());
+                    continue;
+                }
+            }
 
-            if file.name().ends_with('/') {
+            if file_name.ends_with('/') {
                 fs::create_dir_all(&outpath)?;
             } else {
                 if let Some(p) = outpath.parent() {

@@ -6,7 +6,7 @@
 //! - 单文件下载
 //! - 版本清单获取
 
-mod batch;
+pub mod batch;
 mod file;
 mod http;
 mod manifest;

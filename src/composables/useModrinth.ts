@@ -1,5 +1,6 @@
-import { ref, computed } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
+import { ref, computed, watch } from 'vue';
+import { api } from '../services';
+import { useDebounceFn } from './useDebounce';
 
 export interface ModrinthModpack {
     slug: string;
@@ -53,10 +54,10 @@ export function useModrinth() {
 
     async function fetchGameVersions() {
         try {
-            const manifest = await invoke("get_versions");
-            gameVersions.value = (manifest as any).versions
-                .filter((v: any) => v.type === "release")
-                .map((v: any) => v.id)
+            const manifest = await api.version.getVersions();
+            gameVersions.value = manifest.versions
+                .filter((v) => v.type === "release")
+                .map((v) => v.id)
                 .sort((a: string, b: string) => {
                     const aParts = a.split('.').map(Number);
                     const bParts = b.split('.').map(Number);
@@ -72,12 +73,12 @@ export function useModrinth() {
         }
     }
 
-    async function searchModpacks() {
+    async function searchModpacksInternal() {
         loadingModpacks.value = true;
         try {
             const offset = (modpackCurrentPage.value - 1) * modpackItemsPerPage;
 
-            const result = await invoke("search_modrinth_modpacks", {
+            const result = await api.modpack.searchModrinthModpacks({
                 query: modpackSearchQuery.value || undefined,
                 gameVersions: selectedGameVersion.value ? [selectedGameVersion.value] : undefined,
                 loaders: selectedLoader.value ? [selectedLoader.value] : undefined,
@@ -85,7 +86,7 @@ export function useModrinth() {
                 limit: modpackItemsPerPage,
                 offset: offset,
                 sortBy: sortBy.value,
-            }) as ModrinthSearchResult;
+            });
 
             modpacks.value = result.hits || [];
             modpackTotalHits.value = result.total_hits || 0;
@@ -99,6 +100,35 @@ export function useModrinth() {
             loadingModpacks.value = false;
         }
     }
+
+    // 防抖搜索（300ms）
+    const debouncedSearch = useDebounceFn(searchModpacksInternal, 300);
+
+    // 立即搜索（用于分页、筛选器变化等）
+    async function searchModpacks() {
+        await searchModpacksInternal();
+    }
+
+    // 防抖搜索（用于输入框输入）
+    function searchModpacksDebounced() {
+        debouncedSearch.call();
+    }
+
+    // 监听搜索关键词变化，自动防抖搜索
+    watch(modpackSearchQuery, () => {
+        if (!modpackInitialLoad.value) {
+            modpackCurrentPage.value = 1;
+            searchModpacksDebounced();
+        }
+    });
+
+    // 监听筛选器变化，立即搜索
+    watch([selectedGameVersion, selectedLoader, selectedCategory, sortBy], () => {
+        if (!modpackInitialLoad.value) {
+            modpackCurrentPage.value = 1;
+            searchModpacks();
+        }
+    });
 
     async function onModpackPageChange(page: number) {
         modpackCurrentPage.value = page;
@@ -123,6 +153,7 @@ export function useModrinth() {
         modpackSortOptions,
         fetchGameVersions,
         searchModpacks,
+        searchModpacksDebounced,
         onModpackPageChange
     };
 }

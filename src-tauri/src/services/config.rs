@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use sysinfo::System;
 use tauri::Emitter;
 
@@ -16,12 +17,35 @@ use crate::services::memory::{
 static CONFIG_CACHE: std::sync::LazyLock<RwLock<Option<GameConfig>>> = 
     std::sync::LazyLock::new(|| RwLock::new(None));
 
+// 标记配置是否已预加载
+static CONFIG_PRELOADED: AtomicBool = AtomicBool::new(false);
+
+/// 预加载配置（应在应用启动时调用）
+/// 这会立即加载配置到缓存，避免后续的锁竞争
+pub fn preload_config() -> Result<(), LauncherError> {
+    if CONFIG_PRELOADED.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    
+    log::info!("预加载配置文件...");
+    let config = load_config_internal()?;
+    
+    if let Ok(mut cache) = CONFIG_CACHE.write() {
+        *cache = Some(config);
+    }
+    
+    CONFIG_PRELOADED.store(true, Ordering::Relaxed);
+    log::info!("配置文件预加载完成");
+    Ok(())
+}
+
 /// 清除配置缓存（供外部模块在需要时调用）
-#[allow(dead_code)]
 pub fn invalidate_config_cache() {
     if let Ok(mut cache) = CONFIG_CACHE.write() {
         *cache = None;
     }
+    CONFIG_PRELOADED.store(false, Ordering::Relaxed);
+    log::debug!("配置缓存已清除");
 }
 
 // 获取保存的用户名
@@ -52,15 +76,28 @@ pub async fn set_saved_uuid(uuid: String) -> Result<(), LauncherError> {
     Ok(())
 }
 
-/// 加载配置文件（带缓存）
+/// 加载配置文件（带缓存，优化版本）
 pub fn load_config() -> Result<GameConfig, LauncherError> {
-    // 先检查缓存
+    // 快速路径：先尝试读取缓存（使用读锁，允许并发读取）
     if let Ok(cache) = CONFIG_CACHE.read() {
         if let Some(ref config) = *cache {
             return Ok(config.clone());
         }
     }
 
+    // 缓存未命中，加载配置
+    let config = load_config_internal()?;
+    
+    // 更新缓存
+    if let Ok(mut cache) = CONFIG_CACHE.write() {
+        *cache = Some(config.clone());
+    }
+    
+    Ok(config)
+}
+
+/// 内部配置加载函数（不使用缓存）
+fn load_config_internal() -> Result<GameConfig, LauncherError> {
     let config_path = get_config_path()?;
     let is_first_run = !config_path.exists();
 
@@ -68,145 +105,100 @@ pub fn load_config() -> Result<GameConfig, LauncherError> {
         let content = fs::read_to_string(&config_path)?;
         // 如果配置文件内容为空或损坏，自动备份并重建默认配置
         match serde_json::from_str::<GameConfig>(&content) {
-            Ok(config) => {
-                // 更新缓存
-                if let Ok(mut cache) = CONFIG_CACHE.write() {
-                    *cache = Some(config.clone());
-                }
-                Ok(config)
-            }
+            Ok(config) => Ok(config),
             Err(_) => {
                 // 备份损坏的配置文件
                 let backup_path = config_path.with_extension("bak");
                 let _ = fs::copy(&config_path, &backup_path);
+                log::warn!("配置文件损坏，已备份并重建默认配置");
                 // 重建默认配置
-                let exe_path = std::env::current_exe()?;
-                let exe_dir = exe_path
-                    .parent()
-                    .ok_or_else(|| LauncherError::Custom("无法获取可执行文件目录".to_string()))?;
-
-                let mc_dir = exe_dir.join(".minecraft");
-                let mc_dir_str = mc_dir.to_string_lossy().into_owned();
-
-                if !mc_dir.exists() {
-                    fs::create_dir_all(&mc_dir)?;
-                    let sub_dirs = [
-                        "versions",
-                        "libraries",
-                        "assets",
-                        "saves",
-                        "resourcepacks",
-                        "logs",
-                    ];
-                    for dir in sub_dirs {
-                        fs::create_dir_all(mc_dir.join(dir))?;
-                    }
-                }
-
-                let mut config = GameConfig {
-                    game_dir: mc_dir_str,
-                    version_isolation: true,
-                    java_path: None,
-                    download_threads: 8,
-                    language: Some("zh_cn".to_string()),
-                    isolate_saves: true,
-                    isolate_resourcepacks: true,
-                    isolate_logs: true,
-                    username: None,
-                    uuid: None,
-                    max_memory: crate::models::default_max_memory(),
-                    download_mirror: Some("bmcl".to_string()),
-                    auto_memory_enabled: false,
-                };
-
-                // 首次运行时自动检测Java
-                if is_first_run {
-                    if let Ok(java_paths) = auto_detect_java() {
-                        if let Some(java_path) = java_paths.first() {
-                            config.java_path = Some(java_path.clone());
-                            log::info!("首次启动自动检测到Java路径: {}", java_path);
-                        }
-                    }
-                }
-
-                save_config(&config)?;
-                Ok(config)
+                create_default_config(is_first_run)
             }
         }
     } else {
-        // 获取可执行文件路径并确保其存在
-        let exe_path = std::env::current_exe()?;
-        let exe_dir = exe_path
-            .parent()
-            .ok_or_else(|| LauncherError::Custom("无法获取可执行文件目录".to_string()))?;
-
-        // 创建路径变量并确保所有权
-        let mc_dir = exe_dir.join(".minecraft");
-        let mc_dir_str = mc_dir.to_string_lossy().into_owned();
-
-        // 创建目录结构
-        if !mc_dir.exists() {
-            fs::create_dir_all(&mc_dir)?;
-            // 创建必要的子目录
-            let sub_dirs = [
-                "versions",
-                "libraries",
-                "assets",
-                "saves",
-                "resourcepacks",
-                "logs",
-            ];
-            for dir in sub_dirs {
-                fs::create_dir_all(mc_dir.join(dir))?;
-            }
-        }
-
-        // 创建并返回配置
-        let mut config = GameConfig {
-            game_dir: mc_dir_str,
-            version_isolation: true,
-            java_path: None,
-            download_threads: 8,
-            language: Some("zh_cn".to_string()),
-            isolate_saves: true,
-            isolate_resourcepacks: true,
-            isolate_logs: true,
-            username: None,
-            uuid: None,
-            max_memory: crate::models::default_max_memory(),
-            download_mirror: Some("bmcl".to_string()),
-            auto_memory_enabled: false,
-        };
-
-        // 首次运行时自动检测Java
-        if is_first_run {
-            if let Ok(java_paths) = auto_detect_java() {
-                if let Some(java_path) = java_paths.first() {
-                    config.java_path = Some(java_path.clone());
-                    log::info!("首次启动自动检测到Java路径: {}", java_path);
-                }
-            }
-        }
-
-        // 保存配置
-        save_config(&config)?;
-
-        Ok(config)
+        // 创建默认配置
+        create_default_config(is_first_run)
     }
+}
+
+/// 创建默认配置
+fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError> {
+    let exe_path = std::env::current_exe()?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or_else(|| LauncherError::Custom("无法获取可执行文件目录".to_string()))?;
+
+    let mc_dir = exe_dir.join(".minecraft");
+    let mc_dir_str = mc_dir.to_string_lossy().into_owned();
+
+    if !mc_dir.exists() {
+        fs::create_dir_all(&mc_dir)?;
+        let sub_dirs = [
+            "versions",
+            "libraries",
+            "assets",
+            "saves",
+            "resourcepacks",
+            "logs",
+        ];
+        for dir in sub_dirs {
+            fs::create_dir_all(mc_dir.join(dir))?;
+        }
+    }
+
+    let mut config = GameConfig {
+        game_dir: mc_dir_str,
+        version_isolation: true,
+        java_path: None,
+        download_threads: 8,
+        language: Some("zh_cn".to_string()),
+        isolate_saves: true,
+        isolate_resourcepacks: true,
+        isolate_logs: true,
+        username: None,
+        uuid: None,
+        max_memory: crate::models::default_max_memory(),
+        download_mirror: Some("bmcl".to_string()),
+        auto_memory_enabled: false,
+        window_width: None,
+        window_height: None,
+        fullscreen: false,
+        instance_last_played: std::collections::HashMap::new(),
+        last_selected_version: None,
+    };
+
+    // 首次运行时自动检测Java
+    if is_first_run {
+        if let Ok(java_paths) = auto_detect_java() {
+            if let Some(java_path) = java_paths.first() {
+                config.java_path = Some(java_path.clone());
+                log::info!("首次启动自动检测到Java路径: {}", java_path);
+            }
+        }
+    }
+
+    save_config_internal(&config)?;
+    Ok(config)
 }
 
 use crate::services::java::auto_detect_java;
 
 /// 保存配置文件（同时更新缓存）
 pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
-    let config_path = get_config_path()?;
-    fs::write(config_path, serde_json::to_string_pretty(config)?)?;
+    save_config_internal(config)?;
     
     // 更新缓存
     if let Ok(mut cache) = CONFIG_CACHE.write() {
         *cache = Some(config.clone());
     }
     
+    Ok(())
+}
+
+/// 内部保存函数（不更新缓存）
+fn save_config_internal(config: &GameConfig) -> Result<(), LauncherError> {
+    let config_path = get_config_path()?;
+    fs::write(config_path, serde_json::to_string_pretty(config)?)?;
     Ok(())
 }
 
@@ -478,4 +470,50 @@ pub async fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, Launche
     Ok(crate::services::memory::analyze_memory_efficiency(
         memory_mb,
     ))
+}
+
+/// 更新实例的上次启动时间
+pub fn update_instance_last_played(instance_name: &str) -> Result<(), LauncherError> {
+    let mut config = load_config()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    config.instance_last_played.insert(instance_name.to_string(), now);
+    save_config(&config)
+}
+
+/// 获取实例的上次启动时间
+pub fn get_instance_last_played(instance_name: &str) -> Option<i64> {
+    load_config().ok()
+        .and_then(|config| config.instance_last_played.get(instance_name).copied())
+}
+
+/// 删除实例的上次启动时间记录
+pub fn remove_instance_last_played(instance_name: &str) -> Result<(), LauncherError> {
+    let mut config = load_config()?;
+    config.instance_last_played.remove(instance_name);
+    save_config(&config)
+}
+
+/// 重命名实例的上次启动时间记录
+pub fn rename_instance_last_played(old_name: &str, new_name: &str) -> Result<(), LauncherError> {
+    let mut config = load_config()?;
+    if let Some(time) = config.instance_last_played.remove(old_name) {
+        config.instance_last_played.insert(new_name.to_string(), time);
+        save_config(&config)?;
+    }
+    Ok(())
+}
+
+/// 获取上次选择的游戏版本
+pub fn get_last_selected_version() -> Option<String> {
+    load_config().ok().and_then(|c| c.last_selected_version)
+}
+
+/// 设置上次选择的游戏版本
+pub fn set_last_selected_version(version: &str) -> Result<(), LauncherError> {
+    let mut config = load_config()?;
+    config.last_selected_version = Some(version.to_string());
+    save_config(&config)
 }

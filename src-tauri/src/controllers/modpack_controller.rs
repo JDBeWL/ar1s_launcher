@@ -52,3 +52,10 @@ pub async fn install_modrinth_modpack(
     let installer = modpack_installer::ModpackInstaller::new();
     installer.install_modrinth_modpack(options, &window).await
 }
+
+/// 取消整合包安装
+#[tauri::command]
+pub async fn cancel_modpack_install() -> Result<(), LauncherError> {
+    modpack_installer::set_modpack_cancel_flag();
+    Ok(())
+}

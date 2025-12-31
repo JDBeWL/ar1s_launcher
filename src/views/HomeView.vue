@@ -3,6 +3,7 @@ import { ref, onMounted, watch, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useVersionManager } from "../composables/useVersionManager";
 import { useGameLaunch } from "../composables/useGameLaunch";
+import { formatTimeAgo } from "../utils/format";
 
 const {
   installedVersions,
@@ -24,7 +25,56 @@ const {
 const username = ref('')
 const offlineMode = ref(true)
 
-const isReady = computed(() => selectedVersion.value && username.value)
+const isReady = computed(() => selectedVersion.value && username.value && username.value.trim())
+
+// 最近游玩记录
+const RECENT_PLAY_KEY = 'minecraft_recent_plays'
+const MAX_RECENT = 3
+
+interface RecentPlay {
+  version: string
+  timestamp: number
+}
+
+const recentPlays = ref<RecentPlay[]>([])
+
+function loadRecentPlays() {
+  try {
+    const saved = localStorage.getItem(RECENT_PLAY_KEY)
+    if (saved) {
+      recentPlays.value = JSON.parse(saved)
+    }
+  } catch (e) {
+    console.error('Failed to load recent plays:', e)
+  }
+}
+
+function saveRecentPlay(version: string) {
+  const now = Date.now()
+  const filtered = recentPlays.value.filter(p => p.version !== version)
+  filtered.unshift({ version, timestamp: now })
+  recentPlays.value = filtered.slice(0, MAX_RECENT)
+  localStorage.setItem(RECENT_PLAY_KEY, JSON.stringify(recentPlays.value))
+}
+
+function quickLaunch(version: string) {
+  selectedVersion.value = version
+  if (isReady.value) {
+    handleLaunch()
+  }
+}
+
+// 实例统计
+const instanceCount = ref(0)
+
+async function loadInstanceCount() {
+  try {
+    const instances = await invoke('get_instances') as any[]
+    instanceCount.value = instances?.length || 0
+  } catch (e) {
+    console.error('Failed to load instances:', e)
+  }
+}
 
 async function loadUsername() {
   try {
@@ -52,6 +102,10 @@ watch(username, (newName) => {
 });
 
 async function handleLaunch() {
+  // 记录最近游玩
+  if (selectedVersion.value) {
+    saveRecentPlay(selectedVersion.value)
+  }
   await launchGame(
     selectedVersion.value,
     username.value,
@@ -64,171 +118,86 @@ onMounted(async () => {
   await loadGameDir();
   await loadUsername();
   await initListeners();
+  loadRecentPlays();
+  await loadInstanceCount();
 });
 </script>
 
 <template>
   <v-container fluid class="home-container pa-4">
-    <!-- 顶部欢迎区域 -->
-    <div class="welcome-section mb-5">
-      <h1 class="text-h5 font-weight-bold mb-1">欢迎回来</h1>
-      <p class="text-body-2 text-on-surface-variant">准备好开始你的 Minecraft 冒险了吗？</p>
-    </div>
-
     <v-row>
-      <!-- 左侧主要区域 -->
-      <v-col cols="12" md="8">
-        <!-- 启动卡片 -->
-        <v-card color="surface-container-low" class="launch-card mb-4">
-          <v-card-text class="pa-5">
-            <v-row align="center" no-gutters>
-              <v-col cols="12" sm="7" class="pr-sm-4">
-                <div class="d-flex align-center mb-4">
-                  <v-avatar size="48" color="primary-container" class="mr-3">
-                    <v-icon size="24" color="on-primary-container">mdi-minecraft</v-icon>
-                  </v-avatar>
-                  <div>
-                    <div class="text-subtitle-1 font-weight-bold">启动游戏</div>
-                    <div class="text-body-2 text-on-surface-variant">
-                      {{ selectedVersion ? `已选择: ${selectedVersion}` : '请选择游戏版本' }}
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 版本选择 -->
-                <v-select
-                  v-model="selectedVersion"
-                  :items="installedVersions"
-                  :loading="versionLoading"
-                  label="游戏版本"
-                  hide-details
-                  class="mb-3"
-                >
-                  <template #prepend-inner>
-                    <v-icon size="20" color="on-surface-variant">mdi-gamepad-variant</v-icon>
-                  </template>
-                  <template #append>
-                    <v-btn
-                      icon
-                      variant="text"
-                      size="x-small"
-                      :loading="versionLoading"
-                      @click.stop="loadInstalledVersions"
-                    >
-                      <v-icon size="18">mdi-refresh</v-icon>
-                    </v-btn>
-                  </template>
-                  <template #no-data>
-                    <v-list-item>
-                      <v-list-item-title class="text-on-surface-variant">
-                        没有已安装的版本
-                      </v-list-item-title>
-                    </v-list-item>
-                  </template>
-                </v-select>
-
-                <!-- 用户名输入 -->
-                <v-text-field
-                  v-model="username"
-                  label="玩家名称"
-                  hide-details
-                  placeholder="输入你的游戏名称"
-                >
-                  <template #prepend-inner>
-                    <v-icon size="20" color="on-surface-variant">mdi-account</v-icon>
-                  </template>
-                </v-text-field>
-              </v-col>
-
-              <v-col cols="12" sm="5" class="d-flex flex-column align-center justify-center py-4 py-sm-0">
-                <v-btn
-                  size="large"
-                  color="primary"
-                  :loading="launchLoading"
-                  :disabled="!isReady"
-                  elevation="0"
-                  class="launch-btn px-10"
-                  @click="handleLaunch"
-                >
-                  <v-icon start size="24">mdi-play</v-icon>
-                  启动
-                </v-btn>
-                <div class="text-caption text-on-surface-variant mt-3">
-                  <v-icon size="14" class="mr-1" :color="isReady ? 'success' : 'on-surface-variant'">
-                    {{ isReady ? 'mdi-check-circle' : 'mdi-information' }}
-                  </v-icon>
-                  {{ isReady ? '准备就绪' : '请填写版本和玩家名称' }}
-                </div>
-              </v-col>
-            </v-row>
-          </v-card-text>
-        </v-card>
-
-        <!-- 快捷操作 -->
-        <v-row dense>
-          <v-col cols="4">
-            <v-card
-              color="surface-container"
-              class="quick-action-card"
-              to="/download"
-            >
-              <v-card-text class="pa-4 text-center">
-                <v-avatar size="48" color="primary-container" class="mb-3">
-                  <v-icon size="24" color="on-primary-container">mdi-download</v-icon>
-                </v-avatar>
-                <div class="text-body-2 font-weight-medium">下载版本</div>
-                <div class="text-caption text-on-surface-variant d-none d-sm-block">获取新的游戏版本</div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-          <v-col cols="4">
-            <v-card
-              color="surface-container"
-              class="quick-action-card"
-              to="/add-instance"
-            >
-              <v-card-text class="pa-4 text-center">
-                <v-avatar size="48" color="primary-container" class="mb-3">
-                  <v-icon size="24" color="on-primary-container">mdi-plus-circle</v-icon>
-                </v-avatar>
-                <div class="text-body-2 font-weight-medium">添加实例</div>
-                <div class="text-caption text-on-surface-variant d-none d-sm-block">创建自定义游戏实例</div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-          <v-col cols="4">
-            <v-card
-              color="surface-container"
-              class="quick-action-card"
-              to="/instance-manager"
-            >
-              <v-card-text class="pa-4 text-center">
-                <v-avatar size="48" color="primary-container" class="mb-3">
-                  <v-icon size="24" color="on-primary-container">mdi-folder-multiple</v-icon>
-                </v-avatar>
-                <div class="text-body-2 font-weight-medium">实例管理</div>
-                <div class="text-caption text-on-surface-variant d-none d-sm-block">管理已有的游戏实例</div>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
-      </v-col>
-
-      <!-- 右侧信息区域 -->
-      <v-col cols="12" md="4">
-        <!-- 游戏设置 -->
-        <v-card color="surface-container" class="mb-4">
-          <v-card-text class="pa-4">
-            <div class="d-flex align-center mb-4">
-              <v-avatar size="40" color="primary-container" class="mr-3">
-                <v-icon size="20" color="on-primary-container">mdi-cog</v-icon>
+      <!-- 左侧：启动区域 -->
+      <v-col cols="12" md="7">
+        <div class="d-flex flex-column ga-3 h-100">
+          <v-card color="surface-container" variant="flat">
+            <v-card-text class="pa-5">
+            <!-- 标题 -->
+            <div class="d-flex align-center mb-5">
+              <v-avatar size="52" color="primary">
+                <v-icon size="26" color="on-primary">mdi-minecraft</v-icon>
               </v-avatar>
-              <div class="text-body-1 font-weight-medium">游戏设置</div>
+              <div class="ml-4">
+                <div class="text-h6 font-weight-bold">启动游戏</div>
+                <div class="text-body-2 text-on-surface-variant">
+                  {{ selectedVersion || '选择版本开始游戏' }}
+                </div>
+              </div>
             </div>
 
-            <div class="d-flex align-center justify-space-between py-2">
+            <!-- 版本选择 -->
+            <v-select
+              v-model="selectedVersion"
+              :items="installedVersions"
+              :loading="versionLoading"
+              label="游戏版本"
+              density="comfortable"
+              variant="outlined"
+              hide-details
+              class="mb-3"
+            >
+              <template #prepend-inner>
+                <v-icon size="18" color="on-surface-variant">mdi-gamepad-variant</v-icon>
+              </template>
+              <template #append-inner>
+                <v-btn
+                  icon
+                  variant="text"
+                  size="x-small"
+                  :loading="versionLoading"
+                  @click.stop="loadInstalledVersions"
+                >
+                  <v-icon size="16">mdi-refresh</v-icon>
+                </v-btn>
+              </template>
+              <template #no-data>
+                <v-list-item>
+                  <v-list-item-title class="text-on-surface-variant">
+                    没有已安装的版本
+                  </v-list-item-title>
+                </v-list-item>
+              </template>
+            </v-select>
+
+            <!-- 玩家名称 -->
+            <v-text-field
+              v-model="username"
+              label="玩家名称"
+              density="comfortable"
+              variant="outlined"
+              hide-details
+              placeholder="输入游戏名称"
+              autocomplete="off"
+              class="mb-3"
+            >
+              <template #prepend-inner>
+                <v-icon size="18" color="on-surface-variant">mdi-account</v-icon>
+              </template>
+            </v-text-field>
+
+            <!-- 模式选择 -->
+            <div class="d-flex align-center justify-space-between mb-5">
               <div class="d-flex align-center">
-                <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-wifi-off</v-icon>
+                <v-icon size="18" color="on-surface-variant" class="mr-2">mdi-wifi-off</v-icon>
                 <span class="text-body-2">离线模式</span>
               </div>
               <v-switch
@@ -239,103 +208,195 @@ onMounted(async () => {
               />
             </div>
 
-            <v-divider class="my-3" />
-
+            <!-- 启动按钮 -->
             <v-btn
-              variant="tonal"
-              color="secondary"
               block
-              size="small"
-              to="/settings"
+              size="large"
+              color="primary"
+              :loading="launchLoading"
+              :disabled="!isReady"
+              class="launch-btn"
+              @click="handleLaunch"
             >
-              <v-icon start size="18">mdi-tune</v-icon>
-              更多设置
+              <v-icon start size="22">mdi-play</v-icon>
+              启动游戏
             </v-btn>
+
+            <div class="text-center text-caption text-on-surface-variant mt-3">
+              <v-icon size="12" class="mr-1" :color="isReady ? 'success' : 'on-surface-variant'">
+                {{ isReady ? 'mdi-check-circle' : 'mdi-information' }}
+              </v-icon>
+              {{ isReady ? '准备就绪' : '请选择版本并填写玩家名称' }}
+            </div>
           </v-card-text>
         </v-card>
 
-        <!-- 状态信息 -->
-        <v-card color="surface-container">
+        <!-- 最近游玩 & 统计 -->
+        <v-card color="surface-container" variant="flat">
           <v-card-text class="pa-4">
-            <div class="d-flex align-center mb-4">
-              <v-avatar size="40" color="primary-container" class="mr-3">
-                <v-icon size="20" color="on-primary-container">mdi-information</v-icon>
-              </v-avatar>
-              <div class="text-body-1 font-weight-medium">状态信息</div>
+            <div class="d-flex align-center mb-3">
+              <v-icon size="18" color="on-surface-variant" class="mr-2">mdi-history</v-icon>
+              <span class="text-body-2 font-weight-medium">最近游玩</span>
+            </div>
+            
+            <template v-if="recentPlays.length > 0">
+              <div class="d-flex flex-wrap ga-2 mb-4">
+                <v-chip
+                  v-for="play in recentPlays"
+                  :key="play.version"
+                  size="small"
+                  variant="tonal"
+                  color="primary"
+                  class="recent-chip"
+                  @click="quickLaunch(play.version)"
+                >
+                  <v-icon start size="14">mdi-minecraft</v-icon>
+                  {{ play.version }}
+                  <v-tooltip activator="parent" location="top">
+                    {{ formatTimeAgo(play.timestamp) }}
+                  </v-tooltip>
+                </v-chip>
+              </div>
+            </template>
+            <div v-else class="text-caption text-on-surface-variant mb-4">
+              暂无游玩记录，启动游戏后会在这里显示
             </div>
 
-            <div class="status-item d-flex align-center justify-space-between py-2">
-              <span class="text-body-2 text-on-surface-variant">已安装版本</span>
-              <v-chip size="small" color="primary" variant="tonal">
-                {{ installedVersions.length }}
-              </v-chip>
-            </div>
+            <v-divider class="mb-3" />
 
-            <v-divider class="my-2" />
-
-            <div class="status-item d-flex align-center justify-space-between py-2">
-              <span class="text-body-2 text-on-surface-variant">游戏目录</span>
-              <v-tooltip :text="gameDir" location="top">
-                <template #activator="{ props }">
-                  <v-chip
-                    v-bind="props"
-                    size="small"
-                    :color="gameDir ? 'success' : 'warning'"
-                    variant="tonal"
-                    class="text-truncate"
-                    style="max-width: 100px"
-                  >
-                    {{ gameDir ? '已设置' : '未设置' }}
-                  </v-chip>
-                </template>
-              </v-tooltip>
-            </div>
-
-            <v-divider class="my-2" />
-
-            <div class="status-item d-flex align-center justify-space-between py-2">
-              <span class="text-body-2 text-on-surface-variant">登录状态</span>
-              <v-chip size="small" :color="offlineMode ? 'secondary' : 'success'" variant="tonal">
-                {{ offlineMode ? '离线' : '在线' }}
-              </v-chip>
+            <!-- 统计信息 -->
+            <div class="d-flex ga-4">
+              <div class="stat-item">
+                <div class="text-h6 font-weight-bold text-primary">{{ installedVersions.length }}</div>
+                <div class="text-caption text-on-surface-variant">已安装版本</div>
+              </div>
+              <div class="stat-item">
+                <div class="text-h6 font-weight-bold text-primary">{{ instanceCount }}</div>
+                <div class="text-caption text-on-surface-variant">游戏实例</div>
+              </div>
             </div>
           </v-card-text>
         </v-card>
+        </div>
+      </v-col>
+
+      <!-- 右侧：快捷操作 -->
+      <v-col cols="12" md="5">
+        <div class="d-flex flex-column ga-3">
+          <v-card
+            color="surface-container"
+            variant="flat"
+            class="quick-action-card"
+            to="/download"
+          >
+            <v-card-text class="pa-3 d-flex align-center">
+              <v-avatar size="40" color="primary-container" class="mr-3">
+                <v-icon size="20" color="on-primary-container">mdi-download</v-icon>
+              </v-avatar>
+              <div>
+                <div class="text-body-2 font-weight-medium">下载版本</div>
+                <div class="text-caption text-on-surface-variant">获取新的游戏版本</div>
+              </div>
+              <v-spacer />
+              <v-icon size="20" color="on-surface-variant">mdi-chevron-right</v-icon>
+            </v-card-text>
+          </v-card>
+
+          <v-card
+            color="surface-container"
+            variant="flat"
+            class="quick-action-card"
+            to="/add-instance"
+          >
+            <v-card-text class="pa-3 d-flex align-center">
+              <v-avatar size="40" color="primary-container" class="mr-3">
+                <v-icon size="20" color="on-primary-container">mdi-plus-circle</v-icon>
+              </v-avatar>
+              <div>
+                <div class="text-body-2 font-weight-medium">添加实例</div>
+                <div class="text-caption text-on-surface-variant">创建自定义游戏实例</div>
+              </div>
+              <v-spacer />
+              <v-icon size="20" color="on-surface-variant">mdi-chevron-right</v-icon>
+            </v-card-text>
+          </v-card>
+
+          <v-card
+            color="surface-container"
+            variant="flat"
+            class="quick-action-card"
+            to="/instance-manager"
+          >
+            <v-card-text class="pa-3 d-flex align-center">
+              <v-avatar size="40" color="primary-container" class="mr-3">
+                <v-icon size="20" color="on-primary-container">mdi-folder-multiple</v-icon>
+              </v-avatar>
+              <div>
+                <div class="text-body-2 font-weight-medium">实例管理</div>
+                <div class="text-caption text-on-surface-variant">管理已有的游戏实例</div>
+              </div>
+              <v-spacer />
+              <v-icon size="20" color="on-surface-variant">mdi-chevron-right</v-icon>
+            </v-card-text>
+          </v-card>
+
+          <v-card
+            color="surface-container"
+            variant="flat"
+            class="quick-action-card"
+            to="/settings"
+          >
+            <v-card-text class="pa-3 d-flex align-center">
+              <v-avatar size="40" color="primary-container" class="mr-3">
+                <v-icon size="20" color="on-primary-container">mdi-cog</v-icon>
+              </v-avatar>
+              <div>
+                <div class="text-body-2 font-weight-medium">设置</div>
+                <div class="text-caption text-on-surface-variant">配置启动器选项</div>
+              </div>
+              <v-spacer />
+              <v-icon size="20" color="on-surface-variant">mdi-chevron-right</v-icon>
+            </v-card-text>
+          </v-card>
+        </div>
       </v-col>
     </v-row>
 
     <!-- 修复进度对话框 -->
-    <v-dialog :model-value="isRepairing" persistent max-width="420">
+    <v-dialog :model-value="isRepairing" persistent max-width="380">
       <v-card color="surface-container-high">
-        <v-card-text class="pa-6">
-          <div class="text-center mb-5">
-            <v-avatar size="72" color="primary-container" class="mb-4">
-              <v-icon size="36" color="on-primary-container">mdi-wrench</v-icon>
+        <v-card-text class="pa-5">
+          <div class="text-center mb-4">
+            <v-progress-circular
+              v-if="!repairProgress"
+              indeterminate
+              size="44"
+              color="primary"
+            />
+            <v-avatar v-else size="52" color="primary-container">
+              <v-icon size="26" color="on-primary-container">mdi-wrench</v-icon>
             </v-avatar>
-            <div class="text-h6 font-weight-bold">正在修复游戏文件</div>
           </div>
+          <div class="text-h6 font-weight-bold text-center mb-4">修复游戏文件</div>
 
-          <div v-if="repairProgress">
-            <div class="d-flex justify-space-between mb-2">
-              <span class="text-body-2">
-                {{ repairProgress.status === 'downloading' ? '下载中...' : '处理中...' }}
-              </span>
-              <span class="text-body-2 font-weight-medium">{{ repairProgress.percent }}%</span>
+          <template v-if="repairProgress">
+            <div class="d-flex justify-space-between mb-2 text-body-2">
+              <span>{{ repairProgress.status === 'downloading' ? '下载中' : '处理中' }}</span>
+              <span class="font-weight-medium">{{ repairProgress.percent }}%</span>
             </div>
             <v-progress-linear
               :model-value="repairProgress.percent"
-              height="8"
+              height="6"
               rounded
               color="primary"
             />
             <div class="d-flex justify-space-between mt-2 text-caption text-on-surface-variant">
-              <span>{{ (repairProgress.bytes_downloaded / 1024 / 1024).toFixed(2) }} MB</span>
-              <span>{{ (repairProgress.speed / 1024).toFixed(1) }} KB/s</span>
+              <span>{{ (repairProgress.bytes_downloaded / 1024 / 1024).toFixed(1) }} MB</span>
+              <span>{{ (repairProgress.speed / 1024).toFixed(0) }} KB/s</span>
             </div>
-          </div>
-          <div v-else class="text-center py-4">
-            <v-progress-circular indeterminate size="48" color="primary" />
-            <div class="mt-3 text-body-2 text-on-surface-variant">准备中...</div>
+          </template>
+          <div v-else class="text-center text-body-2 text-on-surface-variant">
+            准备中...
           </div>
         </v-card-text>
       </v-card>
@@ -345,30 +406,31 @@ onMounted(async () => {
 
 <style scoped>
 .home-container {
-  max-width: 1000px;
+  max-width: 900px;
   margin: 0 auto;
 }
 
-.welcome-section {
-  padding-left: 4px;
-}
-
 .launch-btn {
-  min-width: 140px;
-  min-height: 52px;
-  font-size: 1rem;
   font-weight: 600;
-  letter-spacing: 0.5px;
+  font-size: 1rem;
 }
 
 .quick-action-card {
   cursor: pointer;
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), 
-              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: box-shadow 0.15s ease;
+  min-height: 64px;
 }
 
 .quick-action-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.recent-chip {
+  cursor: pointer;
+}
+
+.stat-item {
+  text-align: center;
+  flex: 1;
 }
 </style>

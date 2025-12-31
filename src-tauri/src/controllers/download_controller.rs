@@ -1,6 +1,7 @@
 use crate::errors::LauncherError;
 use crate::models::VersionManifest;
 use crate::services::download;
+use crate::services::download::batch::set_cancel_flag;
 use tauri::{Emitter, Window};
 
 /// 获取 Minecraft 版本列表
@@ -22,6 +23,9 @@ pub async fn download_version(
 /// 取消下载
 #[tauri::command]
 pub async fn cancel_download(window: Window) -> Result<(), LauncherError> {
+    // 设置全局取消标志
+    set_cancel_flag();
+    // 同时发送事件以触发监听器
     window.emit("cancel-download", ()).map_err(|e| {
         LauncherError::Custom(format!("发送取消事件失败: {}", e))
     })?;

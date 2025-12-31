@@ -13,9 +13,15 @@ pub async fn download_file(
     job: &DownloadJob,
     url: &str,
     state: &Arc<AtomicBool>,
+    global_cancel: &Arc<AtomicBool>,
     bytes_downloaded: &Arc<AtomicU64>,
     bytes_since_last: &Arc<AtomicU64>,
 ) -> Result<(), LauncherError> {
+    // 先检查取消状态
+    if !state.load(Ordering::SeqCst) || global_cancel.load(Ordering::SeqCst) {
+        return Err(LauncherError::Custom("Download cancelled".to_string()));
+    }
+
     // 1. 检查完整文件是否已存在且有效
     if job.path.exists() {
         match file_utils::verify_and_repair_file(job, &http).await {
@@ -44,9 +50,13 @@ pub async fn download_file(
     }
 
     // 2. 尝试从指定 URL 下载（支持断点续传）
-    match download_with_resume(http.clone(), url, job, state, bytes_downloaded, bytes_since_last).await {
+    match download_with_resume(http.clone(), url, job, state, global_cancel, bytes_downloaded, bytes_since_last).await {
         Ok(_) => Ok(()),
         Err(e) => {
+            // 如果是取消导致的错误，直接返回
+            if e.to_string().contains("cancelled") {
+                return Err(e);
+            }
             // 3. 如果主 URL 失败，尝试备用 URL
             if let Some(fallback_url) = &job.fallback_url {
                 if should_try_fallback(&e) {
@@ -59,6 +69,7 @@ pub async fn download_file(
                         fallback_url,
                         job,
                         state,
+                        global_cancel,
                         bytes_downloaded,
                         bytes_since_last,
                     )
@@ -92,6 +103,7 @@ async fn download_with_resume(
     url: &str,
     job: &DownloadJob,
     state: &Arc<AtomicBool>,
+    global_cancel: &Arc<AtomicBool>,
     bytes_downloaded: &Arc<AtomicU64>,
     bytes_since_last: &Arc<AtomicU64>,
 ) -> Result<(), LauncherError> {
@@ -143,6 +155,7 @@ async fn download_with_resume(
         url,
         job,
         state,
+        global_cancel,
         bytes_downloaded,
         bytes_since_last,
         resume_from,
@@ -181,6 +194,7 @@ async fn download_chunk_with_resume(
     url: &str,
     job: &DownloadJob,
     state: &Arc<AtomicBool>,
+    global_cancel: &Arc<AtomicBool>,
     bytes_downloaded: &Arc<AtomicU64>,
     bytes_since_last: &Arc<AtomicU64>,
     resume_from: Option<u64>,
@@ -259,7 +273,8 @@ async fn download_chunk_with_resume(
         // 下载数据
         let mut response = response;
         while let Some(chunk) = response.chunk().await? {
-            if !state.load(Ordering::SeqCst) {
+            // 检查本地状态和全局取消标志
+            if !state.load(Ordering::SeqCst) || global_cancel.load(Ordering::SeqCst) {
                 return Err(LauncherError::Custom("Download cancelled".to_string()));
             }
             file.write_all(&chunk).await?;

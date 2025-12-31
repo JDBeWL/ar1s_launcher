@@ -31,8 +31,15 @@ export function useVersionManager() {
             const dirInfo = await invoke<GameDirInfo>('get_game_dir_info');
             if (dirInfo?.versions) {
                 installedVersions.value = dirInfo.versions;
-                if (installedVersions.value.length > 0 && !selectedVersion.value) {
-                    selectedVersion.value = installedVersions.value[0];
+                
+                // 尝试加载上次选择的版本
+                if (!selectedVersion.value) {
+                    const lastVersion = await invoke<string | null>('get_last_selected_version');
+                    if (lastVersion && installedVersions.value.includes(lastVersion)) {
+                        selectedVersion.value = lastVersion;
+                    } else if (installedVersions.value.length > 0) {
+                        selectedVersion.value = installedVersions.value[0];
+                    }
                 }
             }
         } catch (err) {

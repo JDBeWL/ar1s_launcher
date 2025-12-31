@@ -50,7 +50,9 @@ export const useNotificationStore = defineStore('notification', () => {
 
   function error(title: string, message?: string, showDialog = false) {
     if (showDialog && message) {
+      // 显示详情对话框时，不再显示 snackbar 通知
       showErrorDialog(title, message)
+      return -1
     }
     return notify('error', title, message, 5000)
   }

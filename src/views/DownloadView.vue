@@ -65,7 +65,6 @@ const getVersionChipColor = (type: string) => {
 };
 
 const isDownloading = computed(() => downloadStore.isDownloading);
-const selectedVersion = computed(() => downloadStore.selectedVersion);
 
 async function fetchVersions() {
   try {
@@ -86,10 +85,6 @@ async function fetchVersions() {
 
 async function startDownload(versionId: string) {
   await downloadStore.startDownload(versionId, settingsStore.downloadMirror);
-}
-
-async function cancelDownload() {
-  await downloadStore.cancelDownload();
 }
 
 const filteredVersions = computed(() => {
@@ -146,29 +141,6 @@ onMounted(async () => {
         <v-icon size="20">mdi-refresh</v-icon>
       </v-btn>
     </div>
-
-    <!-- 下载进度提示 -->
-    <v-alert
-      v-if="isDownloading"
-      color="primary-container"
-      density="compact"
-      class="mb-4"
-    >
-      <template #prepend>
-        <v-progress-circular indeterminate size="20" width="2" color="primary" class="mr-2" />
-      </template>
-      <div class="d-flex align-center justify-space-between">
-        <span class="text-body-2 text-on-primary-container">正在下载 {{ selectedVersion }}...</span>
-        <v-btn
-          variant="text"
-          size="small"
-          color="primary"
-          @click="downloadStore.showDownloadNotification()"
-        >
-          查看进度
-        </v-btn>
-      </div>
-    </v-alert>
 
     <!-- 搜索和筛选 -->
     <v-card color="surface-container" class="mb-4">
@@ -249,7 +221,6 @@ onMounted(async () => {
           <v-card
             color="surface-container"
             class="version-card h-100"
-            :class="{ 'version-card--downloading': isDownloading && selectedVersion === item.id }"
           >
             <v-card-text class="pa-4">
               <div class="d-flex align-center justify-space-between mb-3">
@@ -276,18 +247,6 @@ onMounted(async () => {
               </div>
 
               <v-btn
-                v-if="isDownloading && selectedVersion === item.id"
-                variant="tonal"
-                color="error"
-                block
-                size="small"
-                @click="cancelDownload"
-              >
-                <v-icon start size="18">mdi-close</v-icon>
-                取消下载
-              </v-btn>
-              <v-btn
-                v-else
                 variant="tonal"
                 color="primary"
                 block
@@ -337,10 +296,6 @@ onMounted(async () => {
 .version-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.version-card--downloading {
-  border: 2px solid rgb(var(--v-theme-primary));
 }
 
 .version-icon-avatar {

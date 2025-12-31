@@ -5,6 +5,123 @@ use sha1::{Digest, Sha1};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// 实例名称验证结果
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstanceNameValidation {
+    pub is_valid: bool,
+    pub error_message: Option<String>,
+}
+
+/// 验证实例名称是否安全有效
+/// 
+/// 规则：
+/// - 长度在 1-64 字符之间
+/// - 不能包含路径分隔符 (/, \)
+/// - 不能包含路径遍历字符 (..)
+/// - 不能包含 Windows 保留字符 (<, >, :, ", |, ?, *)
+/// - 不能以点或空格开头/结尾
+/// - 不能是 Windows 保留名称 (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+/// - 不能包含控制字符 (ASCII 0-31)
+pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
+    // 检查空名称
+    if name.is_empty() {
+        return InstanceNameValidation {
+            is_valid: false,
+            error_message: Some("实例名称不能为空".to_string()),
+        };
+    }
+
+    // 检查长度
+    if name.len() > 64 {
+        return InstanceNameValidation {
+            is_valid: false,
+            error_message: Some("实例名称不能超过 64 个字符".to_string()),
+        };
+    }
+
+    // 检查是否以点或空格开头/结尾
+    if name.starts_with('.') || name.starts_with(' ') {
+        return InstanceNameValidation {
+            is_valid: false,
+            error_message: Some("实例名称不能以点或空格开头".to_string()),
+        };
+    }
+
+    if name.ends_with('.') || name.ends_with(' ') {
+        return InstanceNameValidation {
+            is_valid: false,
+            error_message: Some("实例名称不能以点或空格结尾".to_string()),
+        };
+    }
+
+    // 检查路径遍历
+    if name.contains("..") {
+        return InstanceNameValidation {
+            is_valid: false,
+            error_message: Some("实例名称不能包含 '..'".to_string()),
+        };
+    }
+
+    // 检查路径分隔符
+    if name.contains('/') || name.contains('\\') {
+        return InstanceNameValidation {
+            is_valid: false,
+            error_message: Some("实例名称不能包含路径分隔符 (/ 或 \\)".to_string()),
+        };
+    }
+
+    // 检查 Windows 保留字符
+    const RESERVED_CHARS: &[char] = &['<', '>', ':', '"', '|', '?', '*'];
+    for c in RESERVED_CHARS {
+        if name.contains(*c) {
+            return InstanceNameValidation {
+                is_valid: false,
+                error_message: Some(format!("实例名称不能包含特殊字符 '{}'", c)),
+            };
+        }
+    }
+
+    // 检查控制字符 (ASCII 0-31)
+    if name.chars().any(|c| (c as u32) < 32) {
+        return InstanceNameValidation {
+            is_valid: false,
+            error_message: Some("实例名称不能包含控制字符".to_string()),
+        };
+    }
+
+    // 检查 Windows 保留名称
+    let name_upper = name.to_uppercase();
+    let base_name = name_upper.split('.').next().unwrap_or(&name_upper);
+    const RESERVED_NAMES: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    
+    if RESERVED_NAMES.contains(&base_name) {
+        return InstanceNameValidation {
+            is_valid: false,
+            error_message: Some(format!("'{}' 是 Windows 保留名称，不能用作实例名称", name)),
+        };
+    }
+
+    InstanceNameValidation {
+        is_valid: true,
+        error_message: None,
+    }
+}
+
+/// 验证实例名称，如果无效则返回错误
+pub fn validate_instance_name_or_error(name: &str) -> Result<(), LauncherError> {
+    let validation = validate_instance_name(name);
+    if !validation.is_valid {
+        return Err(LauncherError::Custom(
+            validation.error_message.unwrap_or_else(|| "实例名称无效".to_string())
+        ));
+    }
+    Ok(())
+}
+
 /// 递归复制目录及其所有内容
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), std::io::Error> {
     fs::create_dir_all(&dst)?;

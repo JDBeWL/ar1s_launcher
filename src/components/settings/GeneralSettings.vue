@@ -221,9 +221,9 @@ onUnmounted(() => {
 
         <!-- 下载线程 -->
         <div class="mb-5">
-          <div class="d-flex align-center justify-space-between mb-2">
+          <div class="d-flex align-center mb-2">
             <span class="text-body-2">下载线程数</span>
-            <v-chip size="small" color="primary" variant="tonal">{{ downloadThreads }}</v-chip>
+            <v-chip size="small" color="primary" variant="tonal" class="ml-2">{{ downloadThreads }}</v-chip>
           </div>
           <v-slider
             v-model="downloadThreads"
@@ -234,9 +234,6 @@ onUnmounted(() => {
             color="primary"
             @end="saveDownloadThreads"
           >
-            <template #prepend>
-              <span class="text-caption text-on-surface-variant">1</span>
-            </template>
             <template #append>
               <span class="text-caption text-on-surface-variant">64</span>
             </template>

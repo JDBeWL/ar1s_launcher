@@ -1,17 +1,16 @@
 import { ref, computed, onUnmounted, watch } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
+import { api } from '../services';
 import { useNotificationStore } from '../stores/notificationStore';
 import type { 
     MinecraftVersion, 
-    VersionManifest, 
     InstallProgressPayload, 
     ForgeVersion,
     LoaderVersionInfo,
     AvailableLoaders,
     ModLoaderType,
-    LoaderPayload
+    LoaderPayload,
 } from '../types/events';
 
 export function useInstanceCreation() {
@@ -23,6 +22,7 @@ export function useInstanceCreation() {
     const sortOrder = ref("newest");
 
     const instanceName = ref("");
+    const instanceNameError = ref<string | null>(null);
     const installing = ref(false);
     const showProgress = ref(false);
     const progressValue = ref(0);
@@ -49,8 +49,9 @@ export function useInstanceCreation() {
         ];
     });
 
-    const filteredVersions = computed(() => {
-        let filtered = versions.value.filter((version) => {
+    // 先过滤版本（只依赖 versions, versionTypeFilter, searchVersion）
+    const filteredVersionsUnsorted = computed(() => {
+        return versions.value.filter((version) => {
             const typeMatch =
                 versionTypeFilter.value === "all" ||
                 version.type === versionTypeFilter.value;
@@ -59,7 +60,12 @@ export function useInstanceCreation() {
                 version.id.toLowerCase().includes(searchVersion.value.toLowerCase());
             return typeMatch && searchMatch;
         });
+    });
 
+    // 再排序（只依赖 filteredVersionsUnsorted 和 sortOrder）
+    const filteredVersions = computed(() => {
+        const filtered = [...filteredVersionsUnsorted.value];
+        
         if (sortOrder.value === "newest") {
             filtered.sort(
                 (a, b) =>
@@ -88,7 +94,7 @@ export function useInstanceCreation() {
     async function fetchVersions() {
         loadingVersions.value = true;
         try {
-            const manifest = await invoke<VersionManifest>("get_versions");
+            const manifest = await api.version.getVersions();
             versions.value = manifest.versions.map((v) => ({
                 ...v,
                 releaseTime: new Date(v.releaseTime).toLocaleString(),
@@ -108,9 +114,7 @@ export function useInstanceCreation() {
 
         loadingAvailableLoaders.value = true;
         try {
-            const loaders = await invoke<AvailableLoaders>("get_available_loaders", {
-                minecraftVersion: selectedVersion.value.id,
-            });
+            const loaders = await api.loader.getAvailableLoaders(selectedVersion.value.id);
             availableLoaders.value = loaders;
             
             // 如果当前选择的加载器不可用，重置为 None
@@ -148,24 +152,16 @@ export function useInstanceCreation() {
 
             switch (selectedModLoaderType.value) {
                 case "Forge":
-                    result = await invoke<ForgeVersion[]>("get_forge_versions", {
-                        minecraftVersion: mcVersion,
-                    });
+                    result = await api.loader.getForgeVersions(mcVersion);
                     break;
                 case "Fabric":
-                    result = await invoke<LoaderVersionInfo[]>("get_fabric_versions", {
-                        minecraftVersion: mcVersion,
-                    });
+                    result = await api.loader.getFabricVersions(mcVersion);
                     break;
                 case "Quilt":
-                    result = await invoke<LoaderVersionInfo[]>("get_quilt_versions", {
-                        minecraftVersion: mcVersion,
-                    });
+                    result = await api.loader.getQuiltVersions(mcVersion);
                     break;
                 case "NeoForge":
-                    result = await invoke<LoaderVersionInfo[]>("get_neoforge_versions", {
-                        minecraftVersion: mcVersion,
-                    });
+                    result = await api.loader.getNeoForgeVersions(mcVersion);
                     break;
             }
 
@@ -198,12 +194,51 @@ export function useInstanceCreation() {
         fetchModLoaderVersions();
     });
 
+    // 验证实例名称
+    async function validateInstanceName(name: string): Promise<boolean> {
+        if (!name) {
+            instanceNameError.value = null;
+            return true; // 空名称会使用默认名称
+        }
+        
+        try {
+            const result = await api.instance.validateInstanceName(name);
+            if (!result.is_valid) {
+                instanceNameError.value = result.error_message;
+                return false;
+            }
+            instanceNameError.value = null;
+            return true;
+        } catch (error) {
+            console.error('Failed to validate instance name:', error);
+            instanceNameError.value = '验证失败';
+            return false;
+        }
+    }
+
+    // 当实例名称变化时验证（防抖）
+    let validateTimeout: ReturnType<typeof setTimeout> | null = null;
+    watch(instanceName, (newName) => {
+        if (validateTimeout) {
+            clearTimeout(validateTimeout);
+        }
+        validateTimeout = setTimeout(() => {
+            validateInstanceName(newName);
+        }, 300);
+    });
+
     let unlistenProgress: UnlistenFn | null = null;
 
     function cleanup() {
+        // 清理事件监听器
         if (unlistenProgress) {
             unlistenProgress();
             unlistenProgress = null;
+        }
+        // 清理防抖定时器
+        if (validateTimeout) {
+            clearTimeout(validateTimeout);
+            validateTimeout = null;
         }
     }
 
@@ -220,6 +255,13 @@ export function useInstanceCreation() {
         const finalInstanceName = instanceName.value || defaultInstanceName.value;
         if (!finalInstanceName) {
             notificationStore.warning('实例名称不能为空');
+            return;
+        }
+
+        // 验证实例名称
+        const isValid = await validateInstanceName(finalInstanceName);
+        if (!isValid) {
+            notificationStore.warning('实例名称无效', instanceNameError.value || '请检查实例名称');
             return;
         }
 
@@ -286,7 +328,11 @@ export function useInstanceCreation() {
                 }
             }
 
-            await invoke("create_instance", { ...payload });
+            await api.instance.createInstance(
+                finalInstanceName,
+                selectedVersion.value.id,
+                payload.loader
+            );
 
             notificationStore.success('创建成功', `实例 '${finalInstanceName}' 已创建`);
 
@@ -317,6 +363,7 @@ export function useInstanceCreation() {
         sortOrder,
         filteredVersions,
         instanceName,
+        instanceNameError,
         defaultInstanceName,
         installing,
         showProgress,
@@ -333,6 +380,7 @@ export function useInstanceCreation() {
         fetchVersions,
         fetchAvailableLoaders,
         fetchModLoaderVersions,
+        validateInstanceName,
         createInstance
     };
 }

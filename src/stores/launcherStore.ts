@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { onScopeDispose } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useNotificationStore } from './notificationStore'
@@ -8,6 +9,11 @@ export const useLauncherStore = defineStore('launcher', () => {
   let unlistenLaunched: UnlistenFn | null = null;
   let unlistenExited: UnlistenFn | null = null;
   let unlistenError: UnlistenFn | null = null;
+
+  // 当 store 的作用域销毁时自动清理监听器
+  onScopeDispose(() => {
+    unsubscribe();
+  });
 
   async function subscribe() {
     if (unlistenLaunched) return; // Already subscribed

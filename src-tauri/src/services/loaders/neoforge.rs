@@ -106,13 +106,25 @@ pub async fn install_neoforge(
         let mut file = archive.by_index(i)?;
         let name = file.name().to_string();
 
+        // 安全检查：防止路径遍历攻击
+        if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
+            log::warn!("跳过可疑的 zip 条目: {}", name);
+            continue;
+        }
+
         if name == "version.json" {
             let mut content = String::new();
             file.read_to_string(&mut content)?;
             version_json_content = Some(content);
         } else if name.starts_with("maven/") && !name.ends_with('/') {
             // 解压 maven 库文件
-            let outpath = libraries_dir.join(&name[6..]);
+            let rel_path = &name[6..];
+            // 再次检查相对路径
+            if rel_path.contains("..") {
+                log::warn!("跳过可疑的 maven 路径: {}", name);
+                continue;
+            }
+            let outpath = libraries_dir.join(rel_path);
             if let Some(p) = outpath.parent() {
                 fs::create_dir_all(p)?;
             }
