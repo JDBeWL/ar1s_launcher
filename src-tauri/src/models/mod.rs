@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 // 默认下载线程数
@@ -16,8 +17,13 @@ pub fn default_true() -> bool {
     true
 }
 
+// 默认为false的辅助函数
+pub fn default_false() -> bool {
+    false
+}
+
 // 游戏配置
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameConfig {
     pub game_dir: String,
     #[serde(default = "default_true")]
@@ -36,6 +42,21 @@ pub struct GameConfig {
     pub uuid: Option<String>,
     #[serde(default = "default_max_memory")]
     pub max_memory: u32,
+    pub download_mirror: Option<String>,
+    #[serde(default = "default_false")]
+    pub auto_memory_enabled: bool,
+    /// 游戏窗口宽度
+    pub window_width: Option<u32>,
+    /// 游戏窗口高度
+    pub window_height: Option<u32>,
+    /// 是否全屏启动
+    #[serde(default = "default_false")]
+    pub fullscreen: bool,
+    /// 实例上次启动时间 (实例名 -> 时间戳毫秒)
+    #[serde(default)]
+    pub instance_last_played: HashMap<String, i64>,
+    /// 上次选择的游戏版本
+    pub last_selected_version: Option<String>,
 }
 
 // 游戏目录信息
@@ -78,25 +99,36 @@ pub struct LaunchOptions {
     pub version: String,
     pub username: String,
     pub memory: Option<u32>,
+    /// 窗口宽度
+    pub window_width: Option<u32>,
+    /// 窗口高度
+    pub window_height: Option<u32>,
+    /// 是否全屏
+    pub fullscreen: Option<bool>,
 }
 
 // 下载状态
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum DownloadStatus {
     Downloading,
     Completed,
     Cancelled,
-    Error(String),
+    Error,
 }
 
 // 下载进度
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadProgress {
     pub progress: u64,
     pub total: u64,
     pub speed: f64,
     pub status: DownloadStatus,
+    pub bytes_downloaded: u64,
+    pub total_bytes: u64,
+    pub percent: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 // 下载任务
@@ -108,3 +140,36 @@ pub struct DownloadJob {
     pub size: u64,
     pub hash: String,
 }
+
+// 实例配置
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InstanceConfig {
+    pub display_name: String,
+    pub minecraft_version: String,
+    pub created_at: String,
+}
+
+// 实例信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub path: String,
+    pub created_time: Option<String>,
+    pub loader_type: Option<String>,
+    pub game_version: Option<String>,
+    pub last_played: Option<i64>,
+}
+
+// Forge版本
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ForgeVersion {
+    pub version: String,
+    pub mcversion: String,
+    pub build: i32,
+}
+
+// 整合包相关模型
+pub mod modpack;

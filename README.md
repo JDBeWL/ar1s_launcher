@@ -2,43 +2,62 @@
 
 一个基于Tauri框架构建的现代化Minecraft启动器，使用Vuetify提供Material Design 3风格的用户界面。
 
+![Version](https://img.shields.io/badge/version-0.3.1-blue)
+![Tauri](https://img.shields.io/badge/Tauri-2.0-orange)
+![Vue](https://img.shields.io/badge/Vue-3.5-green)
+![Rust](https://img.shields.io/badge/Rust-1.70+-red)
+
 ## 功能特性
 
 ### 核心功能
-- **多版本支持**: 支持Minecraft正式版、快照版等多种版本，暂时不支持整合包下载
+- **多版本支持**: 支持Minecraft正式版、快照版等多种版本
+- **实例管理**: 独立的游戏实例系统，支持创建、重命名、删除实例
+- **Mod加载器支持**: 支持 Forge、Fabric、Quilt、NeoForge 四种主流加载器
+- **整合包安装**: 支持从 Modrinth 平台搜索和安装整合包（CurseForge 开发中）
 - **智能下载**: 支持官方源和BMCL镜像源，提供稳定的下载体验，使用fallback机制下载时自动切换源
-- **文件验证**: 自动检测缺失文件，确保游戏完整性
+- **文件验证**: 自动检测缺失文件，确保游戏完整性，支持一键修复
 - **离线模式**: 支持离线游戏启动，暂时不支持正版验证
+
+### 实例系统
+- **独立实例**: 每个游戏配置独立管理，互不干扰
+- **自定义安装**: 选择基础版本 + 加载器组合创建实例
+- **在线安装**: 直接从 Modrinth 搜索并安装整合包
+- **实例操作**: 支持启动、重命名、删除、打开文件夹等操作
 
 ### 用户界面
 - **现代化设计**: 基于Material Design 3设计规范
 - **暗色/亮色主题**: 支持主题切换，提供舒适的视觉体验
 - **响应式布局**: 适配不同屏幕尺寸
 - **流畅动画**: 提供平滑的交互体验
+- **实时进度**: 下载和安装过程实时显示进度
 
 ### 技术特性
 - **跨平台**: 基于Tauri构建，支持Windows、macOS、Linux(但是还没有在macOS、Linux上测试过，如果有问题请提交issue)
 - **高性能**: Rust后端提供出色的性能表现(Rust高效我的代码不一定高效())
 - **安全性**: 本地数据存储，保护用户隐私
 - **日志系统**: 完善的日志记录和错误追踪
+- **内存优化**: 智能JVM内存参数配置，根据版本自动优化
 
 ## 技术栈
 
 ### 前端技术
-- **Vue 3**: 现代化的前端框架
-- **Vuetify**: Material Design组件库
-- **TypeScript**: 类型安全的JavaScript超集
-- **Pinia**: Vue状态管理库
+- **Vue 3.5**: 现代化的前端框架，使用 Composition API
+- **Vuetify 3.7**: Material Design 3 组件库
+- **TypeScript 5.8**: 类型安全的JavaScript超集
+- **Pinia 3**: Vue 状态管理库
+- **Vue Router 4**: 前端路由管理
 
 ### 后端技术
-- **Rust**: 系统级编程语言，提供高性能后端
-- **Tauri**: 跨平台桌面应用框架
+- **Rust 1.70+**: 系统级编程语言，提供高性能后端
+- **Tauri 2.0**: 跨平台桌面应用框架
 - **Tokio**: Rust异步运行时
+- **Reqwest**: HTTP 客户端
+- **Serde**: 序列化/反序列化框架
 
 ### 开发工具
-- **Vite**: 快速的前端构建工具
+- **Vite 6**: 快速的前端构建工具
 - **Cargo**: Rust包管理器
-- **Vue Router**: 前端路由管理
+- **vue-tsc**: Vue TypeScript 编译器
 
 ## 安装与构建
 
@@ -86,39 +105,108 @@ npm run tauri build
 Ar1s_Launcher/
 ├── src/                          # 前端源代码
 │   ├── components/               # Vue组件
+│   │   ├── add-instance/         # 实例创建相关组件
+│   │   │   ├── CustomInstallForm.vue    # 自定义安装表单
+│   │   │   ├── ModpackCard.vue          # 整合包卡片
+│   │   │   └── ModrinthBrowser.vue      # Modrinth浏览器
+│   │   ├── instance/             # 实例管理组件
+│   │   │   └── InstanceCard.vue         # 实例卡片
+│   │   ├── settings/             # 设置相关组件
+│   │   │   ├── GeneralSettings.vue      # 通用设置
+│   │   │   ├── JavaSettings.vue         # Java设置
+│   │   │   └── MemorySettings.vue       # 内存设置
+│   │   ├── GlobalDownloadStatus.vue     # 全局下载状态
+│   │   ├── GlobalNotification.vue       # 全局通知
+│   │   └── NotificationDownload.vue     # 下载通知
+│   ├── composables/              # Vue组合式函数
 │   ├── stores/                   # Pinia状态管理
+│   │   ├── downloadStore.ts      # 下载状态
+│   │   ├── launcherStore.ts      # 启动器状态
+│   │   ├── notificationStore.ts  # 通知状态
+│   │   └── settings.ts           # 设置状态
 │   ├── views/                    # 页面视图
+│   │   ├── HomeView.vue          # 主页
+│   │   ├── DownloadView.vue      # 下载页面
+│   │   ├── AddInstanceView.vue   # 添加实例页面
+│   │   ├── InstanceManagerView.vue      # 实例管理页面
+│   │   ├── InstallModpackView.vue       # 整合包安装页面
+│   │   └── SettingsView.vue      # 设置页面
 │   ├── types/                    # TypeScript类型定义
-│   └── assert/                   # 静态资源
+│   ├── router/                   # 路由配置
+│   └── plugins/                  # Vue插件
 ├── src-tauri/                    # Tauri后端代码
 │   ├── src/                      # Rust源代码
 │   │   ├── controllers/          # API控制器
+│   │   │   ├── auth_controller.rs       # 认证控制器
+│   │   │   ├── config_controller.rs     # 配置控制器
+│   │   │   ├── download_controller.rs   # 下载控制器
+│   │   │   ├── instance_controller.rs   # 实例控制器
+│   │   │   ├── java_controller.rs       # Java控制器
+│   │   │   ├── launcher_controller.rs   # 启动控制器
+│   │   │   ├── loader_controller.rs     # 加载器控制器
+│   │   │   └── modpack_controller.rs    # 整合包控制器
 │   │   ├── models/               # 数据模型
 │   │   ├── services/             # 业务逻辑
+│   │   │   ├── download/         # 下载服务模块
+│   │   │   ├── launcher/         # 启动器服务模块
+│   │   │   ├── loaders/          # 加载器安装模块
+│   │   │   │   ├── fabric.rs     # Fabric安装
+│   │   │   │   ├── forge.rs      # Forge安装
+│   │   │   │   ├── quilt.rs      # Quilt安装
+│   │   │   │   └── neoforge.rs   # NeoForge安装
+│   │   │   ├── config.rs         # 配置服务
+│   │   │   ├── instance.rs       # 实例服务
+│   │   │   ├── java.rs           # Java检测服务
+│   │   │   ├── memory.rs         # 内存管理服务
+│   │   │   ├── modrinth.rs       # Modrinth API服务
+│   │   │   └── modpack_installer.rs     # 整合包安装服务
+│   │   ├── utils/                # 工具函数
+│   │   │   ├── file_utils.rs     # 文件操作工具
+│   │   │   └── logger.rs         # 日志工具
 │   │   └── errors/               # 错误处理
-│   └── Cargo.toml               # Rust依赖配置
+│   ├── Cargo.toml                # Rust依赖配置
+│   └── tauri.conf.json           # Tauri配置
 └── public/                       # 公共资源
     └── icons/                    # 应用图标
 ```
 
 ## 使用指南
 
-### 启动页面
+### 主页
 - 选择已安装的游戏版本
-- 设置用户名和游戏参数
+- 设置玩家名称
+- 切换离线/在线模式
 - 一键启动游戏
+- 快捷访问下载、添加实例、实例管理功能
+
+### 实例管理
+- 查看所有已创建的游戏实例
+- 显示实例的加载器类型和游戏版本
+- 支持启动、重命名、删除实例
+- 快速打开实例文件夹
+
+### 添加实例
+#### 自定义安装
+1. 选择基础 Minecraft 版本
+2. 可选择安装 Mod 加载器（Forge/Fabric/Quilt/NeoForge）
+3. 选择加载器版本
+4. 输入实例名称并创建
+
+#### 从互联网安装
+1. 选择平台（目前支持 Modrinth）
+2. 搜索整合包，支持按游戏版本、加载器、分类筛选
+3. 选择整合包版本并安装
 
 ### 下载页面
-- 浏览所有可用版本
+- 浏览所有可用版本（正式版、快照版）
 - 支持搜索和筛选
-- 选择下载源（官方/BMCL）
+- 选择下载源（官方/BMCL镜像）
 - 实时下载进度显示
 
 ### 设置页面
-- 游戏目录配置
-- Java路径设置
-- 下载线程数配置
-- 主题切换
+- **通用设置**: 游戏目录配置、下载源选择、下载线程数
+- **Java设置**: Java路径配置、自动检测系统Java
+- **内存设置**: JVM内存分配配置
 
 ## 配置说明
 
@@ -132,19 +220,41 @@ Ar1s_Launcher/
 
 ### 网络设置
 - 支持多线程下载
-- 可配置下载源
+- 可配置下载源（官方源/BMCL镜像源）
 - 网络连接状态监控
+- 自动 fallback 机制
+
+### 版本隔离
+- 支持版本隔离模式
+- 每个实例独立的游戏目录
+- 独立的存档、资源包、Mod管理
+
+## 支持的加载器
+
+| 加载器 | 状态 | 说明 |
+|--------|------|------|
+| Forge | ✅ 支持 | 最流行的 Mod 加载器 |
+| Fabric | ✅ 支持 | 轻量级 Mod 加载器 |
+| Quilt | ✅ 支持 | Fabric 的分支 |
+| NeoForge | ✅ 支持 | Forge 的现代化分支 |
+
+## 支持的整合包平台
+
+| 平台 | 状态 | 说明 |
+|------|------|------|
+| Modrinth | ✅ 支持 | 开源整合包平台 |
+| CurseForge | 🚧 开发中 | 最大的整合包平台 |
 
 ## 问题排查
 
 ### 常见问题
 1. **游戏启动失败**
    - 检查Java环境配置，暂时需要手动切换Java版本
-   - 验证游戏文件完整性
+   - 验证游戏文件完整性（启动时会自动检测并提示修复）
    - 查看日志文件获取详细信息
 
 2. **下载速度慢**
-   - 尝试切换下载源
+   - 尝试切换下载源（设置 → 通用设置 → 下载源）
    - 检查网络连接
    - 调整下载线程数
 
@@ -153,8 +263,18 @@ Ar1s_Launcher/
    - 重启应用
    - 检查系统图形驱动
 
+4. **加载器安装失败**
+   - 确保网络连接正常
+   - 检查基础版本是否已正确下载
+   - 查看日志获取详细错误信息
+
+5. **整合包安装失败**
+   - 确保有足够的磁盘空间
+   - 检查网络连接
+   - 尝试重新安装
+
 ### 日志文件
-日志文件位于应用目录下的`logs`文件夹，包含详细的运行信息，可用于问题诊断。
+日志文件位于应用目录下的`src-tauri/logs`文件夹，包含详细的运行信息，可用于问题诊断。
 
 ## 贡献指南
 
@@ -181,9 +301,24 @@ Ar1s_Launcher/
 - [Tauri](https://tauri.app/) - 优秀的跨平台应用框架
 - [Vuetify](https://vuetifyjs.com/) - Material Design组件库
 - [BMCLAPI](https://bmclapidoc.bangbang93.com/) - Minecraft镜像下载服务
+- [Modrinth](https://modrinth.com/) - 开源整合包和Mod平台
+
+感谢[M-Crowe](https://github.com/m-crowe)的测试和部分非MD3 UI的设计。
+
+## 路线图
+
+- [ ] CurseForge 整合包支持
+- [ ] 正版登录支持
+- [ ] Mod 管理功能
+- [ ] 资源包管理
+- [ ] 光影包管理
+- [ ] 多语言支持
+- [ ] 自动更新功能
 
 ## 问题反馈
 
 请提交GitHub Issue，并描述清楚问题和复现步骤。
 
 ---
+
+**Made with ❤️ by JDBeWL**
