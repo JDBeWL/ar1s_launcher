@@ -82,5 +82,3 @@ const emit = defineEmits<{
   </v-card>
 </template>
 
-<style scoped>
-</style>

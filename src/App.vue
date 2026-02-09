@@ -61,7 +61,7 @@ function getThemeName() {
 }
 
 function applyTheme() {
-  theme.change(getThemeName())
+  theme.global.name.value = getThemeName()
   localStorage.setItem('theme', isDarkMode.value ? 'dark' : 'light')
 }
 
@@ -256,9 +256,40 @@ onUnmounted(() => {
   pointer-events: auto;
 }
 
-/* Navigation list padding */
+/* Navigation list */
 .nav-list {
   padding: 8px;
+}
+
+/* Navigation item
+ * padding 0 12px → 清除 Vuetify 默认 4px 垂直 padding，水平 12px
+ * icon center = 12px padding + 12px half-icon = 24px
+ * Rail item = 64 - 8*2 = 48px → center = 24px ✓
+ * 两种模式布局完全一致，过渡无跳变 */
+.v-list-item.nav-item {
+  --v-list-prepend-gap: 0;
+  padding: 0 12px;
+  min-height: 48px;
+  margin-bottom: 4px;
+  overflow: hidden;
+}
+
+.nav-item > .v-list-item__prepend {
+  margin-inline-end: 12px;
+}
+
+.nav-item.v-list-item--active {
+  background: rgb(var(--v-theme-secondary-container));
+  color: rgb(var(--v-theme-on-secondary-container));
+}
+
+.nav-item.v-list-item--active .v-icon {
+  color: rgb(var(--v-theme-on-secondary-container));
+}
+
+/* Rail mode: 只需隐藏文字，布局与展开模式完全一致 */
+.v-navigation-drawer--rail .nav-item > .v-list-item__content {
+  display: none;
 }
 
 /* Theme toggle animation */
@@ -276,20 +307,6 @@ onUnmounted(() => {
   color: rgb(var(--v-theme-on-error));
 }
 
-/* Navigation item styles - MD3 */
-.nav-item {
-  margin-bottom: 4px;
-}
-
-.nav-item.v-list-item--active {
-  background: rgb(var(--v-theme-secondary-container));
-  color: rgb(var(--v-theme-on-secondary-container));
-}
-
-.nav-item.v-list-item--active .v-icon {
-  color: rgb(var(--v-theme-on-secondary-container));
-}
-
 /* MD3 Surface tones */
 .v-app .surface-container {
   background-color: rgb(var(--v-theme-surface-container));
@@ -301,25 +318,6 @@ onUnmounted(() => {
 
 .v-app .surface-container-highest {
   background-color: rgb(var(--v-theme-surface-container-highest));
-}
-
-/* Navigation drawer rail mode - center icons */
-.v-navigation-drawer--rail .nav-list {
-  padding: 8px;
-}
-
-.v-navigation-drawer--rail .nav-list .v-list-item.nav-item {
-  padding: 0;
-  min-height: 48px;
-}
-
-.v-navigation-drawer--rail .nav-list .v-list-item.nav-item > .v-list-item__prepend {
-  margin-left: 12px;
-}
-
-.v-navigation-drawer--rail .nav-list .v-list-item.nav-item .v-list-item-title,
-.v-navigation-drawer--rail .nav-list .v-list-item.nav-item .v-list-item__content {
-  display: none;
 }
 
 /* Route transition */

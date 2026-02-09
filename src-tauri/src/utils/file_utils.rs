@@ -468,7 +468,7 @@ pub fn cleanup_instance_creation(
 pub fn cleanup_forge_installation(
     instance_path: &PathBuf,
     game_dir: &PathBuf,
-    forge_version: &crate::models::ForgeVersion,
+    forge_version: &crate::services::loaders::forge::ForgeVersion,
     installer_path: &PathBuf,
 ) {
     info!("file_utils: 开始清理Forge安装过程中的文件和目录");

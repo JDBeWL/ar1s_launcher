@@ -4,6 +4,7 @@ import { useVersionManager } from "../composables/useVersionManager";
 import { useGameLaunch } from "../composables/useGameLaunch";
 import { instanceApi, userApi } from "../services";
 import { formatTimeAgo, formatLastPlayed } from "../utils/format";
+import { useDebounceFn } from "../composables/useDebounce";
 import type { GameInstance } from "../types/events";
 
 const {
@@ -104,9 +105,13 @@ async function saveUsername(newName: string) {
   }
 }
 
+const debouncedSaveUsername = useDebounceFn((name: string) => {
+  saveUsername(name);
+}, 500);
+
 watch(username, (newName) => {
   if (newName !== null && newName !== undefined) {
-    saveUsername(newName);
+    debouncedSaveUsername.call(newName);
   }
 });
 
@@ -118,8 +123,6 @@ async function handleLaunch() {
   await launchGame(
     selectedVersion.value,
     username.value,
-    offlineMode.value,
-    gameDir.value
   );
 }
 
@@ -411,7 +414,7 @@ onMounted(async () => {
             />
             <div class="d-flex justify-space-between mt-2 text-caption text-on-surface-variant">
               <span>{{ (repairProgress.bytes_downloaded / 1024 / 1024).toFixed(1) }} MB</span>
-              <span>{{ (repairProgress.speed / 1024).toFixed(0) }} KB/s</span>
+              <span>{{ repairProgress.speed < 1024 ? repairProgress.speed.toFixed(0) + ' KB/s' : (repairProgress.speed / 1024).toFixed(1) + ' MB/s' }}</span>
             </div>
           </template>
           <div v-else class="text-center text-body-2 text-on-surface-variant">

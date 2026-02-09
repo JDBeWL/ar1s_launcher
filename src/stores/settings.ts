@@ -11,8 +11,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   async function loadSystemMemory() {
     try {
-      const memoryBytes = await configApi.getTotalMemory()
-      totalMemoryMB.value = Math.round(memoryBytes / 1024 / 1024)
+      totalMemoryMB.value = await configApi.getTotalMemory()
     } catch (err) {
       console.error('Failed to get total memory:', err)
     }

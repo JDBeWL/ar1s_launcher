@@ -406,10 +406,10 @@ pub fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
     set_config_value(|config| config.download_threads = threads)
 }
 
+/// 获取系统总内存（单位: MB）
 pub fn get_total_memory() -> u64 {
-    // 复用 memory 模块的缓存 System 实例，避免每次创建新实例
     let stats = get_system_memory();
-    stats.total_memory_mb * 1024 * 1024
+    stats.total_memory_mb
 }
 
 /// 获取系统内存统计信息

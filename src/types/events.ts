@@ -1,12 +1,10 @@
 export type DownloadStatus = 'downloading' | 'completed' | 'cancelled' | 'error';
 
 export interface DownloadProgress {
-  progress: number;
-  total: number;
-  speed: number;
-  status: DownloadStatus;
   bytes_downloaded: number;
   total_bytes: number;
+  speed: number;
+  status: DownloadStatus;
   percent: number;
   error?: string;
 }
@@ -35,7 +33,7 @@ export interface VersionManifest {
   versions: MinecraftVersion[];
 }
 
-// 游戏实例
+// 游戏实例 (对应后端 InstanceInfo，使用 camelCase)
 export interface GameInstance {
   id: string;
   name: string;
@@ -45,9 +43,6 @@ export interface GameInstance {
   loaderType?: string;
   gameVersion?: string;
   lastPlayed?: number;
-  modLoader?: string;
-  modLoaderVersion?: string;
-  icon?: string;
 }
 
 // 创建实例参数
@@ -101,18 +96,42 @@ export interface InstanceNameValidation {
   error_message: string | null;
 }
 
-// 游戏目录信息
+// 游戏目录信息 (对应后端 GameDirInfo，使用 snake_case)
 export interface GameDirInfo {
+  path: string;
   versions: string[];
+  total_size: number;
 }
 
-// Modrinth 整合包版本
+// Modrinth 整合包版本 (对应后端 ModrinthModpackVersion，使用 snake_case)
 export interface ModrinthVersion {
   id: string;
   name: string;
   version_number: string;
   game_versions: string[];
   loaders: string[];
+  featured: boolean;
+  date_published: string;
+  downloads: number;
+  files: ModrinthFile[];
+  dependencies: ModrinthDependency[];
+}
+
+export interface ModrinthFile {
+  url: string;
+  filename: string;
+  primary: boolean;
+  size: number;
+  hashes: {
+    sha1: string;
+    sha512: string;
+  };
+}
+
+export interface ModrinthDependency {
+  version_id?: string;
+  project_id?: string;
+  dependency_type: string;
 }
 
 // 窗口设置
@@ -122,7 +141,9 @@ export interface WindowSettings {
   fullscreen: boolean;
 }
 
-// 自动内存配置
+// 自动内存配置 (对应后端 AutoMemoryConfig，使用 snake_case)
 export interface AutoMemoryConfig {
   enabled: boolean;
+  max_limit_mb: number;
+  safety_margin_percent: number;
 }

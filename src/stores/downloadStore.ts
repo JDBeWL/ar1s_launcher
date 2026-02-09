@@ -5,6 +5,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { DownloadProgress, DownloadStatus } from '../types/events'
 import { api } from '../services/api'
 import { useNotificationStore } from './notificationStore'
+import { getErrorMessage } from '../utils/format'
 
 // Add 'idle' to the possible statuses for the store
 export type StoreDownloadStatus = DownloadStatus | 'idle';
@@ -18,12 +19,10 @@ export const useDownloadStore = defineStore('download', () => {
   const selectedVersion = ref('')
   const downloadError = ref<string | null>(null);
   const downloadProgress = ref<DownloadState>({
-    progress: 0,
-    total: 0,
-    speed: 0,
-    status: 'idle',
     bytes_downloaded: 0,
     total_bytes: 0,
+    speed: 0,
+    status: 'idle',
     percent: 0,
     error: undefined,
   })
@@ -92,7 +91,7 @@ export const useDownloadStore = defineStore('download', () => {
     } catch (err) {
       console.error('Failed to start download invocation:', err)
       downloadProgress.value.status = 'error'
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorMessage = getErrorMessage(err);
       downloadError.value = errorMessage;
       const notificationStore = useNotificationStore()
       notificationStore.error('下载失败', errorMessage, true)

@@ -27,6 +27,9 @@ pub async fn process_and_download_version(
     let game_dir = PathBuf::from(&config.game_dir);
     let version_dir = game_dir.join("versions").join(&version_id);
 
+    // 记录目录是否在本次调用前已存在（用于失败清理判断）
+    let dir_existed_before = version_dir.exists();
+
     // 创建版本目录
     fs::create_dir_all(&version_dir)?;
     let libraries_base_dir = game_dir.join("libraries");
@@ -120,9 +123,9 @@ pub async fn process_and_download_version(
             Ok(())
         }
         Err(e) => {
-            // 下载失败时清理版本文件夹
-            warn!("下载失败，清理版本文件夹: {}", version_dir.display());
-            if version_dir.exists() {
+            // 仅在本次创建的全新目录时才清理，避免删除用户已有的版本数据（mod、存档等）
+            if !dir_existed_before && version_dir.exists() {
+                warn!("下载失败，清理新建的版本文件夹: {}", version_dir.display());
                 if let Err(cleanup_err) = fs::remove_dir_all(&version_dir) {
                     warn!("清理版本文件夹失败: {}", cleanup_err);
                 }

@@ -151,7 +151,7 @@ pub async fn download_all_files(
             // 使用 spawn_blocking 来处理可能阻塞的操作
             std::thread::spawn(move || {
                 // 尝试获取锁并保存状态
-                if let Ok(state) = download_state.try_lock() {
+                if let Ok(mut state) = download_state.try_lock() {
                     let _ = state.save_to_file(&state_file);
                 }
             });
@@ -217,7 +217,7 @@ pub async fn download_all_files(
 
     // 保存最终状态
     {
-        let state = download_state.lock().await;
+        let mut state = download_state.lock().await;
         if state.dirty {
             if let Err(e) = state.save_to_file(&state_file) {
                 warn!("Failed to write final state file: {}", e);
@@ -309,12 +309,10 @@ fn spawn_progress_reporter(
             };
 
             let progress = DownloadProgress {
-                progress: current_bytes,
-                total: total_size,
-                speed,
-                status: DownloadStatus::Downloading,
                 bytes_downloaded: current_bytes,
                 total_bytes: total_size,
+                speed,
+                status: DownloadStatus::Downloading,
                 percent: progress_percent,
                 error: None,
             };
@@ -338,7 +336,7 @@ fn spawn_state_saver(
                 break;
             }
 
-            let state = download_state.lock().await;
+            let mut state = download_state.lock().await;
             if state.dirty {
                 if let Err(e) = state.save_to_file(&state_file) {
                     warn!("Failed to save download state: {}", e);
@@ -469,12 +467,10 @@ fn emit_cancelled_progress(window: &Window, bytes: u64, total: u64) {
     let _ = window.emit(
         "download-progress",
         &DownloadProgress {
-            progress: bytes,
-            total,
-            speed: 0.0,
-            status: DownloadStatus::Cancelled,
             bytes_downloaded: bytes,
             total_bytes: total,
+            speed: 0.0,
+            status: DownloadStatus::Cancelled,
             percent,
             error: None,
         },
@@ -492,12 +488,10 @@ fn emit_error_progress(window: &Window, bytes: u64, total: u64, error_msg: &str)
     let _ = window.emit(
         "download-progress",
         &DownloadProgress {
-            progress: bytes,
-            total,
-            speed: 0.0,
-            status: DownloadStatus::Error,
             bytes_downloaded: bytes,
             total_bytes: total,
+            speed: 0.0,
+            status: DownloadStatus::Error,
             percent,
             error: Some(error_msg.to_string()),
         },
@@ -509,12 +503,10 @@ fn emit_completed_progress(window: &Window, bytes: u64, total: u64) {
     let _ = window.emit(
         "download-progress",
         &DownloadProgress {
-            progress: bytes,
-            total,
-            speed: 0.0,
-            status: DownloadStatus::Completed,
             bytes_downloaded: bytes,
             total_bytes: total,
+            speed: 0.0,
+            status: DownloadStatus::Completed,
             percent: 100,
             error: None,
         },

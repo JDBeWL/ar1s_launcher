@@ -208,7 +208,7 @@ export const configApi = {
 
   /** 设置游戏目录 */
   async setGameDir(path: string): Promise<void> {
-    return invoke('set_game_dir', { path, window: {} });
+    return invoke('set_game_dir', { path });
   },
 
   /** 获取游戏目录信息（已安装版本等） */
@@ -317,10 +317,11 @@ export const launcherApi = {
   /** 启动 Minecraft */
   async launchMinecraft(options: {
     version: string;
-    memory: number;
     username: string;
-    offline: boolean;
-    game_dir: string;
+    memory?: number;
+    window_width?: number;
+    window_height?: number;
+    fullscreen?: boolean;
   }): Promise<void> {
     return invoke('launch_minecraft', { options });
   },

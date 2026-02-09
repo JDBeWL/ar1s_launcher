@@ -123,7 +123,7 @@ onUnmounted(() => {
 <style scoped>
 .settings-container {
   display: flex;
-  height: calc(100vh - 64px); /* 减去顶部 app bar 高度 */
+  height: calc(100vh - 64px);
   overflow: hidden;
 }
 
@@ -131,10 +131,8 @@ onUnmounted(() => {
   width: 220px;
   min-width: 220px;
   background-color: rgb(var(--v-theme-surface-container));
-  flex-shrink: 0;
   overflow-y: auto;
-  margin: 12px;
-  margin-right: 0;
+  margin: 12px 0 12px 12px;
   border-radius: 16px;
   max-height: calc(100vh - 64px - 24px);
 }
@@ -161,5 +159,17 @@ onUnmounted(() => {
 
 .settings-section {
   scroll-margin-top: 24px;
+}
+</style>
+
+<!-- 子组件共享样式（非 scoped，供 GeneralSettings/JavaSettings 等使用） -->
+<style>
+.settings-group {
+  margin-bottom: 32px;
+}
+
+.group-header {
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgb(var(--v-theme-outline-variant));
 }
 </style>

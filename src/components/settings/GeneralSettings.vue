@@ -67,16 +67,24 @@ async function saveDownloadThreads() {
 async function loadVersionIsolation() {
   try {
     const isolation = await configApi.loadConfigKey('versionIsolation');
-    versionIsolation.value = isolation === 'true';
+    if (isolation !== null) {
+      versionIsolation.value = isolation === 'true';
+    }
     
     const saves = await configApi.loadConfigKey('isolateSaves');
-    isolateSaves.value = saves === 'true';
+    if (saves !== null) {
+      isolateSaves.value = saves === 'true';
+    }
     
     const resourcepacks = await configApi.loadConfigKey('isolateResourcepacks');
-    isolateResourcepacks.value = resourcepacks === 'true';
+    if (resourcepacks !== null) {
+      isolateResourcepacks.value = resourcepacks === 'true';
+    }
     
     const logs = await configApi.loadConfigKey('isolateLogs');
-    isolateLogs.value = logs === 'true';
+    if (logs !== null) {
+      isolateLogs.value = logs === 'true';
+    }
   } catch (err) {
     console.error('Failed to load isolation settings:', err);
   }
@@ -318,15 +326,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.settings-group {
-  margin-bottom: 32px;
-}
-
-.group-header {
-  padding-bottom: 16px;
-  border-bottom: 1px solid rgb(var(--v-theme-outline-variant));
-}
-
 .isolation-options {
   border-top: 1px solid rgb(var(--v-theme-outline-variant));
 }

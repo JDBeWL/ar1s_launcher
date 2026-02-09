@@ -198,12 +198,4 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.settings-group {
-  margin-bottom: 32px;
-}
-
-.group-header {
-  padding-bottom: 16px;
-  border-bottom: 1px solid rgb(var(--v-theme-outline-variant));
-}
 </style>

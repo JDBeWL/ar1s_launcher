@@ -7,6 +7,7 @@ const settingsStore = useSettingsStore();
 const memoryWarning = ref('');
 const autoMemoryEnabled = ref(false);
 const memoryEfficiency = ref('');
+const isInitialized = ref(false);
 
 const totalMemoryGB = computed(() => (settingsStore.totalMemoryMB / 1024).toFixed(1));
 const maxMemoryGB = computed(() => (settingsStore.maxMemory / 1024).toFixed(1));
@@ -77,6 +78,7 @@ watch(() => settingsStore.maxMemory, async () => {
 });
 
 watch(autoMemoryEnabled, async () => {
+  if (!isInitialized.value) return;
   await toggleAutoMemory();
 });
 
@@ -85,6 +87,7 @@ onMounted(async () => {
   await settingsStore.loadMaxMemory();
   await loadAutoMemoryConfig();
   await analyzeMemoryEfficiency();
+  isInitialized.value = true;
 });
 </script>
 
@@ -286,15 +289,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.settings-group {
-  margin-bottom: 32px;
-}
-
-.group-header {
-  padding-bottom: 16px;
-  border-bottom: 1px solid rgb(var(--v-theme-outline-variant));
-}
-
 .memory-stat {
   background: rgb(var(--v-theme-surface-container-high));
   border-radius: 16px;

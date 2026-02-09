@@ -33,6 +33,8 @@ const MAVEN_MINECRAFT: &str = "https://libraries.minecraft.net";
 pub struct ForgeVersion {
     pub version: String,
     pub mcversion: String,
+    #[serde(default)]
+    pub build: i32,
 }
 
 /// 安装 Forge 加载器（统一入口）
@@ -55,6 +57,7 @@ pub async fn install_forge(
     let forge_ver = ForgeVersion {
         version: forge_version.to_string(),
         mcversion: mc_version.to_string(),
+        build: 0,
     };
 
     // 下载安装器

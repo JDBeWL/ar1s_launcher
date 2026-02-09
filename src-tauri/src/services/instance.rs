@@ -376,8 +376,7 @@ pub async fn launch_instance(instance_name: String, window: Window) -> Result<()
         return Err(LauncherError::Custom(format!("实例 '{}' 的配置文件不存在", instance_name)));
     }
 
-    // 更新上次启动时间
-    let _ = config::update_instance_last_played(&instance_name);
+    // 注意: update_instance_last_played 已在 launcher::launch_minecraft 中调用，此处无需重复
 
     let launch_options = LaunchOptions {
         version: instance_name,

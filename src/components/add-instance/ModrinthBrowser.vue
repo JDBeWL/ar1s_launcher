@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useModrinth, type ModrinthModpack } from '../../composables/useModrinth';
 import ModpackCard from './ModpackCard.vue';
-import { watchDebounced } from '../../composables/useDebounce';
 
 const router = useRouter();
 const selectedModpack = ref<ModrinthModpack | null>(null);
@@ -44,14 +43,6 @@ onMounted(async () => {
   await fetchGameVersions();
   // 初始加载整合包列表
   await searchModpacks();
-});
-
-watchDebounced(modpackSearchQuery, () => {
-  searchModpacks();
-}, 350);
-
-watch([selectedGameVersion, selectedLoader, selectedCategory, sortBy], () => {
-  searchModpacks();
 });
 </script>
 

@@ -97,10 +97,8 @@ export function useInstanceCreation() {
         loadingVersions.value = true;
         try {
             const manifest = await api.version.getVersions();
-            versions.value = manifest.versions.map((v) => ({
-                ...v,
-                releaseTime: new Date(v.releaseTime).toLocaleString(),
-            }));
+            // 保留原始 releaseTime (ISO 8601) 用于排序，显示时再格式化
+            versions.value = manifest.versions;
         } catch (error) {
             console.error("Failed to fetch versions:", error);
         } finally {

@@ -391,6 +391,7 @@ impl ModpackInstaller {
         let max_concurrent = (dl_config.download_threads as usize).max(1);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
         let completed_count = Arc::new(AtomicUsize::new(0));
+        let failed_files = Arc::new(AtomicUsize::new(0));
         let client = self.http_client;
 
         let mut handles = Vec::with_capacity(total_files);
@@ -419,6 +420,7 @@ impl ModpackInstaller {
             let file_downloads = file.downloads.clone();
             let total = total_files;
 
+            let failed_files_clone = failed_files.clone();
             let handle = tokio::spawn(async move {
                 let _permit = match sem.acquire().await {
                     Ok(p) => p,
@@ -460,6 +462,7 @@ impl ModpackInstaller {
 
                 if !downloaded {
                     error!("无法下载文件: {}", file_path);
+                    failed_files_clone.fetch_add(1, Ordering::Relaxed);
                 }
             });
 
@@ -472,6 +475,14 @@ impl ModpackInstaller {
         }
 
         check_cancelled()?;
+
+        let failed_count = failed_files.load(Ordering::Relaxed);
+        if failed_count > 0 {
+            return Err(LauncherError::Custom(format!(
+                "{} 个文件下载失败，整合包可能不完整",
+                failed_count
+            )));
+        }
 
         Ok(())
     }

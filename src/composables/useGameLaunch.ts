@@ -19,8 +19,6 @@ export function useGameLaunch() {
     async function launchGame(
         version: string,
         username: string,
-        offline: boolean,
-        gameDir: string
     ) {
         if (!version) {
             notificationStore.warning('请先选择一个版本');
@@ -50,10 +48,8 @@ export function useGameLaunch() {
 
             await launcherApi.launchMinecraft({
                 version,
-                memory: settingsStore.maxMemory,
                 username,
-                offline,
-                game_dir: gameDir
+                memory: settingsStore.maxMemory,
             });
         } catch (err) {
             console.error('Failed to launch game:', err);
@@ -66,13 +62,11 @@ export function useGameLaunch() {
     async function repairGame(version: string) {
         isRepairing.value = true;
         repairProgress.value = {
-            progress: 0,
-            total: 0,
-            speed: 0,
-            status: 'downloading',
             bytes_downloaded: 0,
             total_bytes: 0,
-            percent: 0
+            speed: 0,
+            status: 'downloading',
+            percent: 0,
         };
 
         // 清理之前的监听器
@@ -83,11 +77,9 @@ export function useGameLaunch() {
         });
 
         try {
-            const mirrorUrl = settingsStore.downloadMirror === 'bmcl'
-                ? 'https://bmclapi2.bangbang93.com'
-                : undefined;
+            const mirror = settingsStore.downloadMirror === 'bmcl' ? 'bmcl' : undefined;
 
-            await versionApi.downloadVersion(version, mirrorUrl);
+            await versionApi.downloadVersion(version, mirror);
             notificationStore.success('修复完成', '请重新启动游戏');
         } catch (err) {
             console.error('Repair failed:', err);

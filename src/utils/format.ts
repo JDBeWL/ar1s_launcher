@@ -50,7 +50,13 @@ export function getLoaderIcon(loaderType?: string, context: 'list' | 'select' = 
 
 /**
  * 从错误对象中提取错误消息
+ * 处理多种错误格式：Error 对象、Tauri 错误 {message: "..."} 和字符串
  */
 export function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message: unknown }).message)
+  }
+  return String(error)
 }

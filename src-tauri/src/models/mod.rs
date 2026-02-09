@@ -120,12 +120,10 @@ pub enum DownloadStatus {
 // 下载进度
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadProgress {
-    pub progress: u64,
-    pub total: u64,
-    pub speed: f64,
-    pub status: DownloadStatus,
     pub bytes_downloaded: u64,
     pub total_bytes: u64,
+    pub speed: f64,
+    pub status: DownloadStatus,
     pub percent: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -161,14 +159,6 @@ pub struct InstanceInfo {
     pub loader_type: Option<String>,
     pub game_version: Option<String>,
     pub last_played: Option<i64>,
-}
-
-// Forge版本
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ForgeVersion {
-    pub version: String,
-    pub mcversion: String,
-    pub build: i32,
 }
 
 // 整合包相关模型

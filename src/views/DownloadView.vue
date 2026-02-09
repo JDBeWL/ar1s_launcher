@@ -334,7 +334,6 @@ onMounted(async () => {
   margin: 0 auto;
 }
 
-
 .version-icon-avatar {
   background: transparent;
 }
