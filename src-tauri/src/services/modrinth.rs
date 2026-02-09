@@ -1,20 +1,21 @@
 use crate::errors::LauncherError;
 use crate::models::modpack::*;
+use crate::services::http_client;
+use log::debug;
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 
 const MODRINTH_API_BASE: &str = "https://api.modrinth.com/v2";
-const USER_AGENT: &str = "Ar1sLauncher/1.0.0 (https://github.com/your-username/ar1s-launcher)";
 
 pub struct ModrinthService {
-    client: Client,
+    client: &'static Client,
 }
 
 impl ModrinthService {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: http_client::get_client(),
         }
     }
 
@@ -48,7 +49,7 @@ impl ModrinthService {
             for v in &versions {
                 facets_groups.push(vec![format!("versions:{}", v)]);
             }
-            println!("添加游戏版本过滤: {:?}", versions);
+            debug!("添加游戏版本过滤: {:?}", versions);
         }
 
         if let Some(loader_list) = loaders {
@@ -56,7 +57,7 @@ impl ModrinthService {
             for loader in &loader_list {
                 facets_groups.push(vec![format!("categories:{}", loader)]);
             }
-            println!("添加加载器过滤: {:?}", loader_list);
+            debug!("添加加载器过滤: {:?}", loader_list);
         }
 
         if let Some(category_list) = categories {
@@ -64,13 +65,13 @@ impl ModrinthService {
             for category in &category_list {
                 facets_groups.push(vec![format!("categories:{}", category)]);
             }
-            println!("添加分类过滤: {:?}", category_list);
+            debug!("添加分类过滤: {:?}", category_list);
         }
 
         // 写入 facets 参数
         let facets_json = serde_json::to_string(&facets_groups)?;
         params.insert("facets", facets_json.clone());
-        println!("生成的 facets 参数: {}", facets_json);
+        debug!("生成的 facets 参数: {}", facets_json);
         
         params.insert("limit", limit.unwrap_or(20).to_string());
         params.insert("offset", offset.unwrap_or(0).to_string());
@@ -79,7 +80,7 @@ impl ModrinthService {
         let response = self
             .client
             .get(&url)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", http_client::USER_AGENT)
             .query(&params)
             .send()
             .await
@@ -177,7 +178,7 @@ impl ModrinthService {
         let response = self
             .client
             .get(&url)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", http_client::USER_AGENT)
             .send()
             .await
             .map_err(|e| LauncherError::Custom(format!("获取整合包信息失败: {}", e)))?;
@@ -262,7 +263,7 @@ impl ModrinthService {
         let response = self
             .client
             .get(&url)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", http_client::USER_AGENT)
             .query(&params)
             .send()
             .await
@@ -349,7 +350,7 @@ impl ModrinthService {
         let response = self
             .client
             .get(file_url)
-            .header("User-Agent", USER_AGENT)
+            .header("User-Agent", http_client::USER_AGENT)
             .send()
             .await
             .map_err(|e| LauncherError::Custom(format!("下载文件失败: {}", e)))?;

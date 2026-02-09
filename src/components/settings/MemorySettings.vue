@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { useSettingsStore } from '../../stores/settings';
+import { configApi } from '../../services';
 
 const settingsStore = useSettingsStore();
 const memoryWarning = ref('');
@@ -16,7 +16,7 @@ const memoryPercentage = computed(() =>
 
 async function checkMemoryWarning() {
   try {
-    const warning = await invoke<string | null>('check_memory_warning', { memoryMb: settingsStore.maxMemory });
+    const warning = await configApi.checkMemoryWarning(settingsStore.maxMemory);
     memoryWarning.value = warning || '';
   } catch (err) {
     console.error('Failed to check memory warning:', err);
@@ -26,7 +26,7 @@ async function checkMemoryWarning() {
 
 async function loadAutoMemoryConfig() {
   try {
-    const config = await invoke<{ enabled: boolean }>('get_auto_memory_config');
+    const config = await configApi.getAutoMemoryConfig();
     autoMemoryEnabled.value = config.enabled;
   } catch (err) {
     console.error('Failed to load auto memory config:', err);
@@ -35,7 +35,7 @@ async function loadAutoMemoryConfig() {
 
 async function toggleAutoMemory() {
   try {
-    await invoke('set_auto_memory_enabled', { enabled: autoMemoryEnabled.value });
+    await configApi.setAutoMemoryEnabled(autoMemoryEnabled.value);
     if (autoMemoryEnabled.value) {
       await applyAutoMemory();
     }
@@ -46,7 +46,7 @@ async function toggleAutoMemory() {
 
 async function applyAutoMemory() {
   try {
-    const recommendedMemory = await invoke<number | null>('auto_set_memory');
+    const recommendedMemory = await configApi.autoSetMemory();
     if (recommendedMemory !== null && recommendedMemory !== undefined) {
       settingsStore.maxMemory = recommendedMemory;
       await settingsStore.saveMaxMemory();
@@ -59,8 +59,7 @@ async function applyAutoMemory() {
 
 async function analyzeMemoryEfficiency() {
   try {
-    const efficiency = await invoke<string>('analyze_memory_efficiency', { memoryMb: settingsStore.maxMemory });
-    memoryEfficiency.value = efficiency;
+    memoryEfficiency.value = await configApi.analyzeMemoryEfficiency(settingsStore.maxMemory);
   } catch (err) {
     console.error('Failed to analyze memory efficiency:', err);
     memoryEfficiency.value = '';

@@ -1,8 +1,10 @@
-import { ref, computed, onUnmounted, watch } from 'vue';
+import { ref, computed, onScopeDispose, watch } from 'vue';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { api } from '../services';
 import { useNotificationStore } from '../stores/notificationStore';
+import { useDebounceFn } from './useDebounce';
+import { getErrorMessage } from '../utils/format';
 import type { 
     MinecraftVersion, 
     InstallProgressPayload, 
@@ -217,14 +219,12 @@ export function useInstanceCreation() {
     }
 
     // 当实例名称变化时验证（防抖）
-    let validateTimeout: ReturnType<typeof setTimeout> | null = null;
+    const debouncedValidate = useDebounceFn((name: string) => {
+        validateInstanceName(name);
+    }, 300);
+
     watch(instanceName, (newName) => {
-        if (validateTimeout) {
-            clearTimeout(validateTimeout);
-        }
-        validateTimeout = setTimeout(() => {
-            validateInstanceName(newName);
-        }, 300);
+        debouncedValidate.call(newName);
     });
 
     let unlistenProgress: UnlistenFn | null = null;
@@ -235,14 +235,10 @@ export function useInstanceCreation() {
             unlistenProgress();
             unlistenProgress = null;
         }
-        // 清理防抖定时器
-        if (validateTimeout) {
-            clearTimeout(validateTimeout);
-            validateTimeout = null;
-        }
     }
 
-    onUnmounted(cleanup);
+    // 作用域销毁时自动清理（useDebounceFn 会自行清理）
+    onScopeDispose(cleanup);
 
     async function createInstance() {
         const notificationStore = useNotificationStore();
@@ -347,8 +343,7 @@ export function useInstanceCreation() {
             await new Promise((resolve) => setTimeout(resolve, 1000));
             showProgress.value = false;
 
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            notificationStore.error('创建实例失败', errorMessage, true);
+            notificationStore.error('创建实例失败', getErrorMessage(error), true);
         } finally {
             cleanup();
         }

@@ -1,16 +1,16 @@
 //! 下载状态管理（支持断点续传）
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// 下载状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadState {
-    /// 已完成的文件 URL 列表
-    pub completed_files: Vec<String>,
-    /// 下载失败的文件 URL 列表
-    pub failed_files: Vec<String>,
+    /// 已完成的文件 URL 集合（使用 HashSet 实现 O(1) 查找）
+    pub completed_files: HashSet<String>,
+    /// 下载失败的文件 URL 集合
+    pub failed_files: HashSet<String>,
     /// 部分下载的文件信息（URL -> 已下载字节数）
     #[serde(default)]
     pub partial_downloads: HashMap<String, u64>,
@@ -25,8 +25,8 @@ pub struct DownloadState {
 impl DownloadState {
     pub fn new() -> Self {
         Self {
-            completed_files: Vec::new(),
-            failed_files: Vec::new(),
+            completed_files: HashSet::new(),
+            failed_files: HashSet::new(),
             partial_downloads: HashMap::new(),
             active_downloads: HashMap::new(),
             dirty: false,
@@ -54,16 +54,12 @@ impl DownloadState {
     pub fn mark_completed(&mut self, url: String) {
         // 从部分下载中移除
         self.partial_downloads.remove(&url);
-        if !self.completed_files.contains(&url) {
-            self.completed_files.push(url);
-        }
+        self.completed_files.insert(url);
         self.mark_dirty();
     }
 
     pub fn mark_failed(&mut self, url: String) {
-        if !self.failed_files.contains(&url) {
-            self.failed_files.push(url);
-        }
+        self.failed_files.insert(url);
         self.mark_dirty();
     }
 
@@ -90,13 +86,13 @@ impl DownloadState {
 
     /// 检查文件是否已完成
     pub fn is_completed(&self, url: &str) -> bool {
-        self.completed_files.contains(&url.to_string())
+        self.completed_files.contains(url)
     }
 
     /// 清除失败状态（用于重试）
     #[allow(dead_code)]
     pub fn clear_failed(&mut self, url: &str) {
-        self.failed_files.retain(|u| u != url);
+        self.failed_files.remove(url);
         self.mark_dirty();
     }
 
@@ -114,5 +110,135 @@ impl DownloadState {
 impl Default for DownloadState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_state_is_empty() {
+        let state = DownloadState::new();
+        assert!(state.completed_files.is_empty());
+        assert!(state.failed_files.is_empty());
+        assert!(state.partial_downloads.is_empty());
+        assert!(state.active_downloads.is_empty());
+        assert!(!state.dirty);
+    }
+
+    #[test]
+    fn test_mark_completed() {
+        let mut state = DownloadState::new();
+        state.update_partial("http://example.com/a".into(), 512);
+
+        state.mark_completed("http://example.com/a".into());
+
+        assert!(state.is_completed("http://example.com/a"));
+        assert!(!state.is_completed("http://example.com/b"));
+        // mark_completed 应该移除部分下载记录
+        assert_eq!(state.get_partial_bytes("http://example.com/a"), 0);
+        assert!(state.dirty);
+    }
+
+    #[test]
+    fn test_mark_completed_idempotent() {
+        let mut state = DownloadState::new();
+        state.mark_completed("http://example.com/a".into());
+        state.mark_completed("http://example.com/a".into());
+        // HashSet 自动去重，不应有重复
+        assert_eq!(state.completed_files.len(), 1);
+    }
+
+    #[test]
+    fn test_mark_failed() {
+        let mut state = DownloadState::new();
+        state.mark_failed("http://example.com/a".into());
+        assert!(state.failed_files.contains("http://example.com/a"));
+        assert!(state.dirty);
+    }
+
+    #[test]
+    fn test_clear_failed() {
+        let mut state = DownloadState::new();
+        state.mark_failed("http://example.com/a".into());
+        state.mark_failed("http://example.com/b".into());
+
+        state.clear_failed("http://example.com/a");
+        assert!(!state.failed_files.contains("http://example.com/a"));
+        assert!(state.failed_files.contains("http://example.com/b"));
+    }
+
+    #[test]
+    fn test_start_and_finish_download() {
+        let mut state = DownloadState::new();
+        let path = PathBuf::from("/tmp/test.jar");
+        state.start_download("http://example.com/a".into(), path.clone());
+        assert_eq!(state.active_downloads.len(), 1);
+
+        state.finish_download("http://example.com/a");
+        assert!(state.active_downloads.is_empty());
+    }
+
+    #[test]
+    fn test_reset() {
+        let mut state = DownloadState::new();
+        state.mark_completed("http://example.com/a".into());
+        state.mark_failed("http://example.com/b".into());
+        state.update_partial("http://example.com/c".into(), 1024);
+        state.start_download("http://example.com/d".into(), PathBuf::from("/tmp/d"));
+
+        state.reset();
+        assert!(state.completed_files.is_empty());
+        assert!(state.failed_files.is_empty());
+        assert!(state.partial_downloads.is_empty());
+        assert!(state.active_downloads.is_empty());
+        assert!(state.dirty);
+    }
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip() {
+        let mut state = DownloadState::new();
+        state.mark_completed("http://example.com/a".into());
+        state.mark_completed("http://example.com/b".into());
+        state.mark_failed("http://example.com/c".into());
+        state.update_partial("http://example.com/d".into(), 2048);
+        // active_downloads 和 dirty 应该被 skip
+
+        let json = serde_json::to_string(&state).unwrap();
+        let restored: DownloadState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.completed_files.len(), 2);
+        assert!(restored.is_completed("http://example.com/a"));
+        assert!(restored.is_completed("http://example.com/b"));
+        assert!(restored.failed_files.contains("http://example.com/c"));
+        assert_eq!(restored.get_partial_bytes("http://example.com/d"), 2048);
+        // skip 字段应该是默认值
+        assert!(restored.active_downloads.is_empty());
+        assert!(!restored.dirty);
+    }
+
+    #[test]
+    fn test_save_and_load_file() {
+        let dir = std::env::temp_dir().join("ar1s_test_dl_state");
+        let _ = std::fs::create_dir_all(&dir);
+        let state_file = dir.join("test_state.json");
+
+        let mut state = DownloadState::new();
+        state.mark_completed("http://example.com/1".into());
+        state.mark_failed("http://example.com/2".into());
+        state.save_to_file(&state_file).unwrap();
+
+        let loaded = DownloadState::load_from_file(&state_file).unwrap();
+        assert!(loaded.is_completed("http://example.com/1"));
+        assert!(loaded.failed_files.contains("http://example.com/2"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_from_nonexistent_file() {
+        let result = DownloadState::load_from_file(std::path::Path::new("/nonexistent/state.json"));
+        assert!(result.is_none());
     }
 }

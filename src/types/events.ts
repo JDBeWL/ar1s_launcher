@@ -100,3 +100,29 @@ export interface InstanceNameValidation {
   is_valid: boolean;
   error_message: string | null;
 }
+
+// 游戏目录信息
+export interface GameDirInfo {
+  versions: string[];
+}
+
+// Modrinth 整合包版本
+export interface ModrinthVersion {
+  id: string;
+  name: string;
+  version_number: string;
+  game_versions: string[];
+  loaders: string[];
+}
+
+// 窗口设置
+export interface WindowSettings {
+  width: number | null;
+  height: number | null;
+  fullscreen: boolean;
+}
+
+// 自动内存配置
+export interface AutoMemoryConfig {
+  enabled: boolean;
+}

@@ -84,56 +84,60 @@ function handleCancel() {
 </script>
 
 <template>
-  <v-card v-if="modelValue" class="notification-download" width="400">
-    <v-card-title class="d-flex align-center">
-      <v-icon class="mr-2" color="primary">mdi-download</v-icon>
-      <span class="text-subtitle-1">{{ version }}</span>
-      <v-spacer></v-spacer>
-      <v-btn v-if="status === 'downloading'" icon size="small" variant="text" @click="handleCancel" title="取消下载">
-        <v-icon>mdi-cancel</v-icon>
-      </v-btn>
-      <v-btn icon size="small" variant="text" @click="hideNotification" title="隐藏通知">
-        <v-icon>mdi-close</v-icon>
-      </v-btn>
-    </v-card-title>
-    
-    <v-card-text>
-      <v-progress-linear
-        :model-value="progressPercentage"
-        height="8"
-        :color="status === 'completed' ? 'success' : status === 'error' ? 'error' : 'primary'"
-        class="mb-2"
-      ></v-progress-linear>
+  <v-slide-y-transition>
+    <v-card v-if="modelValue" class="notification-download">
+      <v-card-title class="d-flex align-center">
+        <v-icon class="mr-2" color="primary">mdi-download</v-icon>
+        <span class="text-subtitle-1">{{ version }}</span>
+        <v-spacer></v-spacer>
+        <v-btn v-if="status === 'downloading'" icon size="small" variant="text" @click="handleCancel" title="取消下载">
+          <v-icon>mdi-cancel</v-icon>
+        </v-btn>
+        <v-btn icon size="small" variant="text" @click="hideNotification" title="隐藏通知">
+          <v-icon>mdi-close</v-icon>
+        </v-btn>
+      </v-card-title>
       
-      <div class="d-flex justify-space-between text-caption">
-        <span>{{ progressText }}</span>
-        <span>{{ progressPercentage.toFixed(1) }}%</span>
-      </div>
-      
-      <div class="d-flex justify-space-between text-caption mt-1">
-        <span>{{ formattedSpeed }}</span>
-        <span>剩余: {{ remainingTime }}</span>
-      </div>
-      
-      <div v-if="status === 'completed'" class="text-success text-caption mt-1">
-        下载完成
-      </div>
-      <div v-else-if="status === 'error'" class="text-error text-caption mt-1">
-        下载失败
-      </div>
-      <div v-else-if="status === 'cancelled'" class="text-warning text-caption mt-1">
-        下载已取消
-      </div>
-    </v-card-text>
-  </v-card>
+      <v-card-text>
+        <v-progress-linear
+          :model-value="progressPercentage"
+          height="8"
+          :color="status === 'completed' ? 'success' : status === 'error' ? 'error' : 'primary'"
+          class="mb-2"
+        ></v-progress-linear>
+        
+        <div class="d-flex justify-space-between text-caption">
+          <span>{{ progressText }}</span>
+          <span>{{ progressPercentage.toFixed(1) }}%</span>
+        </div>
+        
+        <div class="d-flex justify-space-between text-caption mt-1">
+          <span>{{ formattedSpeed }}</span>
+          <span>剩余: {{ remainingTime }}</span>
+        </div>
+        
+        <div v-if="status === 'completed'" class="text-success text-caption mt-1">
+          下载完成
+        </div>
+        <div v-else-if="status === 'error'" class="text-error text-caption mt-1">
+          下载失败
+        </div>
+        <div v-else-if="status === 'cancelled'" class="text-warning text-caption mt-1">
+          下载已取消
+        </div>
+      </v-card-text>
+    </v-card>
+  </v-slide-y-transition>
 </template>
 
 <style scoped>
 .notification-download {
   position: fixed;
-  top: 75px;
-  right: 8px;
+  right: 16px;
+  top: 80px;
   z-index: 1000;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  width: 360px;
+  max-width: calc(100vw - 32px);
 }
 </style>

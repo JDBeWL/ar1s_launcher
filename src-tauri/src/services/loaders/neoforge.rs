@@ -1,8 +1,8 @@
 //! NeoForge 加载器安装
 
 use crate::errors::LauncherError;
+use crate::services::http_client;
 use log::{info, warn};
-use reqwest::Client;
 use serde_json::Value;
 use std::fs;
 use std::io::Read;
@@ -25,10 +25,7 @@ pub async fn install_neoforge(
         mc_version, neoforge_version, instance_name
     );
 
-    let client = Client::builder()
-        .user_agent("Mozilla/5.0")
-        .timeout(std::time::Duration::from_secs(60))
-        .build()?;
+    let client = http_client::get_client();
 
     // NeoForge 版本格式：
     // - 1.20.1 之前: mc_version-neoforge_version (如 1.20.1-47.1.100)
@@ -163,7 +160,7 @@ pub async fn install_neoforge(
 
 /// 获取 NeoForge 版本列表
 pub async fn get_neoforge_versions(mc_version: &str) -> Result<Vec<NeoForgeVersion>, LauncherError> {
-    let client = Client::new();
+    let client = http_client::get_client();
     
     // 尝试 BMCLAPI
     let bmclapi_url = format!("{}/list/{}", BMCLAPI_NEOFORGE_URL, mc_version);

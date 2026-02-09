@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick } from 'vue';
 import GeneralSettings from "../components/settings/GeneralSettings.vue";
 import JavaSettings from "../components/settings/JavaSettings.vue";
 import MemorySettings from "../components/settings/MemorySettings.vue";
 import WindowSettings from "../components/settings/WindowSettings.vue";
 
 const activeSection = ref('general');
+const contentRef = ref<HTMLElement | null>(null);
+const isScrollingByClick = ref(false);
 
 const sections = [
   { id: 'general', title: '常规设置', icon: 'mdi-cog-outline' },
@@ -15,12 +17,58 @@ const sections = [
 ];
 
 function scrollToSection(sectionId: string) {
+  isScrollingByClick.value = true;
   activeSection.value = sectionId;
   const element = document.getElementById(`section-${sectionId}`);
   if (element) {
     element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // 等待平滑滚动完成后再恢复 scroll spy
+    setTimeout(() => {
+      isScrollingByClick.value = false;
+    }, 600);
   }
 }
+
+// Scroll spy：监听右侧内容滚动，自动高亮对应的左侧导航项
+function handleScroll() {
+  if (isScrollingByClick.value) return;
+
+  const container = contentRef.value;
+  if (!container) return;
+
+  const scrollTop = container.scrollTop;
+  const containerHeight = container.clientHeight;
+
+  // 如果滚到底部，高亮最后一个
+  if (scrollTop + containerHeight >= container.scrollHeight - 10) {
+    activeSection.value = sections[sections.length - 1].id;
+    return;
+  }
+
+  // 找到当前可见区域中最靠上的 section
+  for (let i = sections.length - 1; i >= 0; i--) {
+    const el = document.getElementById(`section-${sections[i].id}`);
+    if (el) {
+      const offsetTop = el.offsetTop - container.offsetTop;
+      if (scrollTop >= offsetTop - 60) {
+        activeSection.value = sections[i].id;
+        return;
+      }
+    }
+  }
+
+  activeSection.value = sections[0].id;
+}
+
+onMounted(() => {
+  nextTick(() => {
+    contentRef.value?.addEventListener('scroll', handleScroll, { passive: true });
+  });
+});
+
+onUnmounted(() => {
+  contentRef.value?.removeEventListener('scroll', handleScroll);
+});
 </script>
 
 <template>
@@ -46,7 +94,7 @@ function scrollToSection(sectionId: string) {
     </div>
 
     <!-- 右侧内容 -->
-    <div class="settings-content">
+    <div ref="contentRef" class="settings-content">
       <div class="content-wrapper pa-6">
         <!-- 常规设置 -->
         <section id="section-general" class="settings-section mb-8">
@@ -75,25 +123,25 @@ function scrollToSection(sectionId: string) {
 <style scoped>
 .settings-container {
   display: flex;
-  height: calc(100vh - 64px); /* 减去顶部标题栏高度 */
+  height: calc(100vh - 64px); /* 减去顶部 app bar 高度 */
   overflow: hidden;
-  position: fixed;
-  top: 64px;
-  left: 64px; /* 左侧导航栏宽度 */
-  right: 0;
 }
 
 .settings-nav {
-  width: 200px;
-  min-width: 200px;
+  width: 220px;
+  min-width: 220px;
   background-color: rgb(var(--v-theme-surface-container));
-  height: 100%;
   flex-shrink: 0;
   overflow-y: auto;
+  margin: 12px;
+  margin-right: 0;
+  border-radius: 16px;
+  max-height: calc(100vh - 64px - 24px);
 }
 
 .nav-header {
   border-bottom: 1px solid rgb(var(--v-theme-outline-variant));
+  border-radius: 16px 16px 0 0;
 }
 
 .settings-nav-item.v-list-item--active {
@@ -103,8 +151,8 @@ function scrollToSection(sectionId: string) {
 
 .settings-content {
   flex: 1;
-  height: 100%;
   overflow-y: auto;
+  scroll-behavior: smooth;
 }
 
 .content-wrapper {

@@ -83,12 +83,4 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-.instance-card {
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.instance-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
 </style>

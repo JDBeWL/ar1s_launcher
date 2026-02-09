@@ -1,13 +1,13 @@
 use crate::errors::LauncherError;
 use crate::models::modpack::*;
-use crate::services::{config, download, loaders, modrinth};
+use crate::services::{config, download, http_client, loaders, modrinth};
 use crate::utils::file_utils::{self, validate_instance_name_or_error};
 use log::{debug, error, info, warn};
 use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 
@@ -106,17 +106,23 @@ struct ModrinthDependencies {
 
 pub struct ModpackInstaller {
     modrinth_service: modrinth::ModrinthService,
-    http_client: Client,
+    http_client: &'static Client,
+}
+
+/// 获取全局 ModpackInstaller 实例（避免每次请求都创建新实例）
+static INSTALLER: std::sync::LazyLock<ModpackInstaller> =
+    std::sync::LazyLock::new(ModpackInstaller::new);
+
+/// 获取全局 ModpackInstaller 引用
+pub fn get_installer() -> &'static ModpackInstaller {
+    &INSTALLER
 }
 
 impl ModpackInstaller {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             modrinth_service: modrinth::ModrinthService::new(),
-            http_client: Client::builder()
-                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .build()
-                .unwrap_or_else(|_| Client::new()),
+            http_client: http_client::get_client(),
         }
     }
 
@@ -366,7 +372,7 @@ impl ModpackInstaller {
     }
 
 
-    /// 下载整合包中定义的文件（mods等）
+    /// 下载整合包中定义的文件（mods等）— 并发下载
     async fn download_modpack_files(
         &self,
         files: &[ModrinthIndexFile],
@@ -376,101 +382,98 @@ impl ModpackInstaller {
         let total_files = files.len();
         info!("开始下载 {} 个文件", total_files);
 
-        for (index, file) in files.iter().enumerate() {
-            // 检查是否已取消
+        if total_files == 0 {
+            return Ok(());
+        }
+
+        // 获取配置的下载线程数
+        let dl_config = config::load_config()?;
+        let max_concurrent = (dl_config.download_threads as usize).max(1);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
+        let completed_count = Arc::new(AtomicUsize::new(0));
+        let client = self.http_client;
+
+        let mut handles = Vec::with_capacity(total_files);
+
+        for file in files {
             check_cancelled()?;
-            
-            let progress = 55 + ((index as f32 / total_files as f32) * 20.0) as u8;
-            let _ = window.emit(
-                "modpack-install-progress",
-                ModpackInstallProgress {
-                    progress,
-                    message: format!("下载文件 ({}/{}): {}", index + 1, total_files, file.path),
-                    indeterminate: false,
-                },
-            );
 
             let dest_path = instance_dir.join(&file.path);
 
-            // 创建父目录
+            // 如果文件已存在，跳过下载
+            if dest_path.exists() {
+                debug!("文件已存在，跳过: {}", file.path);
+                completed_count.fetch_add(1, Ordering::Relaxed);
+                continue;
+            }
+
+            // 预创建父目录
             if let Some(parent) = dest_path.parent() {
                 fs::create_dir_all(parent)?;
             }
 
-            // 如果文件已存在且哈希匹配，跳过下载
-            if dest_path.exists() {
-                debug!("文件已存在，跳过: {}", file.path);
-                continue;
-            }
+            let sem = semaphore.clone();
+            let completed = completed_count.clone();
+            let window_clone = window.clone();
+            let file_path = file.path.clone();
+            let file_downloads = file.downloads.clone();
+            let total = total_files;
 
-            // 尝试从所有下载源下载
-            let mut downloaded = false;
-            for url in &file.downloads {
-                // 每次下载前检查取消状态
+            let handle = tokio::spawn(async move {
+                let _permit = match sem.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => return,
+                };
+
                 if is_cancelled() {
-                    return Err(LauncherError::Custom("安装已取消".to_string()));
+                    return;
                 }
-                
-                match self.download_file_with_retry(url, &dest_path, 3).await {
-                    Ok(_) => {
-                        downloaded = true;
-                        debug!("下载成功: {}", file.path);
-                        break;
-                    }
-                    Err(e) => {
-                        warn!("下载失败 {}: {}", url, e);
-                    }
-                }
-            }
 
-            if !downloaded {
-                error!("无法下载文件: {}", file.path);
-                // 继续下载其他文件，不中断整个过程
-            }
+                let current = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                let progress = 55 + ((current as f32 / total as f32) * 20.0) as u8;
+                let _ = window_clone.emit(
+                    "modpack-install-progress",
+                    ModpackInstallProgress {
+                        progress,
+                        message: format!("下载文件 ({}/{}): {}", current, total, file_path),
+                        indeterminate: false,
+                    },
+                );
+
+                let mut downloaded = false;
+                for url in &file_downloads {
+                    if is_cancelled() {
+                        return;
+                    }
+
+                    match download_single_file(client, url, &dest_path, 3).await {
+                        Ok(_) => {
+                            downloaded = true;
+                            debug!("下载成功: {}", file_path);
+                            break;
+                        }
+                        Err(e) => {
+                            warn!("下载失败 {}: {}", url, e);
+                        }
+                    }
+                }
+
+                if !downloaded {
+                    error!("无法下载文件: {}", file_path);
+                }
+            });
+
+            handles.push(handle);
         }
+
+        // 等待所有下载任务完成
+        for handle in handles {
+            let _ = handle.await;
+        }
+
+        check_cancelled()?;
 
         Ok(())
-    }
-
-    /// 带重试的文件下载
-    async fn download_file_with_retry(
-        &self,
-        url: &str,
-        dest: &PathBuf,
-        max_retries: u32,
-    ) -> Result<(), LauncherError> {
-        let mut last_error = None;
-
-        for attempt in 0..max_retries {
-            if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_secs(1 << attempt)).await;
-            }
-
-            match self.http_client.get(url).send().await {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        match response.bytes().await {
-                            Ok(bytes) => {
-                                fs::write(dest, &bytes)?;
-                                return Ok(());
-                            }
-                            Err(e) => {
-                                last_error = Some(format!("读取响应失败: {}", e));
-                            }
-                        }
-                    } else {
-                        last_error = Some(format!("HTTP {}", response.status()));
-                    }
-                }
-                Err(e) => {
-                    last_error = Some(format!("请求失败: {}", e));
-                }
-            }
-        }
-
-        Err(LauncherError::Custom(
-            last_error.unwrap_or_else(|| "下载失败".to_string()),
-        ))
     }
 
     /// 安装游戏版本和加载器
@@ -662,4 +665,45 @@ impl ModpackInstaller {
             .get_modpack_versions(project_id, game_versions, loaders)
             .await
     }
+}
+
+/// 带重试的单文件下载（独立函数，用于并发下载任务）
+async fn download_single_file(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &std::path::Path,
+    max_retries: u32,
+) -> Result<(), LauncherError> {
+    let mut last_error = None;
+
+    for attempt in 0..max_retries {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(1 << attempt)).await;
+        }
+
+        match client.get(url).send().await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    match response.bytes().await {
+                        Ok(bytes) => {
+                            fs::write(dest, &bytes)?;
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            last_error = Some(format!("读取响应失败: {}", e));
+                        }
+                    }
+                } else {
+                    last_error = Some(format!("HTTP {}", response.status()));
+                }
+            }
+            Err(e) => {
+                last_error = Some(format!("请求失败: {}", e));
+            }
+        }
+    }
+
+    Err(LauncherError::Custom(
+        last_error.unwrap_or_else(|| "下载失败".to_string()),
+    ))
 }

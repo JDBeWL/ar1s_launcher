@@ -100,13 +100,8 @@ fn is_valid_java_executable(java_path: &Path) -> bool {
 
 /// 检查PATH中是否存在Java命令
 fn find_java_in_path(java_cmd: &str) -> bool {
-    let mut command = Command::new(java_cmd);
-    command.arg("-version");
-
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-
-    command.output().is_ok() && is_valid_java_executable(Path::new(java_cmd))
+    // 直接使用 is_valid_java_executable，避免重复执行 java -version
+    is_valid_java_executable(Path::new(java_cmd))
 }
 
 /// 获取平台特定的Java安装目录

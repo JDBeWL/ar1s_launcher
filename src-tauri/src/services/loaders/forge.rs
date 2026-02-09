@@ -4,6 +4,7 @@
 
 use crate::errors::LauncherError;
 use crate::services::config;
+use crate::services::http_client;
 use log::{debug, error, info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -132,7 +133,7 @@ pub async fn install_forge(
 
 /// 获取 Forge 版本列表
 pub async fn get_forge_versions(mc_version: &str) -> Result<Vec<ForgeVersion>, LauncherError> {
-    let client = Client::new();
+    let client = http_client::get_client();
     let url = format!("{}/forge/minecraft/{}", BMCL_API_BASE_URL, mc_version);
 
     info!("Forge: 获取版本列表: {}", url);
@@ -244,14 +245,11 @@ async fn download_forge_installer(
         ]
     };
 
-    let client = Client::builder()
-        .user_agent("Mozilla/5.0")
-        .timeout(std::time::Duration::from_secs(60))
-        .build()?;
+    let client = http_client::get_client();
 
     for url in &sources {
         info!("Forge: 尝试下载: {}", url);
-        if let Ok(resp) = download_with_retry(url, &client, 3).await {
+        if let Ok(resp) = download_with_retry(url, client, 3).await {
             if let Ok(bytes) = resp.bytes().await {
                 if bytes.len() > 1024 && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
                     fs::write(&installer_path, &bytes)
@@ -371,7 +369,7 @@ async fn download_library(
         fs::create_dir_all(parent)?;
     }
 
-    let client = Client::new();
+    let client = http_client::get_client();
     for url in &sources {
         if let Ok(response) = download_with_retry(url, &client, 3).await {
             if let Ok(bytes) = response.bytes().await {
@@ -549,7 +547,7 @@ async fn download_library_from_profile(
         ];
 
         for url in &sources {
-            if let Ok(resp) = download_with_retry(url, &Client::new(), 2).await {
+            if let Ok(resp) = download_with_retry(url, http_client::get_client(), 2).await {
                 if let Ok(bytes) = resp.bytes().await {
                     if bytes.len() > 100 {
                         fs::write(&target_path, &bytes).ok();
@@ -584,7 +582,7 @@ async fn manual_install_old_forge(
     };
 
     let libraries_dir = game_dir.join("libraries");
-    let client = Client::new();
+    let client = http_client::get_client();
 
     // 下载库文件
     if let Some(libs) = profile
@@ -710,7 +708,7 @@ async fn manual_install_new_forge(
     };
 
     let libraries_dir = game_dir.join("libraries");
-    let client = Client::new();
+    let client = http_client::get_client();
 
     // 下载库
     if let Some(libs) = profile.get("libraries").and_then(|l| l.as_array()) {

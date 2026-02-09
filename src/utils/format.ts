@@ -49,13 +49,6 @@ export function getLoaderIcon(loaderType?: string, context: 'list' | 'select' = 
 }
 
 /**
- * @deprecated 使用 getLoaderIcon(loader, 'select') 代替
- */
-export function getLoaderSelectIcon(loader: string): string {
-  return getLoaderIcon(loader, 'select')
-}
-
-/**
  * 从错误对象中提取错误消息
  */
 export function getErrorMessage(error: unknown): string {

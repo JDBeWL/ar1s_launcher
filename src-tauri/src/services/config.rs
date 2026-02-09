@@ -2,7 +2,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use sysinfo::System;
 use tauri::Emitter;
 
 use crate::errors::LauncherError;
@@ -10,7 +9,7 @@ use crate::models::{GameConfig, GameDirInfo};
 use crate::services::memory::{
     auto_set_memory_if_enabled, get_memory_warning_message, get_system_memory,
     is_memory_setting_safe, recommend_memory_for_game, AutoMemoryConfig, MemoryRecommendation,
-    MemoryStats,
+    MemoryStats, DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB, DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
 };
 
 // 配置缓存
@@ -49,13 +48,13 @@ pub fn invalidate_config_cache() {
 }
 
 // 获取保存的用户名
-pub async fn get_saved_username() -> Result<Option<String>, LauncherError> {
+pub fn get_saved_username() -> Result<Option<String>, LauncherError> {
     let config = load_config()?;
     Ok(config.username)
 }
 
 // 设置保存的用户名
-pub async fn set_saved_username(username: String) -> Result<(), LauncherError> {
+pub fn set_saved_username(username: String) -> Result<(), LauncherError> {
     let mut config = load_config()?;
     config.username = Some(username);
     save_config(&config)?;
@@ -63,13 +62,13 @@ pub async fn set_saved_username(username: String) -> Result<(), LauncherError> {
 }
 
 // 获取保存的UUID
-pub async fn get_saved_uuid() -> Result<Option<String>, LauncherError> {
+pub fn get_saved_uuid() -> Result<Option<String>, LauncherError> {
     let config = load_config()?;
     Ok(config.uuid)
 }
 
 // 设置保存的UUID
-pub async fn set_saved_uuid(uuid: String) -> Result<(), LauncherError> {
+pub fn set_saved_uuid(uuid: String) -> Result<(), LauncherError> {
     let mut config = load_config()?;
     config.uuid = Some(uuid);
     save_config(&config)?;
@@ -123,10 +122,9 @@ fn load_config_internal() -> Result<GameConfig, LauncherError> {
 
 /// 创建默认配置
 fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError> {
-    let exe_path = std::env::current_exe()?;
-    let exe_dir = exe_path
-        .parent()
-        .ok_or_else(|| LauncherError::Custom("无法获取可执行文件目录".to_string()))?;
+    let exe_dir = EXE_DIR
+        .as_ref()
+        .map_err(|e| LauncherError::Custom(e.clone()))?;
 
     let mc_dir = exe_dir.join(".minecraft");
     let mc_dir_str = mc_dir.to_string_lossy().into_owned();
@@ -202,13 +200,20 @@ fn save_config_internal(config: &GameConfig) -> Result<(), LauncherError> {
     Ok(())
 }
 
-/// 获取配置文件路径
-fn get_config_path() -> Result<PathBuf, LauncherError> {
-    let exe_path = std::env::current_exe()?;
-    let exe_dir = exe_path
+/// 缓存的可执行文件所在目录（避免每次调用 current_exe()）
+static EXE_DIR: std::sync::LazyLock<Result<PathBuf, String>> = std::sync::LazyLock::new(|| {
+    std::env::current_exe()
+        .map_err(|e| format!("无法获取可执行文件路径: {}", e))?
         .parent()
-        .ok_or_else(|| LauncherError::Custom("无法获取可执行文件目录".to_string()))?;
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| "无法获取可执行文件目录".to_string())
+});
 
+/// 获取配置文件路径（使用缓存的可执行文件目录）
+fn get_config_path() -> Result<PathBuf, LauncherError> {
+    let exe_dir = EXE_DIR
+        .as_ref()
+        .map_err(|e| LauncherError::Custom(e.clone()))?;
     Ok(exe_dir.join("ar1s.json"))
 }
 
@@ -308,7 +313,7 @@ impl ConfigKey {
     }
 }
 
-pub async fn load_config_key(key: String) -> Result<Option<String>, LauncherError> {
+pub fn load_config_key(key: String) -> Result<Option<String>, LauncherError> {
     let config = load_config()?;
     match ConfigKey::from_str(&key) {
         Some(config_key) => Ok(config_key.get_value(&config)),
@@ -319,7 +324,7 @@ pub async fn load_config_key(key: String) -> Result<Option<String>, LauncherErro
     }
 }
 
-pub async fn save_config_key(key: String, value: String) -> Result<(), LauncherError> {
+pub fn save_config_key(key: String, value: String) -> Result<(), LauncherError> {
     let mut config = load_config()?;
     match ConfigKey::from_str(&key) {
         Some(config_key) => {
@@ -343,7 +348,7 @@ where
 }
 
 /// 通用配置设置函数
-async fn set_config_value<T, F>(setter: F) -> Result<(), LauncherError>
+fn set_config_value<T, F>(setter: F) -> Result<(), LauncherError>
 where
     F: FnOnce(&mut GameConfig) -> T,
 {
@@ -356,7 +361,7 @@ pub fn get_game_dir() -> Result<String, LauncherError> {
     get_config_value(|config| config.game_dir.clone())
 }
 
-pub async fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
+pub fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
     let game_dir_str = get_game_dir()?;
     let versions_dir = PathBuf::from(&game_dir_str).join("versions");
     let mut versions = Vec::new();
@@ -382,38 +387,38 @@ pub async fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
     })
 }
 
-pub async fn set_game_dir(path: String, window: &tauri::Window) -> Result<(), LauncherError> {
+pub fn set_game_dir(path: String, window: &tauri::Window) -> Result<(), LauncherError> {
     let path_clone = path.clone();
-    set_config_value(|config| config.game_dir = path_clone).await?;
+    set_config_value(|config| config.game_dir = path_clone)?;
     window.emit("game-dir-changed", &path)?;
     Ok(())
 }
 
-pub async fn set_version_isolation(enabled: bool) -> Result<(), LauncherError> {
-    set_config_value(|config| config.version_isolation = enabled).await
+pub fn set_version_isolation(enabled: bool) -> Result<(), LauncherError> {
+    set_config_value(|config| config.version_isolation = enabled)
 }
 
 pub fn get_download_threads() -> Result<u8, LauncherError> {
     get_config_value(|config| config.download_threads)
 }
 
-pub async fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
-    set_config_value(|config| config.download_threads = threads).await
+pub fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
+    set_config_value(|config| config.download_threads = threads)
 }
 
 pub fn get_total_memory() -> u64 {
-    let mut sys = System::new();
-    sys.refresh_memory();
-    sys.total_memory()
+    // 复用 memory 模块的缓存 System 实例，避免每次创建新实例
+    let stats = get_system_memory();
+    stats.total_memory_mb * 1024 * 1024
 }
 
 /// 获取系统内存统计信息
-pub async fn get_memory_stats() -> Result<MemoryStats, LauncherError> {
+pub fn get_memory_stats() -> Result<MemoryStats, LauncherError> {
     Ok(get_system_memory())
 }
 
 /// 为指定游戏版本推荐内存设置
-pub async fn recommend_memory(
+pub fn recommend_memory(
     version: String,
     modded: bool,
 ) -> Result<MemoryRecommendation, LauncherError> {
@@ -421,40 +426,40 @@ pub async fn recommend_memory(
 }
 
 /// 检查内存设置是否安全（只检查最低限制）
-pub async fn validate_memory_setting(memory_mb: u32) -> Result<bool, LauncherError> {
+pub fn validate_memory_setting(memory_mb: u32) -> Result<bool, LauncherError> {
     is_memory_setting_safe(memory_mb)
 }
 
 /// 检查内存设置是否超过系统90%（用于前端警告）
-pub async fn check_memory_warning(memory_mb: u32) -> Result<Option<String>, LauncherError> {
+pub fn check_memory_warning(memory_mb: u32) -> Result<Option<String>, LauncherError> {
     Ok(get_memory_warning_message(memory_mb))
 }
 
 /// 获取自动内存配置
-pub async fn get_auto_memory_config() -> Result<AutoMemoryConfig, LauncherError> {
+pub fn get_auto_memory_config() -> Result<AutoMemoryConfig, LauncherError> {
     let config = load_config()?;
     let auto_config = AutoMemoryConfig {
         enabled: config.auto_memory_enabled,
-        max_limit_mb: 8500,          // 整合包优化模组要求的最大限制
-        safety_margin_percent: 20.0, // 保留20%的安全余量
+        max_limit_mb: DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB,
+        safety_margin_percent: DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
     };
     Ok(auto_config)
 }
 
 /// 设置自动内存启用状态
-pub async fn set_auto_memory_enabled(enabled: bool) -> Result<(), LauncherError> {
+pub fn set_auto_memory_enabled(enabled: bool) -> Result<(), LauncherError> {
     let mut config = load_config()?;
     config.auto_memory_enabled = enabled;
     save_config(&config)
 }
 
 /// 自动设置内存（如果启用自动设置）
-pub async fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
+pub fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
     let config = load_config()?;
     let auto_config = AutoMemoryConfig {
         enabled: config.auto_memory_enabled,
-        max_limit_mb: 8500,
-        safety_margin_percent: 20.0,
+        max_limit_mb: DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB,
+        safety_margin_percent: DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
     };
 
     if !auto_config.enabled {
@@ -466,7 +471,7 @@ pub async fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
 }
 
 /// 分析内存使用效率
-pub async fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError> {
+pub fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError> {
     Ok(crate::services::memory::analyze_memory_efficiency(
         memory_mb,
     ))

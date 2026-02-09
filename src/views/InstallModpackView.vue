@@ -272,28 +272,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useNotificationStore } from '../stores/notificationStore'
-
-interface ModrinthVersion {
-  id: string
-  name: string
-  version_number: string
-  game_versions: string[]
-  loaders: string[]
-}
-
-interface InstallProgress {
-  progress: number
-  message: string
-  indeterminate: boolean
-}
-
-interface InstanceNameValidation {
-  is_valid: boolean
-  error_message: string | null
-}
+import { modpackApi, instanceApi } from '../services'
+import type { ModrinthVersion, InstallProgressPayload, InstanceNameValidation } from '../types/events'
 
 const route = useRoute()
 const router = useRouter()
@@ -310,7 +292,7 @@ const selectedGameVersion = ref<string | null>(null)
 const instanceName = ref<string>('')
 const installing = ref(false)
 const cancelling = ref(false)
-const installProgress = ref<InstallProgress>({
+const installProgress = ref<InstallProgressPayload>({
   progress: 0,
   message: '准备安装...',
   indeterminate: false
@@ -355,7 +337,7 @@ async function checkInstanceName(name: string) {
   
   checkingInstanceName.value = true
   try {
-    const result = await invoke('check_instance_name_available', { name }) as InstanceNameValidation
+    const result = await instanceApi.checkInstanceNameAvailable(name)
     instanceNameError.value = result.is_valid ? null : result.error_message
   } catch (e) {
     console.error('检查实例名称失败:', e)
@@ -391,7 +373,7 @@ async function cancelInstall() {
   if (cancelling.value) return
   cancelling.value = true
   try {
-    await invoke('cancel_modpack_install')
+    await modpackApi.cancelModpackInstall()
     notificationStore.info('正在取消', '安装将在当前步骤完成后取消')
   } catch (e) {
     console.error('取消安装失败:', e)
@@ -458,11 +440,7 @@ async function loadVersions() {
   if (!projectId) return
   loadingVersions.value = true
   try {
-    const versions = await invoke('get_modrinth_modpack_versions', {
-      projectId,
-      gameVersions: undefined,
-      loaders: undefined,
-    }) as ModrinthVersion[]
+    const versions = await modpackApi.getModrinthModpackVersions(projectId)
     modpackVersions.value = versions || []
 
     if (loaderOptions.value.length > 0) {
@@ -481,20 +459,18 @@ async function install() {
   if (!projectId || !selectedVersionId.value || !canInstall.value) return
   
   installing.value = true
-  installProgress.value = { progress: 0, message: '准备安装...', indeterminate: false }
+  installProgress.value = { progress: 0, message: '准备安装...', indeterminate: false } as InstallProgressPayload
   
   try {
-    unlistenProgress = await listen<InstallProgress>('modpack-install-progress', (event) => {
+    unlistenProgress = await listen<InstallProgressPayload>('modpack-install-progress', (event) => {
       installProgress.value = event.payload
     })
 
-    await invoke('install_modrinth_modpack', {
-      options: {
-        modpack_id: projectId,
-        version_id: selectedVersionId.value,
-        instance_name: effectiveInstanceName.value,
-        install_path: '',
-      }
+    await modpackApi.installModrinthModpack({
+      modpack_id: projectId,
+      version_id: selectedVersionId.value!,
+      instance_name: effectiveInstanceName.value,
+      install_path: '',
     })
     
     notificationStore.success('安装成功', `${effectiveInstanceName.value} 已安装完成`)

@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { useDownloadStore } from '@/stores/downloadStore';
 import { useSettingsStore } from '@/stores/settings';
 import { useNotificationStore } from '@/stores/notificationStore';
-import type { MinecraftVersion, VersionManifest } from '@/types/events';
+import { versionApi } from '@/services';
+import type { MinecraftVersion } from '@/types/events';
+import { useVersionManager } from '@/composables/useVersionManager';
 
 const downloadStore = useDownloadStore();
 const settingsStore = useSettingsStore();
 const notificationStore = useNotificationStore();
+const { installedVersions, loadGameDir, initListeners } = useVersionManager();
 
 const allVersions = ref<MinecraftVersion[]>([]);
 const loading = ref(false);
@@ -65,11 +67,16 @@ const getVersionChipColor = (type: string) => {
 };
 
 const isDownloading = computed(() => downloadStore.isDownloading);
+const installedSet = computed(() => new Set(installedVersions.value));
+
+function isInstalled(versionId: string) {
+  return installedSet.value.has(versionId);
+}
 
 async function fetchVersions() {
   try {
     loading.value = true;
-    const result = await invoke<VersionManifest>('get_versions');
+    const result = await versionApi.getVersions();
     if (result?.versions) {
       allVersions.value = result.versions;
     } else {
@@ -111,8 +118,12 @@ const paginatedVersions = computed(() => {
 const totalPages = computed(() => Math.ceil(filteredVersions.value.length / itemsPerPage));
 
 onMounted(async () => {
-  await settingsStore.loadDownloadMirror();
-  await fetchVersions();
+  await Promise.all([
+    settingsStore.loadDownloadMirror(),
+    fetchVersions(),
+    loadGameDir(),
+    initListeners()
+  ]);
 });
 </script>
 
@@ -194,11 +205,34 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 版本列表 -->
-    <div v-if="loading" class="text-center py-12">
-      <v-progress-circular indeterminate size="48" color="primary" />
-      <div class="text-body-2 text-on-surface-variant mt-4">加载版本列表...</div>
-    </div>
+    <!-- 版本列表 - 骨架屏加载 -->
+    <template v-if="loading">
+      <v-row dense>
+        <v-col
+          v-for="i in 12"
+          :key="i"
+          cols="12"
+          sm="6"
+          md="4"
+        >
+          <v-card color="surface-container" class="version-card">
+            <v-card-text class="pa-4">
+              <div class="d-flex align-center justify-space-between mb-3">
+                <div class="d-flex align-center">
+                  <v-skeleton-loader type="avatar" class="mr-3" style="width: 40px; height: 40px;" />
+                  <div>
+                    <v-skeleton-loader type="text" style="width: 80px;" />
+                    <v-skeleton-loader type="text" style="width: 60px;" class="mt-1" />
+                  </div>
+                </div>
+                <v-skeleton-loader type="chip" style="width: 50px;" />
+              </div>
+              <v-skeleton-loader type="button" style="width: 100%;" />
+            </v-card-text>
+          </v-card>
+        </v-col>
+      </v-row>
+    </template>
 
     <div v-else-if="paginatedVersions.length === 0" class="text-center py-12">
       <v-avatar size="80" color="surface-container-high" class="mb-4">
@@ -237,13 +271,23 @@ onMounted(async () => {
                     <div class="text-caption text-on-surface-variant">{{ formatDateTime(item.releaseTime) }}</div>
                   </div>
                 </div>
-                <v-chip
-                  size="small"
-                  :color="getVersionChipColor(item.type)"
-                  variant="tonal"
-                >
-                  {{ getVersionTypeName(item.type) }}
-                </v-chip>
+                <div class="d-flex align-center ga-2">
+                  <v-chip
+                    size="small"
+                    :color="getVersionChipColor(item.type)"
+                    variant="tonal"
+                  >
+                    {{ getVersionTypeName(item.type) }}
+                  </v-chip>
+                  <v-chip
+                    v-if="isInstalled(item.id)"
+                    size="small"
+                    color="success"
+                    variant="tonal"
+                  >
+                    已安装
+                  </v-chip>
+                </div>
               </div>
 
               <v-btn
@@ -251,11 +295,13 @@ onMounted(async () => {
                 color="primary"
                 block
                 size="small"
-                :disabled="isDownloading"
+                :disabled="isDownloading || isInstalled(item.id)"
                 @click="startDownload(item.id)"
               >
-                <v-icon start size="18">mdi-download</v-icon>
-                下载
+                <v-icon start size="18">
+                  {{ isInstalled(item.id) ? 'mdi-check' : 'mdi-download' }}
+                </v-icon>
+                {{ isInstalled(item.id) ? '已安装' : '下载' }}
               </v-btn>
             </v-card-text>
           </v-card>
@@ -288,15 +334,6 @@ onMounted(async () => {
   margin: 0 auto;
 }
 
-.version-card {
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.version-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
 
 .version-icon-avatar {
   background: transparent;

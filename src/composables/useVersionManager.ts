@@ -1,11 +1,7 @@
-import { ref, onUnmounted } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
+import { ref, onScopeDispose } from 'vue';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-
-interface GameDirInfo {
-    versions: string[];
-}
+import { configApi } from '../services';
 
 export function useVersionManager() {
     const installedVersions = ref<string[]>([]);
@@ -17,8 +13,7 @@ export function useVersionManager() {
 
     async function loadGameDir() {
         try {
-            const dir = await invoke<string>('get_game_dir');
-            gameDir.value = dir;
+            gameDir.value = await configApi.getGameDir();
             await loadInstalledVersions();
         } catch (err) {
             console.error('Failed to get game directory:', err);
@@ -28,13 +23,13 @@ export function useVersionManager() {
     async function loadInstalledVersions() {
         try {
             loading.value = true;
-            const dirInfo = await invoke<GameDirInfo>('get_game_dir_info');
+            const dirInfo = await configApi.getGameDirInfo();
             if (dirInfo?.versions) {
                 installedVersions.value = dirInfo.versions;
                 
                 // 尝试加载上次选择的版本
                 if (!selectedVersion.value) {
-                    const lastVersion = await invoke<string | null>('get_last_selected_version');
+                    const lastVersion = await configApi.getLastSelectedVersion();
                     if (lastVersion && installedVersions.value.includes(lastVersion)) {
                         selectedVersion.value = lastVersion;
                     } else if (installedVersions.value.length > 0) {
@@ -66,8 +61,8 @@ export function useVersionManager() {
         }
     }
 
-    // 组件卸载时自动清理
-    onUnmounted(cleanup);
+    // 作用域销毁时自动清理
+    onScopeDispose(cleanup);
 
     return {
         installedVersions,

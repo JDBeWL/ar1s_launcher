@@ -15,19 +15,12 @@ pub async fn search_modrinth_modpacks(
     offset: Option<u32>,
     sort_by: Option<String>,
 ) -> Result<ModrinthSearchResponse, LauncherError> {
-    let installer = modpack_installer::ModpackInstaller::new();
     // 合并不同来源的版本参数
-    let mut merged_versions: Option<Vec<String>> = game_versions;
-    if merged_versions.is_none() {
-        merged_versions = versions;
-    }
-    if merged_versions.is_none() {
-        if let Some(single) = game_version {
-            merged_versions = Some(vec![single]);
-        }
-    }
+    let merged_versions = game_versions
+        .or(versions)
+        .or_else(|| game_version.map(|single| vec![single]));
 
-    installer
+    modpack_installer::get_installer()
         .search_modpacks(query, merged_versions, loaders, categories, limit, offset, sort_by)
         .await
 }
@@ -38,8 +31,7 @@ pub async fn get_modrinth_modpack_versions(
     game_versions: Option<Vec<String>>,
     loaders: Option<Vec<String>>,
 ) -> Result<Vec<ModrinthModpackVersion>, LauncherError> {
-    let installer = modpack_installer::ModpackInstaller::new();
-    installer
+    modpack_installer::get_installer()
         .get_modpack_versions(&project_id, game_versions, loaders)
         .await
 }
@@ -49,13 +41,14 @@ pub async fn install_modrinth_modpack(
     options: ModpackInstallOptions,
     window: tauri::Window,
 ) -> Result<(), LauncherError> {
-    let installer = modpack_installer::ModpackInstaller::new();
-    installer.install_modrinth_modpack(options, &window).await
+    modpack_installer::get_installer()
+        .install_modrinth_modpack(options, &window)
+        .await
 }
 
 /// 取消整合包安装
 #[tauri::command]
-pub async fn cancel_modpack_install() -> Result<(), LauncherError> {
+pub fn cancel_modpack_install() -> Result<(), LauncherError> {
     modpack_installer::set_modpack_cancel_flag();
     Ok(())
 }

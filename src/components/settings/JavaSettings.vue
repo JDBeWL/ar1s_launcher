@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSettingsStore } from '../../stores/settings';
+import { configApi, javaApi } from '../../services';
 
 const settingsStore = useSettingsStore();
 const javaPath = ref('');
@@ -17,9 +17,10 @@ const formattedJavaPath = computed(() => {
 
 async function loadJavaPath() {
   try {
-    javaPath.value = (await invoke('load_config_key', { key: 'javaPath' })) as string;
+    const path = await configApi.loadConfigKey('javaPath');
+    javaPath.value = path || '';
     if (javaPath.value) {
-      isJavaPathValid.value = await invoke('validate_java_path', { path: javaPath.value });
+      isJavaPathValid.value = await javaApi.validateJavaPath(javaPath.value);
       if (isJavaPathValid.value) {
         await getJavaVersion();
       }
@@ -31,8 +32,7 @@ async function loadJavaPath() {
 
 async function getJavaVersion() {
   try {
-    const version = await invoke('get_java_version', { path: javaPath.value });
-    javaVersion.value = version as string;
+    javaVersion.value = await javaApi.getJavaVersion(javaPath.value);
   } catch {
     javaVersion.value = '';
   }
@@ -56,8 +56,8 @@ async function findJavaInstallations() {
 async function selectJavaPath(path: string) {
   try {
     javaPath.value = path;
-    await invoke('save_config_key', { key: 'javaPath', value: path });
-    isJavaPathValid.value = await invoke('validate_java_path', { path });
+    await configApi.saveConfigKey('javaPath', path);
+    isJavaPathValid.value = await javaApi.validateJavaPath(path);
     if (isJavaPathValid.value) {
       await getJavaVersion();
     }

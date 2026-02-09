@@ -2,8 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, computed, onScopeDispose } from 'vue'
 import { listen, emit } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
-import { invoke } from '@tauri-apps/api/core'
 import type { DownloadProgress, DownloadStatus } from '../types/events'
+import { api } from '../services/api'
 import { useNotificationStore } from './notificationStore'
 
 // Add 'idle' to the possible statuses for the store
@@ -85,10 +85,10 @@ export const useDownloadStore = defineStore('download', () => {
     showNotification.value = true
     
     try {
-      await invoke('download_version', { 
-        versionId: selectedVersion.value,
-        mirror: source === 'bmcl' ? 'bmcl' : undefined,
-      })
+      await api.version.downloadVersion(
+        selectedVersion.value,
+        source === 'bmcl' ? 'bmcl' : undefined,
+      )
     } catch (err) {
       console.error('Failed to start download invocation:', err)
       downloadProgress.value.status = 'error'
@@ -101,7 +101,7 @@ export const useDownloadStore = defineStore('download', () => {
 
   async function cancelDownload() {
     try {
-      await invoke('cancel_download')
+      await api.version.cancelDownload()
     } catch (err) {
       console.error('Failed to cancel download:', err)
       // 回退到 emit 方式

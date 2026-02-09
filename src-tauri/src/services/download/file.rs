@@ -3,6 +3,7 @@
 use crate::errors::LauncherError;
 use crate::models::DownloadJob;
 use crate::utils::file_utils;
+use log::{debug, warn};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
@@ -26,22 +27,22 @@ pub async fn download_file(
     if job.path.exists() {
         match file_utils::verify_and_repair_file(job, &http).await {
             Ok(true) => {
-                println!(
-                    "DEBUG: File already exists and is valid, skipping: {}",
+                debug!(
+                    "File already exists and is valid, skipping: {}",
                     job.path.display()
                 );
                 bytes_downloaded.fetch_add(job.size, Ordering::SeqCst);
                 return Ok(());
             }
             Ok(false) => {
-                println!(
-                    "DEBUG: File exists but is invalid, attempting to download: {}",
+                debug!(
+                    "File exists but is invalid, attempting to download: {}",
                     job.path.display()
                 );
             }
             Err(e) => {
-                println!(
-                    "DEBUG: File verification failed, attempting to download: {} - {}",
+                warn!(
+                    "File verification failed, attempting to download: {} - {}",
                     job.path.display(),
                     e
                 );
@@ -60,8 +61,8 @@ pub async fn download_file(
             // 3. 如果主 URL 失败，尝试备用 URL
             if let Some(fallback_url) = &job.fallback_url {
                 if should_try_fallback(&e) {
-                    println!(
-                        "DEBUG: Primary URL {} failed ({}), trying fallback: {}",
+                    warn!(
+                        "Primary URL {} failed ({}), trying fallback: {}",
                         job.url, e, fallback_url
                     );
                     return download_with_resume(
@@ -114,8 +115,8 @@ async fn download_with_resume(
     
     // 如果已下载的大小等于或超过预期大小，验证文件
     if existing_size > 0 && job.size > 0 && existing_size >= job.size {
-        println!(
-            "DEBUG: Part file complete ({}), verifying: {}",
+        debug!(
+            "Part file complete ({}), verifying: {}",
             existing_size,
             tmp_path.display()
         );
@@ -126,26 +127,20 @@ async fn download_with_resume(
             return Ok(());
         } else {
             // 文件损坏，删除重新下载
-            println!("DEBUG: Part file corrupted, restarting download");
+            warn!("Part file corrupted, restarting download");
             let _ = tokio::fs::remove_file(&tmp_path).await;
         }
     }
 
-    // 尝试断点续传
+    // 尝试断点续传（直接发送 Range 请求，download_chunk_with_resume 会处理
+    // 服务器不支持 Range 返回 200 的情况，无需额外 HEAD 预检请求）
     let resume_from = if existing_size > 0 && job.size > 0 && existing_size < job.size {
-        // 检查服务器是否支持 Range 请求
-        if check_range_support(&client, url).await {
-            println!(
-                "DEBUG: Resuming download from byte {}: {}",
-                existing_size,
-                url
-            );
-            Some(existing_size)
-        } else {
-            println!("DEBUG: Server doesn't support Range, restarting download");
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-            None
-        }
+        debug!(
+            "Resuming download from byte {}: {}",
+            existing_size,
+            url
+        );
+        Some(existing_size)
     } else {
         None
     };
@@ -169,23 +164,6 @@ async fn get_existing_file_size(path: &std::path::Path) -> u64 {
         .await
         .map(|m| m.len())
         .unwrap_or(0)
-}
-
-/// 检查服务器是否支持 Range 请求
-async fn check_range_support(client: &reqwest::Client, url: &str) -> bool {
-    match client.head(url).send().await {
-        Ok(response) => {
-            // 检查 Accept-Ranges 头
-            if let Some(accept_ranges) = response.headers().get("accept-ranges") {
-                if let Ok(value) = accept_ranges.to_str() {
-                    return value != "none";
-                }
-            }
-            // 如果没有 Accept-Ranges 头，假设支持（大多数服务器支持）
-            true
-        }
-        Err(_) => false,
-    }
 }
 
 /// 下载文件块（支持断点续传）
@@ -248,7 +226,7 @@ async fn download_chunk_with_resume(
 
         // 如果请求了 Range 但服务器返回 200（而非 206），说明不支持续传
         if resume_from.is_some() && status == reqwest::StatusCode::OK {
-            println!("DEBUG: Server returned 200 instead of 206, restarting download");
+            debug!("Server returned 200 instead of 206, restarting download");
             // 回滚已计数的字节
             bytes_downloaded.fetch_sub(start_offset, Ordering::Relaxed);
             bytes_added_this_attempt -= start_offset;

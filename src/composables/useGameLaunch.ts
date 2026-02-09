@@ -1,9 +1,10 @@
-import { ref, onUnmounted } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
-import { useSettingsStore } from '../stores/settings';
-import { useNotificationStore } from '../stores/notificationStore';
+import { ref, onScopeDispose } from 'vue';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
+import { versionApi, launcherApi } from '../services';
+import { useSettingsStore } from '../stores/settings';
+import { useNotificationStore } from '../stores/notificationStore';
+import { getErrorMessage } from '../utils/format';
 import type { DownloadProgress } from '../types/events';
 
 export function useGameLaunch() {
@@ -29,9 +30,7 @@ export function useGameLaunch() {
         try {
             loading.value = true;
 
-            const missingFiles = await invoke<string[]>('validate_version_files', {
-                versionId: version
-            });
+            const missingFiles = await versionApi.validateVersionFiles(version);
 
             if (missingFiles.length > 0) {
                 loading.value = false;
@@ -49,19 +48,16 @@ export function useGameLaunch() {
                 return;
             }
 
-            await invoke('launch_minecraft', {
-                options: {
-                    version: version,
-                    memory: settingsStore.maxMemory,
-                    username: username,
-                    offline: offline,
-                    game_dir: gameDir
-                }
+            await launcherApi.launchMinecraft({
+                version,
+                memory: settingsStore.maxMemory,
+                username,
+                offline,
+                game_dir: gameDir
             });
         } catch (err) {
             console.error('Failed to launch game:', err);
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            notificationStore.error('启动失败', errorMessage, true);
+            notificationStore.error('启动失败', getErrorMessage(err), true);
         } finally {
             loading.value = false;
         }
@@ -87,20 +83,15 @@ export function useGameLaunch() {
         });
 
         try {
-            let mirrorUrl: string | null = null;
-            if (settingsStore.downloadMirror === 'bmcl') {
-                mirrorUrl = 'https://bmclapi2.bangbang93.com';
-            }
+            const mirrorUrl = settingsStore.downloadMirror === 'bmcl'
+                ? 'https://bmclapi2.bangbang93.com'
+                : undefined;
 
-            await invoke('download_version', {
-                versionId: version,
-                mirror: mirrorUrl,
-            });
+            await versionApi.downloadVersion(version, mirrorUrl);
             notificationStore.success('修复完成', '请重新启动游戏');
         } catch (err) {
             console.error('Repair failed:', err);
-            const errorMessage = err instanceof Error ? err.message : String(err);
-            notificationStore.error('修复失败', errorMessage, true);
+            notificationStore.error('修复失败', getErrorMessage(err), true);
         } finally {
             cleanupRepairListener();
             isRepairing.value = false;
@@ -115,18 +106,13 @@ export function useGameLaunch() {
         }
     }
 
-    function cleanup() {
-        cleanupRepairListener();
-    }
-
-    // 组件卸载时自动清理
-    onUnmounted(cleanup);
+    // 作用域销毁时自动清理
+    onScopeDispose(cleanupRepairListener);
 
     return {
         loading,
         isRepairing,
         repairProgress,
         launchGame,
-        cleanup
     };
 }

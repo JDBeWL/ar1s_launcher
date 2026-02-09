@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useModrinth, type ModrinthModpack } from '../../composables/useModrinth';
 import ModpackCard from './ModpackCard.vue';
+import { watchDebounced } from '../../composables/useDebounce';
 
 const router = useRouter();
 const selectedModpack = ref<ModrinthModpack | null>(null);
@@ -44,6 +45,14 @@ onMounted(async () => {
   // 初始加载整合包列表
   await searchModpacks();
 });
+
+watchDebounced(modpackSearchQuery, () => {
+  searchModpacks();
+}, 350);
+
+watch([selectedGameVersion, selectedLoader, selectedCategory, sortBy], () => {
+  searchModpacks();
+});
 </script>
 
 <template>
@@ -58,7 +67,6 @@ onMounted(async () => {
               placeholder="搜索整合包..."
               hide-details
               clearable
-              @input="searchModpacks"
             >
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-magnify</v-icon>
@@ -72,7 +80,6 @@ onMounted(async () => {
               placeholder="游戏版本"
               clearable
               hide-details
-              @update:model-value="searchModpacks"
             >
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-minecraft</v-icon>
@@ -86,7 +93,6 @@ onMounted(async () => {
               placeholder="加载器"
               clearable
               hide-details
-              @update:model-value="searchModpacks"
             >
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-puzzle</v-icon>
@@ -103,7 +109,6 @@ onMounted(async () => {
               placeholder="分类"
               clearable
               hide-details
-              @update:model-value="searchModpacks"
             >
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-tag</v-icon>
@@ -116,7 +121,6 @@ onMounted(async () => {
               :items="modpackSortOptions"
               placeholder="排序"
               hide-details
-              @update:model-value="searchModpacks"
             >
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-sort</v-icon>

@@ -19,9 +19,3 @@ export {
 
 export type { ModrinthSearchResult } from './api';
 
-export { 
-  cache, 
-  CacheKeys, 
-  withCache, 
-  invalidateCache 
-} from './cache';

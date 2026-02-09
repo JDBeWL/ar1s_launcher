@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Window } from '@tauri-apps/api/window'
 import { ref, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
 import { useDownloadStore } from './stores/downloadStore'
 import { useLauncherStore } from './stores/launcherStore'
@@ -9,7 +10,7 @@ import GlobalNotification from './components/GlobalNotification.vue'
 
 // 窗口控制
 const appWindow = Window.getCurrent()
-const window = {
+const windowControls = {
   minimize: () => appWindow.minimize(),
   toggleMaximize: async () => {
     const isMaximized = await appWindow.isMaximized()
@@ -24,6 +25,45 @@ const rail = ref(true)
 // 主题控制
 const theme = useTheme()
 const isDarkMode = ref(true)
+const themePalette = ref(localStorage.getItem('themePalette') || 'indigo')
+
+const router = useRouter()
+
+function isTypingTarget(target: EventTarget | null) {
+  if (!target || !(target instanceof HTMLElement)) return false
+  const tag = target.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable
+}
+
+function handleGlobalShortcut(event: KeyboardEvent) {
+  if (isTypingTarget(event.target)) return
+  const isCommand = event.ctrlKey || event.metaKey
+  if (!isCommand || event.altKey) return
+
+  const key = event.key.toLowerCase()
+  if (key === ',') {
+    event.preventDefault()
+    router.push('/settings')
+  } else if (key === 'd') {
+    event.preventDefault()
+    router.push('/download')
+  } else if (key === 'n') {
+    event.preventDefault()
+    router.push('/add-instance')
+  } else if (key === 'i') {
+    event.preventDefault()
+    router.push('/instance-manager')
+  }
+}
+
+function getThemeName() {
+  return `${isDarkMode.value ? 'dark' : 'light'}-${themePalette.value}`
+}
+
+function applyTheme() {
+  theme.change(getThemeName())
+  localStorage.setItem('theme', isDarkMode.value ? 'dark' : 'light')
+}
 
 // 切换主题模式
 function toggleTheme() {
@@ -33,9 +73,7 @@ function toggleTheme() {
   document.body.classList.add('no-transition')
   
   isDarkMode.value = !isDarkMode.value
-  const newTheme = isDarkMode.value ? 'dark' : 'light'
-  theme.change(newTheme)
-  localStorage.setItem('theme', newTheme)
+  applyTheme()
   
   // 强制重绘后移除禁用类
   // 使用 setTimeout 确保浏览器有足够时间应用样式
@@ -43,6 +81,14 @@ function toggleTheme() {
     html.classList.remove('no-transition')
     document.body.classList.remove('no-transition')
   }, 50)
+}
+
+function handlePaletteChange(event: Event) {
+  const nextPalette = (event as CustomEvent<string>).detail
+  if (nextPalette) {
+    themePalette.value = nextPalette
+    applyTheme()
+  }
 }
 
 const downloadStore = useDownloadStore()
@@ -59,14 +105,18 @@ onMounted(async () => {
   if (savedTheme) {
     isDarkMode.value = savedTheme === 'dark'
   }
-  const themeName = isDarkMode.value ? 'dark' : 'light'
-  theme.change(themeName)
+  applyTheme()
+
+  window.addEventListener('keydown', handleGlobalShortcut)
+  window.addEventListener('theme-palette-changed', handlePaletteChange)
 })
 
 // 清理监听器防止内存泄漏
 onUnmounted(() => {
   downloadStore.unsubscribe()
   launcherStore.unsubscribe()
+  window.removeEventListener('keydown', handleGlobalShortcut)
+  window.removeEventListener('theme-palette-changed', handlePaletteChange)
 })
 </script>
 
@@ -140,19 +190,23 @@ onUnmounted(() => {
       </v-btn>
       
       <!-- 窗口控制按钮 -->
-      <v-btn icon data-tauri-no-drag @click="window.minimize()" variant="text">
+      <v-btn icon data-tauri-no-drag @click="windowControls.minimize()" variant="text">
         <v-icon size="20">mdi-minus</v-icon>
       </v-btn>
-      <v-btn icon data-tauri-no-drag @click="window.toggleMaximize()" variant="text">
+      <v-btn icon data-tauri-no-drag @click="windowControls.toggleMaximize()" variant="text">
         <v-icon size="18">mdi-square-outline</v-icon>
       </v-btn>
-      <v-btn icon data-tauri-no-drag @click="window.close()" variant="text" class="close-btn">
+      <v-btn icon data-tauri-no-drag @click="windowControls.close()" variant="text" class="close-btn">
         <v-icon size="20">mdi-close</v-icon>
       </v-btn>
     </v-app-bar>
 
     <v-main>
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <transition name="fade-slide" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </router-view>
     </v-main>
     
     <!-- 全局下载状态组件 -->
@@ -167,9 +221,29 @@ onUnmounted(() => {
   color-scheme: light dark;
 }
 
-/* Hide scrollbar while keeping scroll functionality */
+/* 让 v-main 成为滚动容器，滚动条紧贴内容区域 */
+.v-main {
+  height: 100vh;
+  overflow-y: auto;
+}
+
+/* Scrollbar styling */
 ::-webkit-scrollbar {
-  display: none;
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--v-theme-on-surface), 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--v-theme-on-surface), 0.35);
 }
 
 /* Titlebar styles */
@@ -197,9 +271,9 @@ onUnmounted(() => {
 }
 
 /* Close button hover */
-.close-btn:hover {
-  background-color: rgb(var(--v-theme-error)) !important;
-  color: rgb(var(--v-theme-on-error)) !important;
+.titlebar .close-btn:hover {
+  background-color: rgb(var(--v-theme-error));
+  color: rgb(var(--v-theme-on-error));
 }
 
 /* Navigation item styles - MD3 */
@@ -217,16 +291,16 @@ onUnmounted(() => {
 }
 
 /* MD3 Surface tones */
-.surface-container {
-  background-color: rgb(var(--v-theme-surface-container)) !important;
+.v-app .surface-container {
+  background-color: rgb(var(--v-theme-surface-container));
 }
 
-.surface-container-high {
-  background-color: rgb(var(--v-theme-surface-container-high)) !important;
+.v-app .surface-container-high {
+  background-color: rgb(var(--v-theme-surface-container-high));
 }
 
-.surface-container-highest {
-  background-color: rgb(var(--v-theme-surface-container-highest)) !important;
+.v-app .surface-container-highest {
+  background-color: rgb(var(--v-theme-surface-container-highest));
 }
 
 /* Navigation drawer rail mode - center icons */
@@ -234,17 +308,33 @@ onUnmounted(() => {
   padding: 8px;
 }
 
-.v-navigation-drawer--rail .nav-list .v-list-item {
-  padding: 0 !important;
+.v-navigation-drawer--rail .nav-list .v-list-item.nav-item {
+  padding: 0;
   min-height: 48px;
 }
 
-.v-navigation-drawer--rail .nav-list .v-list-item > .v-list-item__prepend {
-  margin-left: 12px !important;
+.v-navigation-drawer--rail .nav-list .v-list-item.nav-item > .v-list-item__prepend {
+  margin-left: 12px;
 }
 
-.v-navigation-drawer--rail .nav-list .v-list-item .v-list-item-title,
-.v-navigation-drawer--rail .nav-list .v-list-item .v-list-item__content {
-  display: none !important;
+.v-navigation-drawer--rail .nav-list .v-list-item.nav-item .v-list-item-title,
+.v-navigation-drawer--rail .nav-list .v-list-item.nav-item .v-list-item__content {
+  display: none;
+}
+
+/* Route transition */
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fade-slide-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 </style>

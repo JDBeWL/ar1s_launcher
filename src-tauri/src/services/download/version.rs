@@ -5,7 +5,7 @@ use super::http::get_http_client;
 use crate::errors::LauncherError;
 use crate::models::{DownloadJob, VersionManifest};
 use crate::services::config::load_config;
-use log::info;
+use log::{info, warn};
 use std::fs;
 use std::path::PathBuf;
 use tauri::Window;
@@ -112,7 +112,7 @@ pub async fn process_and_download_version(
     collect_libraries(&version_json, &libraries_base_dir, is_mirror, base_url, &mut downloads)?;
 
     // 执行批量下载
-    match download_all_files(downloads.clone(), window, downloads.len() as u64, mirror).await {
+    match download_all_files(downloads, window).await {
         Ok(_) => {
             // 保存版本元数据文件
             let version_json_path = version_dir.join(format!("{}.json", actual_version_id));
@@ -121,10 +121,10 @@ pub async fn process_and_download_version(
         }
         Err(e) => {
             // 下载失败时清理版本文件夹
-            println!("下载失败，清理版本文件夹: {}", version_dir.display());
+            warn!("下载失败，清理版本文件夹: {}", version_dir.display());
             if version_dir.exists() {
                 if let Err(cleanup_err) = fs::remove_dir_all(&version_dir) {
-                    println!("清理版本文件夹失败: {}", cleanup_err);
+                    warn!("清理版本文件夹失败: {}", cleanup_err);
                 }
             }
             Err(e)
@@ -152,8 +152,7 @@ async fn download_modpack_libraries(
     info!("下载整合包库文件: {} 个", downloads.len());
     
     // 执行批量下载
-    let mirror = if is_mirror { Some(base_url.to_string()) } else { None };
-    download_all_files(downloads.clone(), window, downloads.len() as u64, mirror).await
+    download_all_files(downloads, window).await
 }
 
 /// 收集客户端 JAR 下载任务
@@ -305,26 +304,7 @@ fn collect_libraries(
     Ok(())
 }
 
-/// 将 Maven 坐标转换为文件路径
-fn maven_name_to_path(name: &str) -> Option<String> {
-    let parts: Vec<&str> = name.split(':').collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    
-    let group = parts[0].replace('.', "/");
-    let artifact = parts[1];
-    let version = parts[2];
-    let classifier = if parts.len() > 3 { Some(parts[3]) } else { None };
-    
-    let filename = if let Some(c) = classifier {
-        format!("{}-{}-{}.jar", artifact, version, c)
-    } else {
-        format!("{}-{}.jar", artifact, version)
-    };
-    
-    Some(format!("{}/{}/{}/{}", group, artifact, version, filename))
-}
+use crate::utils::minecraft::maven_name_to_path;
 
 /// 从库名称创建下载任务 (用于没有 downloads.artifact 的 Forge 库)
 fn create_library_job_from_name(
@@ -379,38 +359,18 @@ fn create_library_job_from_name(
     })
 }
 
-/// 检查是否应该下载库
+/// 检查是否应该下载库（使用共享的 rules 评估逻辑）
 fn should_download_library(lib: &serde_json::Value) -> bool {
-    let Some(rules) = lib.get("rules").and_then(|r| r.as_array()) else {
-        return true;
-    };
-
-    let mut should_download = false;
-    for rule in rules {
-        let action = rule["action"].as_str().unwrap_or("");
-        if let Some(os) = rule.get("os") {
-            if let Some(name) = os["name"].as_str() {
-                let current_os = std::env::consts::OS;
-                if name == current_os {
-                    should_download = action == "allow";
-                }
-            }
-        } else {
-            should_download = action == "allow";
-        }
-    }
-
-    // LWJGL natives 特殊处理
-    let is_lwjgl = lib["name"]
+    // LWJGL natives 特殊处理：始终下载
+    if lib["name"]
         .as_str()
-        .map_or(false, |name| name.contains("lwjgl"));
-    let has_natives = lib.get("natives").is_some();
-
-    if is_lwjgl && has_natives {
+        .map_or(false, |name| name.contains("lwjgl"))
+        && lib.get("natives").is_some()
+    {
         return true;
     }
 
-    should_download || !lib.get("rules").is_some()
+    crate::utils::minecraft::evaluate_rules(lib.get("rules"))
 }
 
 /// 创建库下载任务

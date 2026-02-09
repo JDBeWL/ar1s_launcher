@@ -22,34 +22,34 @@ html.no-transition *::after,
   animation-duration: 0s !important;
 }
 
-/* 进度条动画 */
-.v-progress-linear__determinate,
-.v-progress-linear__indeterminate,
-.v-progress-circular__overlay {
-  animation-duration: 1s !important;
+/* 进度条动画 - 使用:where()降低Vuetify优先级 */
+:where(.v-progress-linear__determinate),
+:where(.v-progress-linear__indeterminate),
+:where(.v-progress-circular__overlay) {
+  animation-duration: 1s;
 }
 
 /* 弹窗和通知动画 */
-.v-snackbar__wrapper,
-.v-dialog,
-.v-overlay__content,
-.v-menu__content {
-  transition: opacity 0.15s ease, transform 0.15s ease !important;
+:where(.v-snackbar__wrapper),
+:where(.v-dialog),
+:where(.v-overlay__content),
+:where(.v-menu__content) {
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 /* 修复 v-select 下拉菜单圆角问题 */
-.v-select-menu-content {
-  border-radius: 12px !important;
+.v-overlay .v-select-menu-content {
+  border-radius: 12px;
   overflow: hidden;
 }
 
-.v-select-menu-content .v-list {
-  padding: 0 !important;
-  border-radius: 0 !important;
-  background: rgb(var(--v-theme-surface-container)) !important;
+.v-overlay .v-select-menu-content .v-list {
+  padding: 0;
+  border-radius: 0;
+  background: rgb(var(--v-theme-surface-container));
 }
 
-.v-select-menu-content .v-list-item {
-  border-radius: 0 !important;
-  margin: 0 !important;
+.v-overlay .v-select-menu-content .v-list-item {
+  border-radius: 0;
+  margin: 0;
 }

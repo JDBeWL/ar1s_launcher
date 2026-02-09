@@ -54,13 +54,13 @@ function cancelDownload() {
 </template>
 
 <style scoped>
-.download-fab {
+.download-fab.v-btn {
   position: fixed;
   bottom: 20px;
   right: 20px;
   z-index: 999;
-  width: 56px !important;
-  height: 56px !important;
-  min-width: 56px !important;
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
 }
 </style>

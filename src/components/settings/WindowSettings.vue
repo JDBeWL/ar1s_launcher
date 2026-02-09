@@ -1,12 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
-import { invoke } from "@tauri-apps/api/core";
-
-interface WindowSettingsData {
-  width: number | null;
-  height: number | null;
-  fullscreen: boolean;
-}
+import { configApi } from '../../services';
+import type { WindowSettings as WindowSettingsData } from '../../types/events';
 
 const windowWidth = ref<number | null>(null);
 const windowHeight = ref<number | null>(null);
@@ -31,7 +26,7 @@ const currentPreset = computed(() => {
 
 async function loadSettings() {
   try {
-    const settings = await invoke<WindowSettingsData>('get_window_settings');
+    const settings = await configApi.getWindowSettings();
     windowWidth.value = settings.width;
     windowHeight.value = settings.height;
     fullscreen.value = settings.fullscreen;
@@ -43,11 +38,7 @@ async function loadSettings() {
 
 async function saveSettings() {
   try {
-    await invoke('set_window_settings', {
-      width: windowWidth.value,
-      height: windowHeight.value,
-      fullscreen: fullscreen.value,
-    });
+    await configApi.setWindowSettings(windowWidth.value, windowHeight.value, fullscreen.value);
   } catch (err) {
     console.error('Failed to save window settings:', err);
   }

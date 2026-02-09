@@ -88,13 +88,12 @@ function truncateText(text: string, length: number): string {
 <style scoped>
 .modpack-card {
   cursor: pointer;
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-              box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: border-color 0.2s ease;
+  border: 1px solid transparent;
 }
 
 .modpack-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border-color: rgb(var(--v-theme-outline-variant));
 }
 
 .modpack-card--selected {

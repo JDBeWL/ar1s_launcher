@@ -1,8 +1,8 @@
 //! Quilt 加载器安装
 
 use crate::errors::LauncherError;
+use crate::services::http_client;
 use log::info;
-use reqwest::Client;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -22,7 +22,7 @@ pub async fn install_quilt(
         mc_version, quilt_version, instance_name
     );
 
-    let client = Client::new();
+    let client = http_client::get_client();
 
     // 从 Quilt Meta API 获取版本 JSON
     let profile_url = format!(
@@ -69,7 +69,7 @@ pub async fn install_quilt(
 
 /// 获取 Quilt 加载器版本列表
 pub async fn get_quilt_versions(mc_version: &str) -> Result<Vec<QuiltLoaderVersion>, LauncherError> {
-    let client = Client::new();
+    let client = http_client::get_client();
     let url = format!("{}/versions/loader/{}", QUILT_META_URL, mc_version);
 
     let response = client
@@ -100,7 +100,7 @@ pub async fn get_quilt_versions(mc_version: &str) -> Result<Vec<QuiltLoaderVersi
 
 /// 获取支持 Quilt 的 Minecraft 版本列表
 pub async fn get_quilt_game_versions() -> Result<Vec<String>, LauncherError> {
-    let client = Client::new();
+    let client = http_client::get_client();
     let url = format!("{}/versions/game", QUILT_META_URL);
 
     let response = client

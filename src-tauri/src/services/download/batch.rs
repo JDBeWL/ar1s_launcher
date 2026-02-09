@@ -6,6 +6,7 @@ use super::state::DownloadState;
 use crate::errors::LauncherError;
 use crate::models::{DownloadJob, DownloadProgress, DownloadStatus};
 use crate::services::config::load_config;
+use log::{debug, info, warn};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,8 +40,6 @@ pub fn set_cancel_flag() {
 pub async fn download_all_files(
     jobs: Vec<DownloadJob>,
     window: &Window,
-    _total_files: u64,
-    _mirror: Option<String>,
 ) -> Result<(), LauncherError> {
     let config = load_config()?;
     let threads = config.download_threads as usize;
@@ -67,7 +66,34 @@ pub async fn download_all_files(
         DownloadState::load_from_file(&state_file).unwrap_or_else(DownloadState::new)
     ));
 
-    // 计算已完成的文件和已下载的字节数
+    // 过滤已完成的任务（同时验证文件是否真的存在于磁盘上）
+    let filtered_jobs: Vec<DownloadJob> = {
+        let mut state = download_state.lock().await;
+        jobs.iter()
+            .filter(|job| {
+                if state.is_completed(&job.url) {
+                    // 验证文件是否真的存在于磁盘上
+                    if job.path.exists() {
+                        false // 已完成且文件存在，跳过
+                    } else {
+                        // 文件不存在，清除已完成状态，需要重新下载
+                        warn!(
+                            "File marked as completed but missing on disk: {}, re-downloading",
+                            job.path.display()
+                        );
+                        state.completed_files.remove(&job.url);
+                        state.mark_dirty();
+                        true
+                    }
+                } else {
+                    true // 未完成，需要下载
+                }
+            })
+            .cloned()
+            .collect()
+    };
+
+    // 计算已完成的文件和已下载的字节数（在过滤之后，以反映真实状态）
     let (completed_count, resumed_bytes) = {
         let state = download_state.lock().await;
         let completed = state.completed_files.len() as u64;
@@ -82,26 +108,17 @@ pub async fn download_all_files(
         (completed, completed_bytes + partial_bytes)
     };
 
-    // 过滤已完成的任务
-    let filtered_jobs: Vec<DownloadJob> = {
-        let state = download_state.lock().await;
-        jobs.iter()
-            .filter(|job| !state.is_completed(&job.url))
-            .cloned()
-            .collect()
-    };
-
     // 计算总大小（包括已完成的）
     let total_size: u64 = jobs.iter().map(|j| j.size).sum();
 
     if filtered_jobs.is_empty() {
-        println!("DEBUG: All files already downloaded, skipping");
+        debug!("All files already downloaded, skipping");
         emit_completed_progress(window, total_size, total_size);
         return Ok(());
     }
 
-    println!(
-        "DEBUG: Resuming download - {} files completed, {} remaining, {} bytes resumed",
+    info!(
+        "Resuming download - {} files completed, {} remaining, {} bytes resumed",
         completed_count,
         filtered_jobs.len(),
         resumed_bytes
@@ -203,7 +220,7 @@ pub async fn download_all_files(
         let state = download_state.lock().await;
         if state.dirty {
             if let Err(e) = state.save_to_file(&state_file) {
-                println!("WARN: Failed to write final state file: {}", e);
+                warn!("Failed to write final state file: {}", e);
             }
         }
     }
@@ -233,7 +250,7 @@ pub async fn download_all_files(
     // 发送部分失败摘要
     let failed_list: Vec<String> = {
         let state = download_state.lock().await;
-        state.failed_files.clone()
+        state.failed_files.iter().cloned().collect()
     };
     if !failed_list.is_empty() {
         let _ = window.emit(
@@ -324,9 +341,9 @@ fn spawn_state_saver(
             let state = download_state.lock().await;
             if state.dirty {
                 if let Err(e) = state.save_to_file(&state_file) {
-                    println!("WARN: Failed to save download state: {}", e);
+                    warn!("Failed to save download state: {}", e);
                 } else {
-                    println!("DEBUG: Download state saved to {}", state_file.display());
+                    debug!("Download state saved to {}", state_file.display());
                 }
             }
         }
@@ -381,7 +398,7 @@ fn spawn_download_task(
             } else {
                 format!("retry {}/{}", retry, MAX_JOB_RETRIES - 1)
             };
-            println!("DEBUG: Downloading file: {} ({})", current_url, attempt_str);
+            debug!("Downloading file: {} ({})", current_url, attempt_str);
 
             match download_file(
                 http.clone(),
@@ -405,14 +422,14 @@ fn spawn_download_task(
                     if e.to_string().contains("cancelled") {
                         break;
                     }
-                    println!(
-                        "ERROR: Download failed: {} ({}) - {}",
+                    warn!(
+                        "Download failed: {} ({}) - {}",
                         current_url, attempt_str, e
                     );
                     current_job_error = Some(e);
                     if retry < MAX_JOB_RETRIES - 1 {
                         let backoff = Duration::from_secs(1 << retry);
-                        println!("DEBUG: Waiting {:?} before next attempt", backoff);
+                        debug!("Waiting {:?} before next attempt", backoff);
                         tokio::time::sleep(backoff).await;
                     }
                 }

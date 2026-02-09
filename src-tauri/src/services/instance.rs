@@ -469,7 +469,7 @@ async fn merge_and_complete_instance(
         });
 
         if !index_jobs.is_empty() {
-            download::download_all_files(index_jobs.clone(), window, 0, None).await?;
+            download::download_all_files(index_jobs.clone(), window).await?;
         }
 
         let mut all_jobs = other_jobs;
@@ -501,7 +501,7 @@ async fn merge_and_complete_instance(
         }
 
         if !all_jobs.is_empty() {
-            download::download_all_files(all_jobs, window, 0, None).await?;
+            download::download_all_files(all_jobs, window).await?;
         }
     }
 

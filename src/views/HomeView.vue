@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { useVersionManager } from "../composables/useVersionManager";
 import { useGameLaunch } from "../composables/useGameLaunch";
-import { formatTimeAgo } from "../utils/format";
+import { instanceApi, userApi } from "../services";
+import { formatTimeAgo, formatLastPlayed } from "../utils/format";
+import type { GameInstance } from "../types/events";
 
 const {
   installedVersions,
@@ -38,6 +39,13 @@ interface RecentPlay {
 
 const recentPlays = ref<RecentPlay[]>([])
 
+const instances = ref<GameInstance[]>([])
+const recentInstances = computed(() => {
+  return [...instances.value]
+    .sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))
+    .slice(0, 3)
+})
+
 function loadRecentPlays() {
   try {
     const saved = localStorage.getItem(RECENT_PLAY_KEY)
@@ -69,8 +77,9 @@ const instanceCount = ref(0)
 
 async function loadInstanceCount() {
   try {
-    const instances = await invoke('get_instances') as any[]
-    instanceCount.value = instances?.length || 0
+    const list = await instanceApi.getInstances()
+    instances.value = list || []
+    instanceCount.value = instances.value.length
   } catch (e) {
     console.error('Failed to load instances:', e)
   }
@@ -78,9 +87,9 @@ async function loadInstanceCount() {
 
 async function loadUsername() {
   try {
-    const savedUsername = await invoke('get_saved_username');
+    const savedUsername = await userApi.getSavedUsername();
     if (savedUsername) {
-      username.value = savedUsername as string;
+      username.value = savedUsername;
     }
   } catch (err) {
     console.error("Failed to load username:", err);
@@ -89,7 +98,7 @@ async function loadUsername() {
 
 async function saveUsername(newName: string) {
   try {
-    await invoke('set_saved_username', { username: newName });
+    await userApi.setSavedUsername(newName);
   } catch (err) {
     console.error("Failed to save username:", err);
   }
@@ -115,11 +124,13 @@ async function handleLaunch() {
 }
 
 onMounted(async () => {
-  await loadGameDir();
-  await loadUsername();
-  await initListeners();
   loadRecentPlays();
-  await loadInstanceCount();
+  await Promise.all([
+    loadGameDir(),
+    loadUsername(),
+    initListeners(),
+    loadInstanceCount()
+  ]);
 });
 </script>
 
@@ -222,12 +233,21 @@ onMounted(async () => {
               启动游戏
             </v-btn>
 
-            <div class="text-center text-caption text-on-surface-variant mt-3">
-              <v-icon size="12" class="mr-1" :color="isReady ? 'success' : 'on-surface-variant'">
-                {{ isReady ? 'mdi-check-circle' : 'mdi-information' }}
-              </v-icon>
-              {{ isReady ? '准备就绪' : '请选择版本并填写玩家名称' }}
-            </div>
+            <v-alert
+              :color="isReady ? 'success' : 'warning'"
+              variant="tonal"
+              density="compact"
+              class="mt-3"
+            >
+              <template #prepend>
+                <v-icon size="18">
+                  {{ isReady ? 'mdi-check-circle' : 'mdi-information-outline' }}
+                </v-icon>
+              </template>
+              <span class="text-body-2">
+                {{ isReady ? '准备就绪，点击启动游戏' : '请选择版本并填写玩家名称' }}
+              </span>
+            </v-alert>
           </v-card-text>
         </v-card>
 
@@ -280,82 +300,81 @@ onMounted(async () => {
         </div>
       </v-col>
 
-      <!-- 右侧：快捷操作 -->
+      <!-- 右侧：信息与快捷操作 -->
       <v-col cols="12" md="5">
         <div class="d-flex flex-column ga-3">
           <v-card
             color="surface-container"
             variant="flat"
-            class="quick-action-card"
-            to="/download"
           >
             <v-card-text class="pa-3 d-flex align-center">
-              <v-avatar size="40" color="primary-container" class="mr-3">
-                <v-icon size="20" color="on-primary-container">mdi-download</v-icon>
-              </v-avatar>
-              <div>
-                <div class="text-body-2 font-weight-medium">下载版本</div>
-                <div class="text-caption text-on-surface-variant">获取新的游戏版本</div>
+              <div class="d-flex align-center flex-grow-1">
+                <v-icon size="18" class="mr-2" color="on-surface-variant">mdi-clock-outline</v-icon>
+                <span class="text-body-2 font-weight-medium">最近实例</span>
               </div>
-              <v-spacer />
-              <v-icon size="20" color="on-surface-variant">mdi-chevron-right</v-icon>
+              <v-btn
+                size="x-small"
+                variant="text"
+                to="/instance-manager"
+              >
+                管理
+              </v-btn>
+            </v-card-text>
+            <v-divider />
+            <v-card-text class="pa-3">
+              <div v-if="recentInstances.length === 0" class="text-caption text-on-surface-variant">
+                暂无实例，创建后会在这里显示
+              </div>
+              <v-list v-else density="compact" bg-color="transparent">
+                <v-list-item
+                  v-for="instance in recentInstances"
+                  :key="instance.id"
+                  class="px-0"
+                >
+                  <template #prepend>
+                    <v-avatar size="32" color="primary-container" class="mr-2">
+                      <v-icon size="16" color="on-primary-container">mdi-cube-outline</v-icon>
+                    </v-avatar>
+                  </template>
+                  <v-list-item-title class="text-body-2">
+                    {{ instance.name }}
+                  </v-list-item-title>
+                  <v-list-item-subtitle class="text-caption">
+                    {{ instance.gameVersion || instance.version }} · {{ formatLastPlayed(instance.lastPlayed) }}
+                  </v-list-item-subtitle>
+                  <template #append>
+                    <v-btn 
+                      size="x-small" 
+                      variant="text" 
+                      :to="{ path: '/instance-manager', query: { search: instance.name } }"
+                    >
+                      查看
+                    </v-btn>
+                  </template>
+                </v-list-item>
+              </v-list>
             </v-card-text>
           </v-card>
 
           <v-card
             color="surface-container"
             variant="flat"
-            class="quick-action-card"
-            to="/add-instance"
           >
-            <v-card-text class="pa-3 d-flex align-center">
-              <v-avatar size="40" color="primary-container" class="mr-3">
-                <v-icon size="20" color="on-primary-container">mdi-plus-circle</v-icon>
-              </v-avatar>
-              <div>
-                <div class="text-body-2 font-weight-medium">添加实例</div>
-                <div class="text-caption text-on-surface-variant">创建自定义游戏实例</div>
+            <v-card-text class="pa-3">
+              <div class="d-flex align-center mb-3">
+                <v-icon size="18" class="mr-2" color="on-surface-variant">mdi-lightning-bolt</v-icon>
+                <span class="text-body-2 font-weight-medium">快捷操作</span>
               </div>
-              <v-spacer />
-              <v-icon size="20" color="on-surface-variant">mdi-chevron-right</v-icon>
-            </v-card-text>
-          </v-card>
-
-          <v-card
-            color="surface-container"
-            variant="flat"
-            class="quick-action-card"
-            to="/instance-manager"
-          >
-            <v-card-text class="pa-3 d-flex align-center">
-              <v-avatar size="40" color="primary-container" class="mr-3">
-                <v-icon size="20" color="on-primary-container">mdi-folder-multiple</v-icon>
-              </v-avatar>
-              <div>
-                <div class="text-body-2 font-weight-medium">实例管理</div>
-                <div class="text-caption text-on-surface-variant">管理已有的游戏实例</div>
+              <div class="d-flex flex-column ga-2">
+                <v-btn variant="tonal" color="primary" block to="/download">
+                  <v-icon start size="18">mdi-download</v-icon>
+                  下载版本
+                </v-btn>
+                <v-btn variant="tonal" color="secondary" block to="/add-instance">
+                  <v-icon start size="18">mdi-plus</v-icon>
+                  创建实例
+                </v-btn>
               </div>
-              <v-spacer />
-              <v-icon size="20" color="on-surface-variant">mdi-chevron-right</v-icon>
-            </v-card-text>
-          </v-card>
-
-          <v-card
-            color="surface-container"
-            variant="flat"
-            class="quick-action-card"
-            to="/settings"
-          >
-            <v-card-text class="pa-3 d-flex align-center">
-              <v-avatar size="40" color="primary-container" class="mr-3">
-                <v-icon size="20" color="on-primary-container">mdi-cog</v-icon>
-              </v-avatar>
-              <div>
-                <div class="text-body-2 font-weight-medium">设置</div>
-                <div class="text-caption text-on-surface-variant">配置启动器选项</div>
-              </div>
-              <v-spacer />
-              <v-icon size="20" color="on-surface-variant">mdi-chevron-right</v-icon>
             </v-card-text>
           </v-card>
         </div>
@@ -413,16 +432,6 @@ onMounted(async () => {
 .launch-btn {
   font-weight: 600;
   font-size: 1rem;
-}
-
-.quick-action-card {
-  cursor: pointer;
-  transition: box-shadow 0.15s ease;
-  min-height: 64px;
-}
-
-.quick-action-card:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .recent-chip {

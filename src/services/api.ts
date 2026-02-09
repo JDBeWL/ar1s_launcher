@@ -10,6 +10,10 @@ import type {
   ForgeVersion,
   LoaderVersionInfo,
   InstanceNameValidation,
+  GameDirInfo,
+  ModrinthVersion,
+  WindowSettings,
+  AutoMemoryConfig,
 } from '../types/events';
 
 // ============ 请求去重机制 ============
@@ -207,6 +211,11 @@ export const configApi = {
     return invoke('set_game_dir', { path, window: {} });
   },
 
+  /** 获取游戏目录信息（已安装版本等） */
+  async getGameDirInfo(): Promise<GameDirInfo> {
+    return dedupedInvoke<GameDirInfo>('get_game_dir_info');
+  },
+
   /** 获取下载线程数 */
   async getDownloadThreads(): Promise<number> {
     return dedupedInvoke<number>('get_download_threads');
@@ -240,6 +249,41 @@ export const configApi = {
   /** 获取总内存 */
   async getTotalMemory(): Promise<number> {
     return dedupedInvoke<number>('get_total_memory');
+  },
+
+  /** 获取窗口设置 */
+  async getWindowSettings(): Promise<WindowSettings> {
+    return dedupedInvoke<WindowSettings>('get_window_settings');
+  },
+
+  /** 设置窗口设置 */
+  async setWindowSettings(width: number | null, height: number | null, fullscreen: boolean): Promise<void> {
+    return invoke('set_window_settings', { width, height, fullscreen });
+  },
+
+  /** 检查内存警告 */
+  async checkMemoryWarning(memoryMb: number): Promise<string | null> {
+    return dedupedInvoke<string | null>('check_memory_warning', { memoryMb });
+  },
+
+  /** 获取自动内存配置 */
+  async getAutoMemoryConfig(): Promise<AutoMemoryConfig> {
+    return dedupedInvoke<AutoMemoryConfig>('get_auto_memory_config');
+  },
+
+  /** 设置自动内存开关 */
+  async setAutoMemoryEnabled(enabled: boolean): Promise<void> {
+    return invoke('set_auto_memory_enabled', { enabled });
+  },
+
+  /** 自动设置内存 */
+  async autoSetMemory(): Promise<number | null> {
+    return invoke<number | null>('auto_set_memory');
+  },
+
+  /** 分析内存效率 */
+  async analyzeMemoryEfficiency(memoryMb: number): Promise<string> {
+    return dedupedInvoke<string>('analyze_memory_efficiency', { memoryMb });
   },
 };
 
@@ -321,8 +365,8 @@ export const modpackApi = {
     projectId: string,
     gameVersions?: string[],
     loaders?: string[]
-  ): Promise<any[]> {
-    return dedupedInvoke<any[]>('get_modrinth_modpack_versions', {
+  ): Promise<ModrinthVersion[]> {
+    return dedupedInvoke<ModrinthVersion[]>('get_modrinth_modpack_versions', {
       projectId,
       gameVersions,
       loaders,

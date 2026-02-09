@@ -1,12 +1,10 @@
 use crate::errors::LauncherError;
 use sysinfo::{System, MemoryRefreshKind};
 use std::sync::Mutex;
-use lazy_static::lazy_static;
 use serde::{Serialize, Deserialize};
 
-lazy_static! {
-    static ref MEMORY_SYSTEM: Mutex<System> = Mutex::new(System::new());
-}
+static MEMORY_SYSTEM: std::sync::LazyLock<Mutex<System>> =
+    std::sync::LazyLock::new(|| Mutex::new(System::new()));
 
 /// 内存使用统计
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +31,11 @@ pub struct AutoMemoryConfig {
     pub max_limit_mb: u32, // 最大内存限制（如8500MB）
     pub safety_margin_percent: f32, // 安全余量百分比
 }
+
+/// 默认最大内存限制 (MB)
+pub const DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB: u32 = 8500;
+/// 默认安全余量百分比
+pub const DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT: f32 = 20.0;
 
 /// 获取系统内存信息
 pub fn get_system_memory() -> MemoryStats {
@@ -81,7 +84,8 @@ pub fn recommend_memory_for_game(version: &str, modded: bool) -> MemoryRecommend
     // 计算推荐值
     let min_memory = base_need.max(512); // 最小512MB
     let recommended = calculate_recommended_memory(total_memory_mb, base_need);
-    let max_memory = calculate_max_memory(total_memory_mb, base_need);
+    // max_memory 必须 >= recommended，否则推荐值没有意义
+    let max_memory = calculate_max_memory(total_memory_mb, base_need).max(recommended);
     
     let reason = format!(
         "系统总内存: {}MB, 游戏版本: {}, {}",
@@ -236,8 +240,8 @@ pub fn is_memory_setting_safe(requested_memory_mb: u32) -> Result<bool, Launcher
 pub fn get_default_auto_memory_config() -> AutoMemoryConfig {
     AutoMemoryConfig {
         enabled: false,
-        max_limit_mb: 8500, // 整合包优化模组要求的最大限制
-        safety_margin_percent: 10.0, // 保留10%的安全余量
+        max_limit_mb: DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB,
+        safety_margin_percent: DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
     }
 }
 
@@ -344,5 +348,76 @@ mod tests {
         let args = optimize_jvm_memory_args(2048, "1.20.1");
         assert!(args.iter().any(|arg| arg.contains("-Xmx2048M")));
         assert!(args.iter().any(|arg| arg.contains("-Xms1024M")));
+    }
+
+    #[test]
+    fn test_memory_recommendation_modded() {
+        let rec = recommend_memory_for_game("1.20.1", true);
+        let rec_vanilla = recommend_memory_for_game("1.20.1", false);
+        // 模组版推荐值应该 >= 原版推荐值
+        assert!(rec.min_memory_mb >= rec_vanilla.min_memory_mb);
+        assert!(rec.max_memory_mb >= rec.recommended_memory_mb);
+    }
+
+    #[test]
+    fn test_memory_recommendation_old_version() {
+        let rec = recommend_memory_for_game("1.7.10", false);
+        assert!(rec.recommended_memory_mb >= 512);
+        assert!(rec.max_memory_mb >= rec.recommended_memory_mb);
+    }
+
+    #[test]
+    fn test_memory_recommendation_mid_version() {
+        let rec = recommend_memory_for_game("1.16.5", false);
+        assert!(rec.recommended_memory_mb >= 1024);
+        assert!(rec.max_memory_mb >= rec.recommended_memory_mb);
+    }
+
+    #[test]
+    fn test_jvm_args_old_version_uses_parallel_gc() {
+        let args = optimize_jvm_memory_args(2048, "1.12.2");
+        assert!(args.iter().any(|arg| arg == "-XX:+UseParallelGC"));
+        assert!(!args.iter().any(|arg| arg == "-XX:+UseG1GC"));
+    }
+
+    #[test]
+    fn test_jvm_args_new_version_uses_g1gc() {
+        let args = optimize_jvm_memory_args(4096, "1.20.1");
+        assert!(args.iter().any(|arg| arg == "-XX:+UseG1GC"));
+        assert!(!args.iter().any(|arg| arg == "-XX:+UseParallelGC"));
+    }
+
+    #[test]
+    fn test_memory_setting_safe() {
+        // 低于 512MB 应该报错
+        assert!(is_memory_setting_safe(256).is_err());
+        assert!(is_memory_setting_safe(511).is_err());
+        // 512MB 及以上应该安全
+        assert!(is_memory_setting_safe(512).is_ok());
+        assert!(is_memory_setting_safe(4096).is_ok());
+    }
+
+    #[test]
+    fn test_analyze_memory_efficiency() {
+        let result = analyze_memory_efficiency(1024);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_memory_trend_stable() {
+        let samples = vec![
+            MemoryStats { total_memory_mb: 16000, used_memory_mb: 8000, available_memory_mb: 8000, memory_usage_percent: 50.0 },
+            MemoryStats { total_memory_mb: 16000, used_memory_mb: 8050, available_memory_mb: 7950, memory_usage_percent: 50.3 },
+        ];
+        assert_eq!(get_memory_trend(&samples), MemoryTrend::Stable);
+    }
+
+    #[test]
+    fn test_memory_trend_insufficient_samples() {
+        let samples = vec![
+            MemoryStats { total_memory_mb: 16000, used_memory_mb: 8000, available_memory_mb: 8000, memory_usage_percent: 50.0 },
+        ];
+        assert_eq!(get_memory_trend(&samples), MemoryTrend::Stable);
+        assert_eq!(get_memory_trend(&[]), MemoryTrend::Stable);
     }
 }

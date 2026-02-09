@@ -2,7 +2,7 @@
 import { onMounted, computed } from 'vue';
 import { useInstanceCreation } from '../../composables/useInstanceCreation';
 import { useRouter } from 'vue-router';
-import { getLoaderSelectIcon } from '../../utils/format';
+import { getLoaderIcon } from '../../utils/format';
 import type { ForgeVersion, LoaderVersionInfo } from '../../types/events';
 
 const router = useRouter();
@@ -186,7 +186,7 @@ onMounted(() => {
             class="mr-2 mb-2"
             @click="selectedModLoaderType = loader.value"
           >
-            <v-icon start size="16">{{ getLoaderSelectIcon(loader.value) }}</v-icon>
+            <v-icon start size="16">{{ getLoaderIcon(loader.value, 'select') }}</v-icon>
             {{ loader.title }}
             <v-tooltip v-if="loader.disabled && selectedVersion" activator="parent" location="top">
               该版本不支持 {{ loader.title }}

@@ -87,15 +87,12 @@ pub fn run() {
                 log::error!("配置预加载失败: {}", e);
             }
             
-            // 后台预热 Java 检测缓存（异步执行，不阻塞启动）
-            std::thread::spawn(|| {
+            // 后台预热 Java 检测缓存（使用 Tauri 异步运行时，不阻塞启动）
+            tauri::async_runtime::spawn(async {
                 log::info!("后台预热 Java 检测缓存...");
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async {
-                    if let Err(e) = services::java::find_java_installations_command().await {
-                        log::warn!("Java 缓存预热失败: {}", e);
-                    }
-                });
+                if let Err(e) = services::java::find_java_installations_command().await {
+                    log::warn!("Java 缓存预热失败: {}", e);
+                }
             });
             
             Ok(())

@@ -1,5 +1,6 @@
 use crate::errors::LauncherError;
 use crate::models::DownloadJob;
+use log::{debug, info, warn};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::fs;
@@ -151,7 +152,7 @@ pub fn verify_file(
     // 检查文件大小
     let actual_size = std::fs::metadata(path)?.len();
     if expected_size > 0 && actual_size != expected_size {
-        println!("文件大小不匹配: 期望 {} 字节, 实际 {} 字节", expected_size, actual_size);
+        warn!("文件大小不匹配: 期望 {} 字节, 实际 {} 字节", expected_size, actual_size);
         return Ok(false);
     }
     
@@ -165,7 +166,7 @@ pub fn verify_file(
         let is_valid = actual_hash_str.to_lowercase() == expected_hash.to_lowercase();
         
         if !is_valid {
-            println!("文件哈希不匹配: 期望 {}, 实际 {}", expected_hash, actual_hash_str);
+            warn!("文件哈希不匹配: 期望 {}, 实际 {}", expected_hash, actual_hash_str);
         }
         
         Ok(is_valid)
@@ -184,32 +185,32 @@ pub async fn verify_and_repair_file(
     
     // 1. 检查文件是否存在
     if !path.exists() {
-        println!("文件不存在，需要下载: {}", path.display());
+        debug!("文件不存在，需要下载: {}", path.display());
         return Ok(false);
     }
     
     // 2. 验证文件完整性
     if verify_file(path, &job.hash, job.size)? {
-        println!("文件验证通过: {}", path.display());
+        debug!("文件验证通过: {}", path.display());
         return Ok(true);
     }
     
     // 3. 文件损坏，尝试修复
-    println!("文件损坏，尝试修复: {}", path.display());
+    warn!("文件损坏，尝试修复: {}", path.display());
     
     // 3.1 备份损坏的文件
     let backup_path = path.with_extension("bak");
     if let Err(e) = std::fs::copy(path, &backup_path) {
-        println!("备份损坏文件失败: {}", e);
+        warn!("备份损坏文件失败: {}", e);
     }
     
     // 3.2 删除损坏的文件
     if let Err(e) = std::fs::remove_file(path) {
-        println!("删除损坏文件失败: {}", e);
+        warn!("删除损坏文件失败: {}", e);
     }
     
     // 3.3 重新下载文件
-    println!("重新下载文件: {}", path.display());
+    info!("重新下载文件: {}", path.display());
     
     // 创建父目录
     if let Some(parent) = path.parent() {
@@ -230,12 +231,12 @@ pub async fn verify_and_repair_file(
     
     // 3.4 验证重新下载的文件
     if verify_file(path, &job.hash, job.size)? {
-        println!("文件修复成功: {}", path.display());
+        info!("文件修复成功: {}", path.display());
         // 删除备份文件
         let _ = std::fs::remove_file(&backup_path);
         Ok(true)
     } else {
-        println!("文件修复失败: {}", path.display());
+        warn!("文件修复失败: {}", path.display());
         // 恢复备份文件
         if backup_path.exists() {
             let _ = std::fs::copy(&backup_path, path);
@@ -447,37 +448,20 @@ pub fn cleanup_instance_creation(
     instance_name: &str,
     _base_version_id: &str,
 ) {
-    println!("file_utils: 开始清理实例创建过程中的文件和目录");
+    info!("file_utils: 开始清理实例创建过程中的文件和目录");
 
-    // 1. 清理实例目录
+    // 清理整个实例目录（remove_dir_all 会递归删除所有子文件和子目录）
     let instance_dir = game_dir.join("versions").join(instance_name);
     if instance_dir.exists() {
-        println!("file_utils: 清理实例目录: {}", instance_dir.display());
+        info!("file_utils: 清理实例目录: {}", instance_dir.display());
         if let Err(e) = fs::remove_dir_all(&instance_dir) {
-            println!("file_utils: 清理实例目录失败: {}", e);
+            warn!("file_utils: 清理实例目录失败: {}", e);
         } else {
-            println!("file_utils: 实例目录清理完成");
+            info!("file_utils: 实例目录清理完成");
         }
     }
 
-    // 2. 清理可能创建的临时文件
-    let instance_json = game_dir.join("versions").join(instance_name).join(format!("{}.json", instance_name));
-    if instance_json.exists() {
-        println!("file_utils: 清理实例JSON文件: {}", instance_json.display());
-        if let Err(e) = fs::remove_file(&instance_json) {
-            println!("file_utils: 清理实例JSON文件失败: {}", e);
-        }
-    }
-
-    let instance_jar = game_dir.join("versions").join(instance_name).join(format!("{}.jar", instance_name));
-    if instance_jar.exists() {
-        println!("file_utils: 清理实例JAR文件: {}", instance_jar.display());
-        if let Err(e) = fs::remove_file(&instance_jar) {
-            println!("file_utils: 清理实例JAR文件失败: {}", e);
-        }
-    }
-
-    println!("file_utils: 清理完成");
+    info!("file_utils: 清理完成");
 }
 
 /// 清理Forge安装过程中创建的文件和目录
@@ -487,7 +471,7 @@ pub fn cleanup_forge_installation(
     forge_version: &crate::models::ForgeVersion,
     installer_path: &PathBuf,
 ) {
-    println!("file_utils: 开始清理Forge安装过程中的文件和目录");
+    info!("file_utils: 开始清理Forge安装过程中的文件和目录");
 
     // 1. 清理版本文件夹
     let version_id = format!(
@@ -497,33 +481,172 @@ pub fn cleanup_forge_installation(
     let version_dir = game_dir.join("versions").join(&version_id);
 
     if version_dir.exists() {
-        println!("file_utils: 清理版本文件夹: {}", version_dir.display());
+        info!("file_utils: 清理版本文件夹: {}", version_dir.display());
         if let Err(e) = fs::remove_dir_all(&version_dir) {
-            println!("file_utils: 清理版本文件夹失败: {}", e);
+            warn!("file_utils: 清理版本文件夹失败: {}", e);
         } else {
-            println!("file_utils: 版本文件夹清理完成");
+            info!("file_utils: 版本文件夹清理完成");
         }
     }
 
     // 2. 清理实例目录（如果创建了）
     if instance_path.exists() {
-        println!("file_utils: 清理实例目录: {}", instance_path.display());
+        info!("file_utils: 清理实例目录: {}", instance_path.display());
         if let Err(e) = fs::remove_dir_all(instance_path) {
-            println!("file_utils: 清理实例目录失败: {}", e);
+            warn!("file_utils: 清理实例目录失败: {}", e);
         } else {
-            println!("file_utils: 实例目录清理完成");
+            info!("file_utils: 实例目录清理完成");
         }
     }
 
     // 3. 清理临时安装器文件
     if installer_path.exists() {
-        println!("file_utils: 清理临时安装器文件: {}", installer_path.display());
+        info!("file_utils: 清理临时安装器文件: {}", installer_path.display());
         if let Err(e) = fs::remove_file(installer_path) {
-            println!("file_utils: 清理安装器文件失败: {}", e);
+            warn!("file_utils: 清理安装器文件失败: {}", e);
         } else {
-            println!("file_utils: 临时安装器文件清理完成");
+            info!("file_utils: 临时安装器文件清理完成");
         }
     }
 
-    println!("file_utils: 清理完成");
+    info!("file_utils: 清理完成");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===== validate_instance_name 测试 =====
+
+    #[test]
+    fn test_valid_instance_names() {
+        assert!(validate_instance_name("MyInstance").is_valid);
+        assert!(validate_instance_name("my-instance-1").is_valid);
+        assert!(validate_instance_name("我的实例").is_valid);
+        assert!(validate_instance_name("test_instance.v2").is_valid);
+        assert!(validate_instance_name("a").is_valid);
+    }
+
+    #[test]
+    fn test_empty_name() {
+        let result = validate_instance_name("");
+        assert!(!result.is_valid);
+        assert!(result.error_message.unwrap().contains("不能为空"));
+    }
+
+    #[test]
+    fn test_too_long_name() {
+        let long_name = "a".repeat(65);
+        assert!(!validate_instance_name(&long_name).is_valid);
+
+        // 刚好 64 字符应该有效
+        let exact_name = "a".repeat(64);
+        assert!(validate_instance_name(&exact_name).is_valid);
+    }
+
+    #[test]
+    fn test_starts_with_dot_or_space() {
+        assert!(!validate_instance_name(".hidden").is_valid);
+        assert!(!validate_instance_name(" leading").is_valid);
+    }
+
+    #[test]
+    fn test_ends_with_dot_or_space() {
+        assert!(!validate_instance_name("trailing.").is_valid);
+        assert!(!validate_instance_name("trailing ").is_valid);
+    }
+
+    #[test]
+    fn test_path_traversal() {
+        assert!(!validate_instance_name("..").is_valid);
+        assert!(!validate_instance_name("foo/../bar").is_valid);
+        assert!(!validate_instance_name("a..b").is_valid);
+    }
+
+    #[test]
+    fn test_path_separators() {
+        assert!(!validate_instance_name("foo/bar").is_valid);
+        assert!(!validate_instance_name("foo\\bar").is_valid);
+    }
+
+    #[test]
+    fn test_reserved_characters() {
+        for c in &['<', '>', ':', '"', '|', '?', '*'] {
+            let name = format!("test{}name", c);
+            assert!(!validate_instance_name(&name).is_valid, "应该拒绝包含 '{}' 的名称", c);
+        }
+    }
+
+    #[test]
+    fn test_control_characters() {
+        assert!(!validate_instance_name("test\x00name").is_valid);
+        assert!(!validate_instance_name("test\x1fname").is_valid);
+    }
+
+    #[test]
+    fn test_windows_reserved_names() {
+        assert!(!validate_instance_name("CON").is_valid);
+        assert!(!validate_instance_name("PRN").is_valid);
+        assert!(!validate_instance_name("AUX").is_valid);
+        assert!(!validate_instance_name("NUL").is_valid);
+        assert!(!validate_instance_name("COM1").is_valid);
+        assert!(!validate_instance_name("LPT1").is_valid);
+        // 大小写不敏感
+        assert!(!validate_instance_name("con").is_valid);
+        assert!(!validate_instance_name("Con").is_valid);
+        // 带扩展名的保留名称
+        assert!(!validate_instance_name("CON.txt").is_valid);
+        // 类似但不是保留名称的应该有效
+        assert!(validate_instance_name("CONNECT").is_valid);
+        assert!(validate_instance_name("COM10").is_valid);
+    }
+
+    #[test]
+    fn test_validate_instance_name_or_error() {
+        assert!(validate_instance_name_or_error("valid-name").is_ok());
+        assert!(validate_instance_name_or_error("").is_err());
+        assert!(validate_instance_name_or_error("CON").is_err());
+    }
+
+    // ===== verify_file 测试 =====
+
+    #[test]
+    fn test_verify_file_nonexistent() {
+        let result = verify_file(Path::new("/nonexistent/path"), "abc123", 100);
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    #[test]
+    fn test_verify_file_empty_hash() {
+        let dir = std::env::temp_dir().join("ar1s_test_verify");
+        let _ = fs::create_dir_all(&dir);
+        let file_path = dir.join("test_empty_hash.bin");
+        fs::write(&file_path, b"hello").unwrap();
+
+        // 无 hash 无 size → 只检查存在性
+        assert!(verify_file(&file_path, "", 0).unwrap());
+        // 无 hash 但 size 匹配
+        assert!(verify_file(&file_path, "", 5).unwrap());
+        // 无 hash 但 size 不匹配
+        assert!(!verify_file(&file_path, "", 999).unwrap());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_verify_file_with_sha1() {
+        let dir = std::env::temp_dir().join("ar1s_test_sha1");
+        let _ = fs::create_dir_all(&dir);
+        let file_path = dir.join("test_sha1.bin");
+        fs::write(&file_path, b"hello").unwrap();
+
+        // "hello" 的 SHA1 = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
+        let correct_hash = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
+        assert!(verify_file(&file_path, correct_hash, 5).unwrap());
+        // 错误 hash
+        assert!(!verify_file(&file_path, "0000000000000000000000000000000000000000", 5).unwrap());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

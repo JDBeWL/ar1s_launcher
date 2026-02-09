@@ -2,7 +2,7 @@ use crate::errors::LauncherError;
 use crate::models::DownloadJob;
 use crate::services::config::load_config;
 use crate::utils::file_utils;
-use log::{debug, info};
+use log::{debug, info, warn};
 use reqwest::Client;
 use serde::Serialize;
 use std::fs;
@@ -69,10 +69,10 @@ pub async fn batch_verify_files(
         match task.await {
             Ok(Ok(result)) => results.push(result),
             Ok(Err(e)) => {
-                println!("文件验证失败: {}", e);
+                warn!("文件验证失败: {}", e);
             }
             Err(e) => {
-                println!("任务执行失败: {}", e);
+                warn!("任务执行失败: {}", e);
             }
         }
     }
@@ -121,7 +121,7 @@ pub async fn batch_repair_files(
         match task.await {
             Ok(result) => results.push(result),
             Err(e) => {
-                println!("修复任务失败: {}", e);
+                warn!("修复任务失败: {}", e);
             }
         }
     }
@@ -221,18 +221,14 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
     Ok(missing_files)
 }
 
+use crate::utils::minecraft::{evaluate_rules, get_mc_os_name, maven_name_to_path};
+
 /// 检查单个库文件是否存在
 fn check_library(lib: &serde_json::Value, libraries_base_dir: &PathBuf, missing_files: &mut Vec<String>) {
     let lib_name = lib.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
     
     if let Some(natives) = lib.get("natives") {
-        let current_os = std::env::consts::OS;
-        let os_key = match current_os {
-            "windows" => "windows",
-            "linux" => "linux",
-            "macos" => "osx",
-            _ => "unknown",
-        };
+        let os_key = get_mc_os_name();
 
         if let Some(os_classifier) = natives.get(os_key) {
             if let Some(classifier_str) = os_classifier.as_str() {
@@ -258,23 +254,9 @@ fn check_library(lib: &serde_json::Value, libraries_base_dir: &PathBuf, missing_
             }
         }
     } else {
-        // 检查 rules
-        if let Some(rules) = lib.get("rules").and_then(|r| r.as_array()) {
-            let mut allowed = true;
-            for rule in rules {
-                if let Some(os) = rule.get("os") {
-                    if let Some(name) = os["name"].as_str() {
-                        if name == std::env::consts::OS {
-                            allowed = rule["action"].as_str() == Some("allow");
-                        } else {
-                            allowed = rule["action"].as_str() != Some("allow");
-                        }
-                    }
-                }
-            }
-            if !allowed {
-                return;
-            }
+        // 使用共享的 rules 评估逻辑
+        if !evaluate_rules(lib.get("rules")) {
+            return;
         }
         
         if let Some(path) = lib
@@ -301,27 +283,6 @@ fn check_library(lib: &serde_json::Value, libraries_base_dir: &PathBuf, missing_
             }
         }
     }
-}
-
-/// 将 Maven 坐标转换为文件路径
-fn maven_name_to_path(name: &str) -> Option<String> {
-    let parts: Vec<&str> = name.split(':').collect();
-    if parts.len() < 3 {
-        return None;
-    }
-    
-    let group = parts[0].replace('.', "/");
-    let artifact = parts[1];
-    let version = parts[2];
-    let classifier = if parts.len() > 3 { Some(parts[3]) } else { None };
-    
-    let filename = if let Some(c) = classifier {
-        format!("{}-{}-{}.jar", artifact, version, c)
-    } else {
-        format!("{}-{}.jar", artifact, version)
-    };
-    
-    Some(format!("{}/{}/{}/{}", group, artifact, version, filename))
 }
 
 /// 递归查找最终的 JAR 版本（处理多层继承链）

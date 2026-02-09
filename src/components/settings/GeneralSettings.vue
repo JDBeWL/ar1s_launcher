@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useSettingsStore } from '../../stores/settings';
+import { configApi } from '../../services';
+import pkg from '../../../package.json';
 
 const settingsStore = useSettingsStore();
 const gameDir = ref('');
@@ -13,13 +14,19 @@ const downloadThreads = ref(32);
 const isolateSaves = ref(true);
 const isolateResourcepacks = ref(true);
 const isolateLogs = ref(true);
+const appVersion = pkg.version || '0.0.0';
+const themePalette = ref(localStorage.getItem('themePalette') || 'indigo');
+const themePalettes = [
+  { title: 'MD3 经典紫', value: 'indigo' },
+  { title: 'MD3 清新青', value: 'emerald' },
+  { title: 'MD3 玫瑰', value: 'rose' },
+];
 
 let unlistenGameDirChanged: UnlistenFn | null = null;
 
 async function loadGameDir() {
   try {
-    const dir = await invoke('get_game_dir');
-    gameDir.value = dir as string;
+    gameDir.value = await configApi.getGameDir();
   } catch (err) {
     console.error('Failed to get game directory:', err);
   }
@@ -34,7 +41,7 @@ async function selectGameDir() {
     });
     if (selected) {
       gameDir.value = selected as string;
-      await invoke('set_game_dir', { path: gameDir.value, window: {} });
+      await configApi.setGameDir(gameDir.value);
     }
   } catch (err) {
     console.error('Failed to select directory:', err);
@@ -43,8 +50,7 @@ async function selectGameDir() {
 
 async function loadDownloadThreads() {
   try {
-    const threads = await invoke('get_download_threads');
-    downloadThreads.value = threads as number;
+    downloadThreads.value = await configApi.getDownloadThreads();
   } catch (err) {
     console.error('Failed to get download threads:', err);
   }
@@ -52,7 +58,7 @@ async function loadDownloadThreads() {
 
 async function saveDownloadThreads() {
   try {
-    await invoke('set_download_threads', { threads: downloadThreads.value });
+    await configApi.setDownloadThreads(downloadThreads.value);
   } catch (err) {
     console.error('Failed to set download threads:', err);
   }
@@ -60,16 +66,16 @@ async function saveDownloadThreads() {
 
 async function loadVersionIsolation() {
   try {
-    const isolation = await invoke('load_config_key', { key: 'versionIsolation' });
+    const isolation = await configApi.loadConfigKey('versionIsolation');
     versionIsolation.value = isolation === 'true';
     
-    const saves = await invoke('load_config_key', { key: 'isolateSaves' });
+    const saves = await configApi.loadConfigKey('isolateSaves');
     isolateSaves.value = saves === 'true';
     
-    const resourcepacks = await invoke('load_config_key', { key: 'isolateResourcepacks' });
+    const resourcepacks = await configApi.loadConfigKey('isolateResourcepacks');
     isolateResourcepacks.value = resourcepacks === 'true';
     
-    const logs = await invoke('load_config_key', { key: 'isolateLogs' });
+    const logs = await configApi.loadConfigKey('isolateLogs');
     isolateLogs.value = logs === 'true';
   } catch (err) {
     console.error('Failed to load isolation settings:', err);
@@ -78,7 +84,7 @@ async function loadVersionIsolation() {
 
 async function saveIsolationSetting(key: string, value: boolean) {
   try {
-    await invoke('save_config_key', { key, value: value.toString() });
+    await configApi.saveConfigKey(key, value.toString());
   } catch (err) {
     console.error(`Failed to save ${key}:`, err);
   }
@@ -91,6 +97,11 @@ watch(isolateLogs, (v) => saveIsolationSetting('isolateLogs', v));
 
 watch(() => settingsStore.downloadMirror, async () => {
   await settingsStore.saveDownloadMirror();
+});
+
+watch(themePalette, (value) => {
+  localStorage.setItem('themePalette', value);
+  window.dispatchEvent(new CustomEvent('theme-palette-changed', { detail: value }));
 });
 
 onMounted(async () => {
@@ -212,7 +223,7 @@ onUnmounted(() => {
     </v-card>
 
     <!-- 下载设置 -->
-    <v-card color="surface-container">
+    <v-card color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon class="mr-2" color="on-surface-variant">mdi-download-outline</v-icon>
@@ -262,6 +273,44 @@ onUnmounted(() => {
           <p class="text-caption text-on-surface-variant mt-2 mb-0">
             BMCL 镜像通常在国内访问更快
           </p>
+        </div>
+      </v-card-text>
+    </v-card>
+
+    <!-- 外观 -->
+    <v-card color="surface-container" class="mb-4">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center mb-4">
+          <v-icon class="mr-2" color="on-surface-variant">mdi-palette-outline</v-icon>
+          <span class="text-subtitle-1 font-weight-medium">外观</span>
+        </div>
+        <v-select
+          v-model="themePalette"
+          :items="themePalettes"
+          item-title="title"
+          item-value="value"
+          label="主题色方案（MD3）"
+          hide-details
+        />
+        <div class="text-caption text-on-surface-variant mt-2">
+          主题色方案会在浅色/深色模式之间保持一致的 MD3 色调风格
+        </div>
+      </v-card-text>
+    </v-card>
+
+    <!-- 关于 -->
+    <v-card color="surface-container">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center mb-4">
+          <v-icon class="mr-2" color="on-surface-variant">mdi-information-outline</v-icon>
+          <span class="text-subtitle-1 font-weight-medium">关于</span>
+        </div>
+        <div class="d-flex align-center justify-space-between mb-2">
+          <div class="text-body-2 text-on-surface-variant">应用版本</div>
+          <v-chip size="small" color="primary" variant="tonal">{{ appVersion }}</v-chip>
+        </div>
+        <div class="text-caption text-on-surface-variant">
+          快捷键：Ctrl/⌘ + D 下载，Ctrl/⌘ + N 新建实例，Ctrl/⌘ + I 实例管理，Ctrl/⌘ + , 设置
         </div>
       </v-card-text>
     </v-card>
