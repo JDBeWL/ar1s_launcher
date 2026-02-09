@@ -275,7 +275,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useNotificationStore } from '../stores/notificationStore'
 import { modpackApi, instanceApi } from '../services'
-import type { ModrinthVersion, InstallProgressPayload, InstanceNameValidation } from '../types/events'
+import type { ModrinthVersion, InstallProgressPayload } from '../types/events'
 
 const route = useRoute()
 const router = useRouter()

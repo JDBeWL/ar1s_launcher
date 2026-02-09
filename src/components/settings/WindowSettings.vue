@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import { configApi } from '../../services';
-import type { WindowSettings as WindowSettingsData } from '../../types/events';
 
 const windowWidth = ref<number | null>(null);
 const windowHeight = ref<number | null>(null);
