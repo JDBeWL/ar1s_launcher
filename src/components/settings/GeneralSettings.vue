@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useSettingsStore } from '../../stores/settings';
 import { configApi } from '../../services';
+import { logError } from '../../utils/logger';
 import pkg from '../../../package.json';
 
 const settingsStore = useSettingsStore();
@@ -28,7 +29,7 @@ async function loadGameDir() {
   try {
     gameDir.value = await configApi.getGameDir();
   } catch (err) {
-    console.error('Failed to get game directory:', err);
+    logError('Failed to get game directory', err, 'GeneralSettings')
   }
 }
 
@@ -44,7 +45,7 @@ async function selectGameDir() {
       await configApi.setGameDir(gameDir.value);
     }
   } catch (err) {
-    console.error('Failed to select directory:', err);
+    logError('Failed to select directory', err, 'GeneralSettings')
   }
 }
 
@@ -52,7 +53,7 @@ async function loadDownloadThreads() {
   try {
     downloadThreads.value = await configApi.getDownloadThreads();
   } catch (err) {
-    console.error('Failed to get download threads:', err);
+    logError('Failed to get download threads', err, 'GeneralSettings')
   }
 }
 
@@ -60,7 +61,7 @@ async function saveDownloadThreads() {
   try {
     await configApi.setDownloadThreads(downloadThreads.value);
   } catch (err) {
-    console.error('Failed to set download threads:', err);
+    logError('Failed to set download threads', err, 'GeneralSettings')
   }
 }
 
@@ -86,7 +87,7 @@ async function loadVersionIsolation() {
       isolateLogs.value = logs === 'true';
     }
   } catch (err) {
-    console.error('Failed to load isolation settings:', err);
+    logError('Failed to load isolation settings', err, 'GeneralSettings')
   }
 }
 
@@ -94,7 +95,7 @@ async function saveIsolationSetting(key: string, value: boolean) {
   try {
     await configApi.saveConfigKey(key, value.toString());
   } catch (err) {
-    console.error(`Failed to save ${key}:`, err);
+    logError(`Failed to save ${key}`, err, 'GeneralSettings')
   }
 }
 

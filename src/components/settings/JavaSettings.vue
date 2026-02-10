@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSettingsStore } from '../../stores/settings';
 import { configApi, javaApi } from '../../services';
+import { logError } from '../../utils/logger';
 
 const settingsStore = useSettingsStore();
 const javaPath = ref('');
@@ -26,7 +27,7 @@ async function loadJavaPath() {
       }
     }
   } catch (error) {
-    console.error('Failed to load Java path:', error);
+    logError('Failed to load Java path', error, 'JavaSettings')
   }
 }
 
@@ -47,7 +48,7 @@ async function findJavaInstallations() {
       await selectJavaPath(settingsStore.javaInstallations[0]);
     }
   } catch (err) {
-    console.error('Failed to find Java installations:', err);
+    logError('Failed to find Java installations', err, 'JavaSettings')
   } finally {
     loadingJava.value = false;
   }
@@ -62,7 +63,7 @@ async function selectJavaPath(path: string) {
       await getJavaVersion();
     }
   } catch (err) {
-    console.error('Failed to set Java path:', err);
+    logError('Failed to set Java path', err, 'JavaSettings')
   }
 }
 
@@ -80,7 +81,7 @@ async function browseJavaPath() {
       await selectJavaPath(selected as string);
     }
   } catch (err) {
-    console.error('Failed to browse Java path:', err);
+    logError('Failed to browse Java path', err, 'JavaSettings')
   }
 }
 

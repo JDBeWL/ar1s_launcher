@@ -53,3 +53,9 @@ html.no-transition *::after,
   border-radius: 0;
   margin: 0;
 }
+
+/* 通用页面容器 - 统一最大宽度和居中 */
+.page-container {
+  max-width: 900px;
+  margin: 0 auto;
+}

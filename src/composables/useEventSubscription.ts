@@ -54,7 +54,11 @@ export function useMultiEventSubscription() {
   }
 
   async function subscribeAll() {
-    await Promise.all(subscriptions.map(s => (s as any).subscribe?.()));
+    await Promise.all(
+      subscriptions
+        .filter((s): s is { subscribe: () => Promise<void> } => 'subscribe' in s && typeof (s as { subscribe: unknown }).subscribe === 'function')
+        .map(s => s.subscribe())
+    );
   }
 
   function unsubscribeAll() {

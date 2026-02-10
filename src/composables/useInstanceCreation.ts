@@ -5,6 +5,7 @@ import { api } from '../services';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useDebounceFn } from './useDebounce';
 import { getErrorMessage } from '../utils/format';
+import { logError } from '../utils/logger';
 import type { 
     MinecraftVersion, 
     InstallProgressPayload, 
@@ -100,7 +101,7 @@ export function useInstanceCreation() {
             // 保留原始 releaseTime (ISO 8601) 用于排序，显示时再格式化
             versions.value = manifest.versions;
         } catch (error) {
-            console.error("Failed to fetch versions:", error);
+            logError("Failed to fetch versions", error, 'useInstanceCreation');
         } finally {
             loadingVersions.value = false;
         }
@@ -125,7 +126,7 @@ export function useInstanceCreation() {
                 }
             }
         } catch (error) {
-            console.error("Failed to fetch available loaders:", error);
+            logError("Failed to fetch available loaders", error, 'useInstanceCreation');
             availableLoaders.value = null;
         } finally {
             loadingAvailableLoaders.value = false;
@@ -171,9 +172,10 @@ export function useInstanceCreation() {
                 selectedModLoaderVersion.value = result[0];
             }
         } catch (error) {
-            console.error(
-                `Failed to fetch ${selectedModLoaderType.value} versions:`,
-                error
+            logError(
+                `Failed to fetch ${selectedModLoaderType.value} versions`,
+                error,
+                'useInstanceCreation'
             );
             modLoaderVersions.value = [];
         } finally {
@@ -210,7 +212,7 @@ export function useInstanceCreation() {
             instanceNameError.value = null;
             return true;
         } catch (error) {
-            console.error('Failed to validate instance name:', error);
+            logError('Failed to validate instance name', error, 'useInstanceCreation');
             instanceNameError.value = '验证失败';
             return false;
         }
@@ -288,7 +290,10 @@ export function useInstanceCreation() {
             // 根据加载器类型设置对应的版本
             if (selectedModLoaderVersion.value && selectedModLoaderType.value !== 'None') {
                 const mcVersion = selectedVersion.value.id;
-                const loaderVersion = (selectedModLoaderVersion.value as any).version;
+                // ForgeVersion 和 LoaderVersionInfo 都有 version 字段
+                const loaderVersion = 'version' in selectedModLoaderVersion.value 
+                    ? selectedModLoaderVersion.value.version 
+                    : String(selectedModLoaderVersion.value);
                 
                 switch (selectedModLoaderType.value) {
                     case 'Forge':
@@ -333,7 +338,7 @@ export function useInstanceCreation() {
             showProgress.value = false;
             installing.value = false;
         } catch (error) {
-            console.error("Failed to create instance:", error);
+            logError("Failed to create instance", error, 'useInstanceCreation');
             progressText.value = "安装失败！";
             progressIndeterminate.value = false;
             installing.value = false;

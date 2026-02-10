@@ -1,5 +1,5 @@
 <template>
-  <v-container fluid class="install-modpack-container pa-4">
+  <v-container fluid class="page-container pa-4">
     <v-card color="surface-container">
       <!-- 标题栏 -->
       <v-card-title class="d-flex align-center pa-4">
@@ -275,6 +275,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useNotificationStore } from '../stores/notificationStore'
 import { modpackApi, instanceApi } from '../services'
+import { logError } from '../utils/logger'
 import type { ModrinthVersion, InstallProgressPayload } from '../types/events'
 
 const route = useRoute()
@@ -340,7 +341,7 @@ async function checkInstanceName(name: string) {
     const result = await instanceApi.checkInstanceNameAvailable(name)
     instanceNameError.value = result.is_valid ? null : result.error_message
   } catch (e) {
-    console.error('检查实例名称失败:', e)
+    logError('检查实例名称失败', e, 'InstallModpackView')
   } finally {
     checkingInstanceName.value = false
   }
@@ -376,7 +377,7 @@ async function cancelInstall() {
     await modpackApi.cancelModpackInstall()
     notificationStore.info('正在取消', '安装将在当前步骤完成后取消')
   } catch (e) {
-    console.error('取消安装失败:', e)
+    logError('取消安装失败', e, 'InstallModpackView')
   }
 }
 
@@ -448,7 +449,7 @@ async function loadVersions() {
       onLoaderChange()
     }
   } catch (e) {
-    console.error('加载整合包版本失败:', e)
+    logError('加载整合包版本失败', e, 'InstallModpackView')
     notificationStore.error('加载失败', '无法获取整合包版本信息')
   } finally {
     loadingVersions.value = false
@@ -476,7 +477,7 @@ async function install() {
     notificationStore.success('安装成功', `${effectiveInstanceName.value} 已安装完成`)
     router.push('/instance-manager')
   } catch (e) {
-    console.error('安装整合包失败:', e)
+    logError('安装整合包失败', e, 'InstallModpackView')
     const errorMessage = e instanceof Error ? e.message : String(e)
     notificationStore.error('安装失败', errorMessage, true)
   } finally {
@@ -556,11 +557,6 @@ function compareVersionDesc(a: string, b: string): number {
 </script>
 
 <style scoped>
-.install-modpack-container {
-  max-width: 900px;
-  margin: 0 auto;
-}
-
 .config-section {
   padding: 16px;
   background: rgb(var(--v-theme-surface-container-low));

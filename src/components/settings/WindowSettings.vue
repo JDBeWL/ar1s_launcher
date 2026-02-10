@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import { configApi } from '../../services';
+import { logError } from '../../utils/logger';
 
 const windowWidth = ref<number | null>(null);
 const windowHeight = ref<number | null>(null);
@@ -31,7 +32,7 @@ async function loadSettings() {
     fullscreen.value = settings.fullscreen;
     useCustomSize.value = settings.width !== null && !presets.some(p => p.width === settings.width && p.height === settings.height);
   } catch (err) {
-    console.error('Failed to load window settings:', err);
+    logError('Failed to load window settings', err, 'WindowSettings')
   }
 }
 
@@ -39,7 +40,7 @@ async function saveSettings() {
   try {
     await configApi.setWindowSettings(windowWidth.value, windowHeight.value, fullscreen.value);
   } catch (err) {
-    console.error('Failed to save window settings:', err);
+    logError('Failed to save window settings', err, 'WindowSettings')
   }
 }
 

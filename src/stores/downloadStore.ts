@@ -6,6 +6,7 @@ import type { DownloadProgress, DownloadStatus } from '../types/events'
 import { api } from '../services/api'
 import { useNotificationStore } from './notificationStore'
 import { getErrorMessage } from '../utils/format'
+import { logError } from '../utils/logger'
 
 // Add 'idle' to the possible statuses for the store
 export type StoreDownloadStatus = DownloadStatus | 'idle';
@@ -89,7 +90,7 @@ export const useDownloadStore = defineStore('download', () => {
         source === 'bmcl' ? 'bmcl' : undefined,
       )
     } catch (err) {
-      console.error('Failed to start download invocation:', err)
+      logError('Failed to start download invocation', err, 'DownloadStore')
       downloadProgress.value.status = 'error'
       const errorMessage = getErrorMessage(err);
       downloadError.value = errorMessage;
@@ -102,7 +103,7 @@ export const useDownloadStore = defineStore('download', () => {
     try {
       await api.version.cancelDownload()
     } catch (err) {
-      console.error('Failed to cancel download:', err)
+      logError('Failed to cancel download', err, 'DownloadStore')
       // 回退到 emit 方式
       await emit('cancel-download')
     }

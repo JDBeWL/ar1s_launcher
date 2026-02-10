@@ -3,6 +3,7 @@ import { onScopeDispose } from 'vue'
 import { listen } from '@tauri-apps/api/event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useNotificationStore } from './notificationStore'
+import { logError } from '../utils/logger'
 
 export const useLauncherStore = defineStore('launcher', () => {
   // Listeners
@@ -32,7 +33,7 @@ export const useLauncherStore = defineStore('launcher', () => {
 
     unlistenError = await listen('minecraft-error', (event) => {
       const msg = String(event.payload ?? '未知错误')
-      console.error('Minecraft 运行错误:', msg)
+      logError('Minecraft 运行错误', msg, 'LauncherStore')
       notificationStore.error('Minecraft 运行错误', msg, true)
     })
   }

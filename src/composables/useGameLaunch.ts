@@ -5,6 +5,7 @@ import { versionApi, launcherApi } from '../services';
 import { useSettingsStore } from '../stores/settings';
 import { useNotificationStore } from '../stores/notificationStore';
 import { getErrorMessage } from '../utils/format';
+import { logError } from '../utils/logger';
 import type { DownloadProgress } from '../types/events';
 
 export function useGameLaunch() {
@@ -52,7 +53,7 @@ export function useGameLaunch() {
                 memory: settingsStore.maxMemory,
             });
         } catch (err) {
-            console.error('Failed to launch game:', err);
+            logError('Failed to launch game', err, 'useGameLaunch');
             notificationStore.error('启动失败', getErrorMessage(err), true);
         } finally {
             loading.value = false;
@@ -82,7 +83,7 @@ export function useGameLaunch() {
             await versionApi.downloadVersion(version, mirror);
             notificationStore.success('修复完成', '请重新启动游戏');
         } catch (err) {
-            console.error('Repair failed:', err);
+            logError('Repair failed', err, 'useGameLaunch');
             notificationStore.error('修复失败', getErrorMessage(err), true);
         } finally {
             cleanupRepairListener();

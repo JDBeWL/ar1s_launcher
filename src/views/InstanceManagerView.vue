@@ -6,6 +6,7 @@ import { useNotificationStore } from "../stores/notificationStore";
 import { instanceApi } from "../services";
 import type { GameInstance } from "../types/events";
 import { formatLastPlayed, getLoaderIcon, getErrorMessage } from "../utils/format";
+import { logError } from "../utils/logger";
 
 const router = useRouter();
 const route = useRoute();
@@ -58,7 +59,7 @@ async function loadInstances() {
   try {
     instances.value = await instanceApi.getInstances();
   } catch (error) {
-    console.error("Failed to load instances:", error);
+    logError("Failed to load instances", error, 'InstanceManagerView')
   } finally {
     loading.value = false;
   }
@@ -72,7 +73,7 @@ async function openInstanceFolder(instance: GameInstance) {
   try {
     await instanceApi.openInstanceFolder(instance.name);
   } catch (error) {
-    console.error("Failed to open folder:", error);
+    logError("Failed to open folder", error, 'InstanceManagerView')
   }
 }
 
@@ -91,8 +92,8 @@ async function renameInstance() {
     notificationStore.success('重命名成功');
     await loadInstances();
   } catch (error) {
-    console.error("Failed to rename instance:", error);
-    notificationStore.error('重命名失败', getErrorMessage(error));
+    logError("Failed to rename instance", error, 'InstanceManagerView')
+    notificationStore.error('重命名失败', getErrorMessage(error))
   }
 }
 
@@ -110,8 +111,8 @@ async function deleteInstance() {
     notificationStore.success('删除成功');
     await loadInstances();
   } catch (error) {
-    console.error("Failed to delete instance:", error);
-    notificationStore.error('删除失败', getErrorMessage(error));
+    logError("Failed to delete instance", error, 'InstanceManagerView')
+    notificationStore.error('删除失败', getErrorMessage(error))
   }
 }
 
@@ -130,7 +131,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <v-container fluid class="instance-container pa-4">
+  <v-container fluid class="page-container pa-4">
     <!-- 页面标题 -->
     <div class="d-flex align-center justify-space-between mb-5">
       <div class="d-flex align-center">
@@ -379,11 +380,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.instance-container {
-  max-width: 900px;
-  margin: 0 auto;
-}
-
 .search-field :deep(.v-field) {
   border-radius: 8px;
 }

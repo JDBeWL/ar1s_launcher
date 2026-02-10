@@ -1,6 +1,7 @@
 /**
  * 简单的内存缓存，用于缓存 API 响应
  */
+import { logDebug } from '../utils/logger';
 
 interface CacheEntry<T> {
   data: T;
@@ -9,7 +10,7 @@ interface CacheEntry<T> {
 }
 
 class MemoryCache {
-  private cache = new Map<string, CacheEntry<any>>();
+  private cache = new Map<string, CacheEntry<unknown>>();
   private defaultTTL = 5 * 60 * 1000; // 默认 5 分钟
 
   /**
@@ -139,8 +140,8 @@ export async function withCache<T>(
  * 用于写操作后清除相关缓存
  */
 export function invalidateCache(...prefixes: string[]) {
-  return function <T extends (...args: any[]) => Promise<any>>(fn: T): T {
-    return (async (...args: any[]) => {
+  return function <T extends (...args: unknown[]) => Promise<unknown>>(fn: T): T {
+    return (async (...args: Parameters<T>) => {
       const result = await fn(...args);
       
       // 清除相关缓存
@@ -156,9 +157,9 @@ export function invalidateCache(...prefixes: string[]) {
 // 定期清理过期缓存（每 5 分钟）
 if (typeof window !== 'undefined') {
   setInterval(() => {
-    const cleaned = cache.cleanup();
-    if (cleaned > 0) {
-      console.debug(`[Cache] Cleaned ${cleaned} expired entries`);
-    }
+      const cleaned = cache.cleanup();
+      if (cleaned > 0) {
+        logDebug(`Cleaned ${cleaned} expired entries`, 'Cache');
+      }
   }, 5 * 60 * 1000);
 }

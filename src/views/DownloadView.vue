@@ -6,6 +6,7 @@ import { useNotificationStore } from '@/stores/notificationStore';
 import { versionApi } from '@/services';
 import type { MinecraftVersion } from '@/types/events';
 import { useVersionManager } from '@/composables/useVersionManager';
+import { logError } from '@/utils/logger';
 
 const downloadStore = useDownloadStore();
 const settingsStore = useSettingsStore();
@@ -83,8 +84,8 @@ async function fetchVersions() {
       allVersions.value = [];
     }
   } catch (err) {
-    console.error('获取版本列表失败:', err);
-    notificationStore.error('获取版本列表失败', '请检查网络连接或稍后再试');
+    logError('获取版本列表失败', err, 'DownloadView')
+    notificationStore.error('获取版本列表失败', '请检查网络连接或稍后再试')
   } finally {
     loading.value = false;
   }
@@ -128,7 +129,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <v-container fluid class="download-container pa-4">
+  <v-container fluid class="page-container pa-4">
     <!-- 页面标题 -->
     <div class="d-flex align-center justify-space-between mb-5">
       <div class="d-flex align-center">
@@ -329,11 +330,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.download-container {
-  max-width: 900px;
-  margin: 0 auto;
-}
-
 .version-icon-avatar {
   background: transparent;
 }

@@ -2,6 +2,7 @@
 import { ref, onMounted, computed, watch } from "vue";
 import { useSettingsStore } from '../../stores/settings';
 import { configApi } from '../../services';
+import { logError } from '../../utils/logger';
 
 const settingsStore = useSettingsStore();
 const memoryWarning = ref('');
@@ -20,7 +21,7 @@ async function checkMemoryWarning() {
     const warning = await configApi.checkMemoryWarning(settingsStore.maxMemory);
     memoryWarning.value = warning || '';
   } catch (err) {
-    console.error('Failed to check memory warning:', err);
+    logError('Failed to check memory warning', err, 'MemorySettings')
     memoryWarning.value = '';
   }
 }
@@ -30,7 +31,7 @@ async function loadAutoMemoryConfig() {
     const config = await configApi.getAutoMemoryConfig();
     autoMemoryEnabled.value = config.enabled;
   } catch (err) {
-    console.error('Failed to load auto memory config:', err);
+    logError('Failed to load auto memory config', err, 'MemorySettings')
   }
 }
 
@@ -41,7 +42,7 @@ async function toggleAutoMemory() {
       await applyAutoMemory();
     }
   } catch (err) {
-    console.error('Failed to toggle auto memory:', err);
+    logError('Failed to toggle auto memory', err, 'MemorySettings')
   }
 }
 
@@ -54,7 +55,7 @@ async function applyAutoMemory() {
       await analyzeMemoryEfficiency();
     }
   } catch (err) {
-    console.error('Failed to apply auto memory:', err);
+    logError('Failed to apply auto memory', err, 'MemorySettings')
   }
 }
 
@@ -62,7 +63,7 @@ async function analyzeMemoryEfficiency() {
   try {
     memoryEfficiency.value = await configApi.analyzeMemoryEfficiency(settingsStore.maxMemory);
   } catch (err) {
-    console.error('Failed to analyze memory efficiency:', err);
+    logError('Failed to analyze memory efficiency', err, 'MemorySettings')
     memoryEfficiency.value = '';
   }
 }

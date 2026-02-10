@@ -1,6 +1,7 @@
 import { ref, computed, watch } from 'vue';
 import { api } from '../services';
 import { useDebounceFn } from './useDebounce';
+import { logError } from '../utils/logger';
 
 export interface ModrinthModpack {
     slug: string;
@@ -69,7 +70,7 @@ export function useModrinth() {
                     return 0;
                 });
         } catch (error) {
-            console.error("Failed to fetch game versions for filter:", error);
+            logError("Failed to fetch game versions for filter", error, 'useModrinth');
         }
     }
 
@@ -92,7 +93,7 @@ export function useModrinth() {
             modpackTotalHits.value = result.total_hits || 0;
             modpackInitialLoad.value = false;
         } catch (error) {
-            console.error("搜索整合包失败:", error);
+            logError("搜索整合包失败", error, 'useModrinth');
             modpacks.value = [];
             modpackTotalHits.value = 0;
             modpackInitialLoad.value = false;

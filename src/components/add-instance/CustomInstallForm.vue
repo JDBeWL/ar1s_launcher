@@ -51,13 +51,19 @@ const canCreate = computed(() => {
 });
 
 // 获取加载器版本显示文本
-function getLoaderVersionText(item: any): string {
+function getLoaderVersionText(item: ForgeVersion | LoaderVersionInfo | null | undefined): string {
   if (!item) return '';
-  if (item.version) {
-    if (item.mcversion) {
+  if ('version' in item) {
+    // ForgeVersion 有 mcversion 字段
+    if ('mcversion' in item) {
       return item.version;
     }
-    const stableText = item.stable === true ? ' (稳定)' : item.stable === false ? ' (测试)' : '';
+    // LoaderVersionInfo 有 stable 字段
+    const stableText = 'stable' in item && item.stable === true 
+      ? ' (稳定)' 
+      : 'stable' in item && item.stable === false 
+        ? ' (测试)' 
+        : '';
     return item.version + stableText;
   }
   return String(item);
@@ -348,12 +354,12 @@ onMounted(() => {
                 {{ selectedVersion.id }}
               </v-chip>
               <v-chip 
-                v-if="selectedModLoaderType !== 'None' && selectedModLoaderVersion" 
+                v-if="selectedModLoaderType !== 'None' && selectedModLoaderVersion && 'version' in selectedModLoaderVersion" 
                 size="x-small" 
                 color="on-primary-container" 
                 variant="outlined"
               >
-                {{ selectedModLoaderType }} {{ (selectedModLoaderVersion as any).version }}
+                {{ selectedModLoaderType }} {{ selectedModLoaderVersion.version }}
               </v-chip>
             </div>
           </div>

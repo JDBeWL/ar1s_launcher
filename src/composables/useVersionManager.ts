@@ -2,6 +2,7 @@ import { ref, onScopeDispose } from 'vue';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { configApi } from '../services';
+import { logError } from '../utils/logger';
 
 export function useVersionManager() {
     const installedVersions = ref<string[]>([]);
@@ -16,7 +17,7 @@ export function useVersionManager() {
             gameDir.value = await configApi.getGameDir();
             await loadInstalledVersions();
         } catch (err) {
-            console.error('Failed to get game directory:', err);
+            logError('Failed to get game directory', err, 'useVersionManager');
         }
     }
 
@@ -38,7 +39,7 @@ export function useVersionManager() {
                 }
             }
         } catch (err) {
-            console.error('Failed to get installed versions:', err);
+            logError('Failed to get installed versions', err, 'useVersionManager');
         } finally {
             loading.value = false;
         }

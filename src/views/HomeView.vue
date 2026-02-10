@@ -5,6 +5,7 @@ import { useGameLaunch } from "../composables/useGameLaunch";
 import { instanceApi, userApi } from "../services";
 import { formatTimeAgo, formatLastPlayed } from "../utils/format";
 import { useDebounceFn } from "../composables/useDebounce";
+import { logError } from "../utils/logger";
 import type { GameInstance } from "../types/events";
 
 const {
@@ -54,7 +55,7 @@ function loadRecentPlays() {
       recentPlays.value = JSON.parse(saved)
     }
   } catch (e) {
-    console.error('Failed to load recent plays:', e)
+    logError('Failed to load recent plays', e, 'HomeView')
   }
 }
 
@@ -82,7 +83,7 @@ async function loadInstanceCount() {
     instances.value = list || []
     instanceCount.value = instances.value.length
   } catch (e) {
-    console.error('Failed to load instances:', e)
+    logError('Failed to load instances', e, 'HomeView')
   }
 }
 
@@ -93,7 +94,7 @@ async function loadUsername() {
       username.value = savedUsername;
     }
   } catch (err) {
-    console.error("Failed to load username:", err);
+    logError("Failed to load username", err, 'HomeView')
   }
 }
 
@@ -101,7 +102,7 @@ async function saveUsername(newName: string) {
   try {
     await userApi.setSavedUsername(newName);
   } catch (err) {
-    console.error("Failed to save username:", err);
+    logError("Failed to save username", err, 'HomeView')
   }
 }
 
@@ -138,7 +139,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <v-container fluid class="home-container pa-4">
+  <v-container fluid class="page-container pa-4">
     <v-row>
       <!-- 左侧：启动区域 -->
       <v-col cols="12" md="7">
@@ -427,11 +428,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.home-container {
-  max-width: 900px;
-  margin: 0 auto;
-}
-
 .launch-btn {
   font-weight: 600;
   font-size: 1rem;

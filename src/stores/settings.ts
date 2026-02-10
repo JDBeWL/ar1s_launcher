@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { configApi, javaApi } from '../services'
+import { logError } from '../utils/logger'
 
 export const useSettingsStore = defineStore('settings', () => {
   const maxMemory = ref(4096)
@@ -13,7 +14,7 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       totalMemoryMB.value = await configApi.getTotalMemory()
     } catch (err) {
-      console.error('Failed to get total memory:', err)
+      logError('Failed to get total memory', err, 'SettingsStore')
     }
   }
 
@@ -24,7 +25,7 @@ export const useSettingsStore = defineStore('settings', () => {
         maxMemory.value = parseInt(memory, 10)
       }
     } catch (err) {
-      console.error('Failed to get max memory:', err)
+      logError('Failed to get max memory', err, 'SettingsStore')
     }
   }
 
@@ -32,7 +33,7 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       await configApi.saveConfigKey('maxMemory', maxMemory.value.toString())
     } catch (err) {
-      console.error('Failed to set max memory:', err)
+      logError('Failed to set max memory', err, 'SettingsStore')
     }
   }
 
@@ -43,7 +44,7 @@ export const useSettingsStore = defineStore('settings', () => {
         downloadMirror.value = mirror
       }
     } catch (err) {
-      console.error('Failed to get download mirror:', err)
+      logError('Failed to get download mirror', err, 'SettingsStore')
     }
   }
 
@@ -51,7 +52,7 @@ export const useSettingsStore = defineStore('settings', () => {
     try {
       await configApi.saveConfigKey('downloadMirror', downloadMirror.value)
     } catch (err) {
-      console.error('Failed to set download mirror:', err)
+      logError('Failed to set download mirror', err, 'SettingsStore')
     }
   }
 
@@ -62,7 +63,7 @@ export const useSettingsStore = defineStore('settings', () => {
       hasFoundJavaInstallations.value = true
       return javaInstallations.value
     } catch (err) {
-      console.error('Failed to find Java installations:', err)
+      logError('Failed to find Java installations', err, 'SettingsStore')
       return []
     }
   }

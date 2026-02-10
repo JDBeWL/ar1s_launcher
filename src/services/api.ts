@@ -19,7 +19,7 @@ import type {
 // ============ 请求去重机制 ============
 
 /** 进行中的请求缓存 */
-const pendingRequests = new Map<string, Promise<any>>();
+const pendingRequests = new Map<string, Promise<unknown>>();
 
 /**
  * 去重的 invoke 调用

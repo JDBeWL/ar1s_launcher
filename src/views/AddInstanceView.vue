@@ -1,5 +1,5 @@
 <template>
-  <v-container fluid class="add-instance-container pa-4">
+  <v-container fluid class="page-container pa-4">
     <!-- 页面标题 -->
     <div class="d-flex align-center mb-5">
       <v-avatar size="48" color="primary-container" class="mr-3">
@@ -90,10 +90,3 @@ const ModrinthBrowser = defineAsyncComponent(() => import('../components/add-ins
 const installType = ref("custom");
 const selectedPlatform = ref("modrinth");
 </script>
-
-<style scoped>
-.add-instance-container {
-  max-width: 900px;
-  margin: 0 auto;
-}
-</style>
