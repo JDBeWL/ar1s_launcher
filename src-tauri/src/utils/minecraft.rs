@@ -73,7 +73,7 @@ pub fn evaluate_rules(rules: Option<&serde_json::Value>) -> bool {
 /// 修改 options.txt 设置游戏语言
 pub fn set_game_language(instance_dir: &std::path::Path, lang: &str) -> std::io::Result<()> {
     let options_path = instance_dir.join("options.txt");
-    let mut content = if options_path.exists() {
+    let content = if options_path.exists() {
         std::fs::read_to_string(&options_path)?
     } else {
         String::new()

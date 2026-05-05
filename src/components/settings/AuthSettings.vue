@@ -9,7 +9,7 @@ const authStore = useAuthStore()
 const loginLoading = ref(false)
 const refreshLoading = ref(false)
 const loginDialog = ref(false)
-const deviceCode = ref('')
+const userCode = ref('')
 const verificationUri = ref('')
 const loginError = ref('')
 
@@ -31,19 +31,19 @@ async function startMicrosoftLogin() {
   loginLoading.value = true
   loginError.value = ''
   try {
-    const deviceCodeInfo = await authStore.requestDeviceCode()
-    deviceCode.value = deviceCodeInfo.userCode
-    verificationUri.value = deviceCodeInfo.verificationUri
+    const display = await authStore.requestDeviceCode()
+    userCode.value = display.userCode
+    verificationUri.value = display.verificationUri
     loginDialog.value = true
 
     try {
-      await openUrl(deviceCodeInfo.verificationUri)
+      await openUrl(display.verificationUri)
     } catch {
       logError('Failed to auto-open browser', undefined, 'AuthSettings')
     }
 
     try {
-      await authStore.completeMicrosoftLogin(deviceCodeInfo.deviceCode)
+      await authStore.completeMicrosoftLogin()
       loginDialog.value = false
     } catch (err) {
       loginDialog.value = false
@@ -75,9 +75,9 @@ async function refreshMicrosoftAuth() {
   }
 }
 
-function copyDeviceCode() {
-  if (deviceCode.value) {
-    window.navigator.clipboard.writeText(deviceCode.value)
+function copyUserCode() {
+  if (userCode.value) {
+    window.navigator.clipboard.writeText(userCode.value)
   }
 }
 
@@ -271,15 +271,15 @@ onMounted(async () => {
             <div class="text-caption text-on-surface-variant mb-1">验证码</div>
             <div class="d-flex align-center">
               <v-chip
-                :text="deviceCode"
+                :text="userCode"
                 variant="tonal"
                 color="primary"
                 size="large"
                 class="device-code-chip flex-grow-1"
-                @click="copyDeviceCode"
+                @click="copyUserCode"
               >
                 <v-icon start size="16">mdi-content-copy</v-icon>
-                {{ deviceCode }}
+                {{ userCode }}
               </v-chip>
             </div>
           </div>

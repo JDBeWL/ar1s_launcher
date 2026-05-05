@@ -54,9 +54,8 @@
 .v-navigation-drawer,
 .v-main,
 .v-application {
-  transition-property: width, transform, visibility, left, right, padding, margin !important;
-  transition-duration: 0.2s !important;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1) !important;
+  transition: none !important;
+  transition-duration: 0s !important;
 }
 
 /* 侧边栏内容不应该有延迟 */

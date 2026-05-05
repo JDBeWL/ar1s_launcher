@@ -1,10 +1,11 @@
 use crate::errors::LauncherError;
 use crate::models::AuthType;
 use crate::services::config::{load_config, save_config};
-use crate::services::microsoft_auth::{
-    self, DeviceCodeInfo, MicrosoftAuthResult,
-};
+use crate::services::microsoft_auth;
+use std::sync::Mutex;
 use tauri::Emitter;
+
+static PENDING_DEVICE_CODE: Mutex<Option<String>> = Mutex::new(None);
 
 #[tauri::command]
 pub fn get_saved_username() -> Result<Option<String>, LauncherError> {
@@ -33,8 +34,23 @@ pub struct AuthStatus {
     pub logged_in: bool,
     pub username: Option<String>,
     pub uuid: Option<String>,
-    pub access_token: Option<String>,
     pub expires_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceCodeDisplay {
+    pub user_code: String,
+    pub verification_uri: String,
+    pub expires_in: u64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MicrosoftLoginResult {
+    pub username: String,
+    pub uuid: String,
+    pub expires_at: i64,
 }
 
 #[tauri::command]
@@ -45,7 +61,7 @@ pub fn get_auth_status() -> Result<AuthStatus, LauncherError> {
         AuthType::Offline => "offline",
     };
     let logged_in = if matches!(config.auth_type, AuthType::Microsoft) {
-        config.ms_access_token.is_some() && config.ms_refresh_token.is_some()
+        config.ms_refresh_token.is_some()
     } else {
         config.username.is_some()
     };
@@ -54,7 +70,6 @@ pub fn get_auth_status() -> Result<AuthStatus, LauncherError> {
         logged_in,
         username: config.username,
         uuid: config.uuid,
-        access_token: config.ms_access_token,
         expires_at: config.ms_expires_at,
     })
 }
@@ -62,24 +77,44 @@ pub fn get_auth_status() -> Result<AuthStatus, LauncherError> {
 #[tauri::command]
 pub async fn start_microsoft_login(
     window: tauri::Window,
-) -> Result<DeviceCodeInfo, LauncherError> {
+) -> Result<DeviceCodeDisplay, LauncherError> {
     let device_code_info = microsoft_auth::start_device_code_flow().await?;
+
+    {
+        let mut pending = PENDING_DEVICE_CODE
+            .lock()
+            .map_err(|e| LauncherError::Custom(format!("内部锁错误: {}", e)))?;
+        *pending = Some(device_code_info.device_code.clone());
+    }
+
+    let display = DeviceCodeDisplay {
+        user_code: device_code_info.user_code,
+        verification_uri: device_code_info.verification_uri,
+        expires_in: device_code_info.expires_in,
+    };
 
     let _ = window.emit(
         "microsoft-login-device-code",
         serde_json::json!({
-            "userCode": device_code_info.user_code,
-            "verificationUri": device_code_info.verification_uri,
+            "userCode": display.user_code,
+            "verificationUri": display.verification_uri,
         }),
     );
 
-    Ok(device_code_info)
+    Ok(display)
 }
 
 #[tauri::command]
-pub async fn complete_microsoft_login(
-    device_code: String,
-) -> Result<MicrosoftAuthResult, LauncherError> {
+pub async fn complete_microsoft_login() -> Result<MicrosoftLoginResult, LauncherError> {
+    let device_code = {
+        let mut pending = PENDING_DEVICE_CODE
+            .lock()
+            .map_err(|e| LauncherError::Custom(format!("内部锁错误: {}", e)))?;
+        pending
+            .take()
+            .ok_or_else(|| LauncherError::Custom("没有进行中的登录流程，请重新开始".to_string()))?
+    };
+
     let mut interval = 5u64;
     let max_attempts = 180 / interval as u32;
 
@@ -105,12 +140,16 @@ pub async fn complete_microsoft_login(
                 config.auth_type = AuthType::Microsoft;
                 config.username = Some(auth_result.username.clone());
                 config.uuid = Some(auth_result.uuid.clone());
-                config.ms_access_token = Some(auth_result.access_token.clone());
-                config.ms_refresh_token = Some(auth_result.refresh_token.clone());
+                config.ms_access_token = Some(auth_result.access_token);
+                config.ms_refresh_token = Some(auth_result.refresh_token);
                 config.ms_expires_at = Some(auth_result.expires_at);
                 save_config(&config)?;
 
-                return Ok(auth_result);
+                return Ok(MicrosoftLoginResult {
+                    username: auth_result.username,
+                    uuid: auth_result.uuid,
+                    expires_at: auth_result.expires_at,
+                });
             }
             Err(LauncherError::Custom(msg))
                 if msg == "authorization_pending" || msg == "slow_down" =>
@@ -131,11 +170,12 @@ pub async fn complete_microsoft_login(
 }
 
 #[tauri::command]
-pub async fn refresh_microsoft_auth() -> Result<MicrosoftAuthResult, LauncherError> {
-    let config = load_config()?;
-    let refresh_token = config
-        .ms_refresh_token
-        .ok_or_else(|| LauncherError::Custom("未找到 refresh_token，请重新登录".to_string()))?;
+pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherError> {
+    let refresh_token = {
+        let config = load_config()?;
+        config.ms_refresh_token
+            .ok_or_else(|| LauncherError::Custom("未找到 refresh_token，请重新登录".to_string()))?
+    };
 
     let auth_result = microsoft_auth::refresh_and_authenticate(&refresh_token).await?;
 
@@ -143,16 +183,22 @@ pub async fn refresh_microsoft_auth() -> Result<MicrosoftAuthResult, LauncherErr
     config.auth_type = AuthType::Microsoft;
     config.username = Some(auth_result.username.clone());
     config.uuid = Some(auth_result.uuid.clone());
-    config.ms_access_token = Some(auth_result.access_token.clone());
-    config.ms_refresh_token = Some(auth_result.refresh_token.clone());
+    config.ms_access_token = Some(auth_result.access_token);
+    config.ms_refresh_token = Some(auth_result.refresh_token);
     config.ms_expires_at = Some(auth_result.expires_at);
     save_config(&config)?;
 
-    Ok(auth_result)
+    Ok(MicrosoftLoginResult {
+        username: auth_result.username,
+        uuid: auth_result.uuid,
+        expires_at: auth_result.expires_at,
+    })
 }
 
 #[tauri::command]
-pub fn logout_microsoft() -> Result<(), LauncherError> {
+pub async fn logout_microsoft() -> Result<(), LauncherError> {
+    let _ = microsoft_auth::revoke_microsoft_token().await;
+
     let mut config = load_config()?;
     config.auth_type = AuthType::Offline;
     config.ms_access_token = None;

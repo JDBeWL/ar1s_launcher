@@ -4,7 +4,7 @@ import { useDownloadStore } from '@/stores/downloadStore';
 import { useSettingsStore } from '@/stores/settings';
 import { useNotificationStore } from '@/stores/notificationStore';
 import { versionApi } from '@/services';
-import type { MinecraftVersion, VersionSizeInfo } from '@/types/events';
+import type { MinecraftVersion } from '@/types/events';
 import { useVersionManager } from '@/composables/useVersionManager';
 import { logError } from '@/utils/logger';
 

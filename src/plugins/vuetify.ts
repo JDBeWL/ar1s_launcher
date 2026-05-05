@@ -276,16 +276,14 @@ const vuetify = createVuetify({
     VMenu: {
       rounded: 'lg',
       offset: 0,
+      transition: false,
     },
-
     VAlert: {
       rounded: 'xl',
     },
     VDialog: {
       rounded: 'xl',
-    },
-    VMenu: {
-      rounded: 'lg',
+      transition: false,
     },
     VList: {
       rounded: 'lg',

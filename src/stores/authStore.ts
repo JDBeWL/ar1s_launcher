@@ -10,7 +10,6 @@ export const useAuthStore = defineStore('auth', () => {
   const msLoggedIn = ref(false)
   const msUsername = ref('')
   const msUuid = ref('')
-  const msAccessToken = ref('')
   const msExpiresAt = ref<number | null>(null)
 
   const isLoggedIn = computed(() => {
@@ -24,10 +23,8 @@ export const useAuthStore = defineStore('auth', () => {
     return ''
   })
 
-  /** 检查 Microsoft token 是否已过期 */
   const isTokenExpired = computed(() => {
     if (!msExpiresAt.value) return true
-    // 提前 60 秒视为过期，避免边界情况
     return Date.now() / 1000 > msExpiresAt.value - 60
   })
 
@@ -39,10 +36,7 @@ export const useAuthStore = defineStore('auth', () => {
         msLoggedIn.value = true
         msUsername.value = status.username || ''
         msUuid.value = status.uuid || ''
-        msAccessToken.value = status.accessToken || ''
         msExpiresAt.value = status.expiresAt || null
-        // 不再启动时自动刷新 token，避免网络不好时导致掉线
-        // 用户可通过手动刷新按钮来更新认证信息
       }
     } catch (err) {
       logError('Failed to load auth status', err, 'AuthStore')
@@ -52,15 +46,12 @@ export const useAuthStore = defineStore('auth', () => {
   async function tryRefreshMicrosoftToken() {
     try {
       const result = await userApi.refreshMicrosoftAuth()
-      msAccessToken.value = result.accessToken
       msUsername.value = result.username
       msUuid.value = result.uuid
       msExpiresAt.value = result.expiresAt
       msLoggedIn.value = true
     } catch {
-      // 刷新失败时不清除已有的登录状态，继续使用缓存的认证信息
-      // 只有在从未登录过的情况下才标记为未登录
-      if (!msAccessToken.value) {
+      if (!msLoggedIn.value) {
         msLoggedIn.value = false
       }
     }
@@ -95,16 +86,16 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function requestDeviceCode() {
-    const deviceCodeInfo = await userApi.startMicrosoftLogin()
-    return deviceCodeInfo
+    const display = await userApi.startMicrosoftLogin()
+    return display
   }
 
-  async function completeMicrosoftLogin(deviceCode: string) {
-    const result = await userApi.completeMicrosoftLogin(deviceCode)
+  async function completeMicrosoftLogin() {
+    const result = await userApi.completeMicrosoftLogin()
     msLoggedIn.value = true
     msUsername.value = result.username
     msUuid.value = result.uuid
-    msAccessToken.value = result.accessToken
+    msExpiresAt.value = result.expiresAt
     return result
   }
 
@@ -114,7 +105,6 @@ export const useAuthStore = defineStore('auth', () => {
       msLoggedIn.value = false
       msUsername.value = ''
       msUuid.value = ''
-      msAccessToken.value = ''
       msExpiresAt.value = null
     } catch (err) {
       logError('Microsoft logout failed', err, 'AuthStore')
@@ -131,7 +121,6 @@ export const useAuthStore = defineStore('auth', () => {
     msLoggedIn,
     msUsername,
     msUuid,
-    msAccessToken,
     msExpiresAt,
     isLoggedIn,
     isTokenExpired,

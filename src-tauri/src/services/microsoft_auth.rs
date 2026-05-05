@@ -366,6 +366,15 @@ pub async fn complete_microsoft_auth(
     })
 }
 
+pub async fn revoke_microsoft_token() -> Result<(), LauncherError> {
+    let client = get_auth_client()?;
+    let _ = client
+        .get("https://login.microsoftonline.com/consumers/oauth2/v2.0/logout")
+        .send()
+        .await;
+    Ok(())
+}
+
 pub async fn refresh_and_authenticate(
     refresh_token: &str,
 ) -> Result<MicrosoftAuthResult, LauncherError> {

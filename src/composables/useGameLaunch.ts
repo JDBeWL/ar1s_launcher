@@ -9,7 +9,6 @@ import type { DownloadProgress } from '../types/events';
 
 interface AuthInfo {
     authType: string;
-    accessToken: string;
     uuid: string;
 }
 
@@ -61,7 +60,6 @@ export function useGameLaunch() {
                 username,
                 memory: settingsStore.maxMemory,
                 auth_type: auth?.authType,
-                access_token: auth?.accessToken,
                 uuid: auth?.uuid,
             });
         } catch (err) {

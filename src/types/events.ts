@@ -183,24 +183,19 @@ export interface AuthStatus {
   loggedIn: boolean;
   username: string | null;
   uuid: string | null;
-  accessToken: string | null;
   expiresAt: number | null;
 }
 
-// Microsoft 登录设备代码信息
-export interface DeviceCodeInfo {
+// Microsoft 登录设备代码展示信息（不含敏感的 device_code）
+export interface DeviceCodeDisplay {
   userCode: string;
-  deviceCode: string;
   verificationUri: string;
-  interval: number;
   expiresIn: number;
 }
 
-// Microsoft 认证结果
-export interface MicrosoftAuthResult {
+// Microsoft 登录结果（不含 access_token 和 refresh_token）
+export interface MicrosoftLoginResult {
   username: string;
   uuid: string;
-  accessToken: string;
-  refreshToken: string;
   expiresAt: number;
 }

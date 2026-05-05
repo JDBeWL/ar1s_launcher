@@ -74,10 +74,10 @@ pub struct GameConfig {
     /// 认证类型 (offline / microsoft)
     #[serde(default)]
     pub auth_type: AuthType,
-    /// Microsoft 正版 access_token
+    /// Microsoft access_token (仅后端使用)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ms_access_token: Option<String>,
-    /// Microsoft refresh_token
+    /// Microsoft refresh_token (仅后端使用)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ms_refresh_token: Option<String>,
     /// 正版 token 过期时间 (Unix 时间戳秒)

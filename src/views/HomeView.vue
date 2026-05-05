@@ -105,13 +105,11 @@ async function handleLaunch() {
   }
 
   if (authStore.authType === 'microsoft' && authStore.msLoggedIn) {
-    // Token 过期时尝试刷新，失败仍使用旧 token
     if (authStore.isTokenExpired) {
       await authStore.tryRefreshMicrosoftToken()
     }
     await launchGame(selectedVersion.value, authStore.msUsername, {
       authType: 'microsoft',
-      accessToken: authStore.msAccessToken,
       uuid: authStore.msUuid,
     })
   } else {

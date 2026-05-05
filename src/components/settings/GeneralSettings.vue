@@ -22,6 +22,22 @@ const themePalettes = [
   { title: 'MD3 玫瑰', value: 'rose' },
 ];
 
+const gameLanguage = ref('zh_cn');
+const gameLanguages = [
+  { title: '简体中文', value: 'zh_cn' },
+  { title: '繁體中文', value: 'zh_tw' },
+  { title: 'English (US)', value: 'en_us' },
+  { title: 'English (UK)', value: 'en_gb' },
+  { title: '日本語', value: 'ja_jp' },
+  { title: '한국어', value: 'ko_kr' },
+  { title: 'Français', value: 'fr_fr' },
+  { title: 'Deutsch', value: 'de_de' },
+  { title: 'Español', value: 'es_es' },
+  { title: 'Italiano', value: 'it_it' },
+  { title: 'Português (BR)', value: 'pt_br' },
+  { title: 'Русский', value: 'ru_ru' },
+];
+
 let unlistenGameDirChanged: UnlistenFn | null = null;
 
 async function loadGameDir() {
@@ -102,6 +118,13 @@ watch(versionIsolation, (v) => saveIsolationSetting('versionIsolation', v));
 watch(isolateSaves, (v) => saveIsolationSetting('isolateSaves', v));
 watch(isolateResourcepacks, (v) => saveIsolationSetting('isolateResourcepacks', v));
 watch(isolateLogs, (v) => saveIsolationSetting('isolateLogs', v));
+watch(gameLanguage, async (v) => {
+  try {
+    await configApi.saveConfigKey('language', v);
+  } catch (err) {
+    logError('Failed to save language', err, 'GeneralSettings')
+  }
+});
 
 watch(() => settingsStore.downloadMirror, async () => {
   await settingsStore.saveDownloadMirror();
@@ -117,6 +140,13 @@ onMounted(async () => {
   await loadDownloadThreads();
   await loadVersionIsolation();
   await settingsStore.loadDownloadMirror();
+
+  try {
+    const lang = await configApi.loadConfigKey('language');
+    if (lang) gameLanguage.value = lang;
+  } catch (err) {
+    logError('Failed to load language', err, 'GeneralSettings')
+  }
   
   unlistenGameDirChanged = await listen('game-dir-changed', (event) => {
     gameDir.value = event.payload as string;
@@ -281,6 +311,27 @@ onUnmounted(() => {
           <p class="text-caption text-on-surface-variant mt-2 mb-0">
             BMCL 镜像通常在国内访问更快
           </p>
+        </div>
+      </v-card-text>
+    </v-card>
+
+    <!-- 游戏语言 -->
+    <v-card color="surface-container" class="mb-4">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center mb-4">
+          <v-icon class="mr-2" color="on-surface-variant">mdi-translate</v-icon>
+          <span class="text-subtitle-1 font-weight-medium">游戏语言</span>
+        </div>
+        <v-select
+          v-model="gameLanguage"
+          :items="gameLanguages"
+          item-title="title"
+          item-value="value"
+          label="选择游戏内显示语言"
+          hide-details
+        />
+        <div class="text-caption text-on-surface-variant mt-2">
+          启动游戏时将自动设置 options.txt 中的语言选项
         </div>
       </v-card-text>
     </v-card>

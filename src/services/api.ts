@@ -17,8 +17,8 @@ import type {
   WindowSettings,
   AutoMemoryConfig,
   AuthStatus,
-  DeviceCodeInfo,
-  MicrosoftAuthResult,
+  DeviceCodeDisplay,
+  MicrosoftLoginResult,
   VersionSizeInfo,
 } from '../types/events';
 
@@ -354,18 +354,18 @@ export const userApi = {
   },
 
   /** 开始 Microsoft 设备代码登录流程 */
-  async startMicrosoftLogin(): Promise<DeviceCodeInfo> {
-    return invoke<DeviceCodeInfo>('start_microsoft_login');
+  async startMicrosoftLogin(): Promise<DeviceCodeDisplay> {
+    return invoke<DeviceCodeDisplay>('start_microsoft_login');
   },
 
   /** 完成 Microsoft 登录（轮询等待用户授权） */
-  async completeMicrosoftLogin(deviceCode: string): Promise<MicrosoftAuthResult> {
-    return invoke<MicrosoftAuthResult>('complete_microsoft_login', { deviceCode });
+  async completeMicrosoftLogin(): Promise<MicrosoftLoginResult> {
+    return invoke<MicrosoftLoginResult>('complete_microsoft_login');
   },
 
   /** 刷新 Microsoft 认证 token */
-  async refreshMicrosoftAuth(): Promise<MicrosoftAuthResult> {
-    return invoke<MicrosoftAuthResult>('refresh_microsoft_auth');
+  async refreshMicrosoftAuth(): Promise<MicrosoftLoginResult> {
+    return invoke<MicrosoftLoginResult>('refresh_microsoft_auth');
   },
 
   /** 退出 Microsoft 登录 */
@@ -391,7 +391,6 @@ export const launcherApi = {
     window_height?: number;
     fullscreen?: boolean;
     auth_type?: string;
-    access_token?: string;
     uuid?: string;
   }): Promise<void> {
     return invoke('launch_minecraft', { options });

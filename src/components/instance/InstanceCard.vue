@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { GameInstance } from '../../types/events';
-import { formatLastPlayed, getLoaderIcon, getLoaderColor } from '../../utils/format';
+import { formatLastPlayed, getLoaderColor } from '../../utils/format';
 
 const props = defineProps<{
   instance: GameInstance;
@@ -116,16 +116,14 @@ const loaderLabel = computed(() => {
 
 <style scoped>
 .instance-card {
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: none !important;
   border: 1px solid rgba(var(--v-theme-on-surface), 0.05);
   border-radius: 16px !important;
   overflow: hidden;
 }
 
 .instance-card:hover {
-  transform: translateY(-2px);
   background-color: rgb(var(--v-theme-surface-container-high)) !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .card-accent {
