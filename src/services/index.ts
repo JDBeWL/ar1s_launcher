@@ -17,5 +17,5 @@ export {
   getPendingRequestCount,
 } from './api';
 
-export type { ModrinthSearchResult } from './api';
+export type { ModrinthSearchResult, ModrinthModpack } from '../types/events';
 

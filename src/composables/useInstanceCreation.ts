@@ -67,21 +67,16 @@ export function useInstanceCreation() {
 
     // 再排序（只依赖 filteredVersionsUnsorted 和 sortOrder）
     const filteredVersions = computed(() => {
-        const filtered = [...filteredVersionsUnsorted.value];
+        const filtered = filteredVersionsUnsorted.value;
         
-        if (sortOrder.value === "newest") {
-            filtered.sort(
-                (a, b) =>
-                    new Date(b.releaseTime).getTime() - new Date(a.releaseTime).getTime()
-            );
-        } else if (sortOrder.value === "oldest") {
-            filtered.sort(
-                (a, b) =>
-                    new Date(a.releaseTime).getTime() - new Date(b.releaseTime).getTime()
-            );
+        if (sortOrder.value === "newest" || sortOrder.value === "oldest") {
+            const withTimestamp = filtered.map(v => ({ v, t: new Date(v.releaseTime).getTime() }));
+            withTimestamp.sort((a, b) => sortOrder.value === "newest" ? b.t - a.t : a.t - b.t);
+            return withTimestamp.map(item => item.v);
         }
 
         return filtered;
+
     });
 
     const defaultInstanceName = computed(() => {

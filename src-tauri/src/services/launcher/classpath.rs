@@ -173,17 +173,42 @@ fn should_include_library(lib: &serde_json::Value, current_os: &str) -> bool {
     };
 
     let mut allowed = true;
+
     for rule in rules {
+        let action = rule["action"].as_str().unwrap_or("");
         if let Some(os) = rule.get("os") {
             if let Some(name) = os["name"].as_str() {
-                if name == current_os {
-                    allowed = rule["action"].as_str() == Some("allow");
-                } else {
-                    allowed = rule["action"].as_str() != Some("allow");
+                match action {
+                    "allow" => {
+                        if name == current_os {
+                            allowed = true;
+                        } else if !allowed {
+                            // 已被其他 allow 规则排除了，保持排除
+                        } else {
+                            allowed = false;
+                        }
+                    }
+                    "disallow" => {
+                        if name == current_os {
+                            allowed = false;
+                        }
+                    }
+                    _ => {}
                 }
+            }
+        } else {
+            match action {
+                "allow" => {
+                    allowed = true;
+                }
+                "disallow" => {
+                    allowed = false;
+                }
+                _ => {}
             }
         }
     }
+
     allowed
 }
 

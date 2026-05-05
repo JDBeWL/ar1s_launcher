@@ -2,8 +2,13 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import vuetify from "vite-plugin-vuetify";
 import * as path from "path";
+import { readFileSync } from "fs";
 
 const host = process.env.TAURI_DEV_HOST;
+
+const pkgVersion = JSON.parse(
+  readFileSync(path.resolve(__dirname, "package.json"), "utf-8")
+).version;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -11,6 +16,9 @@ export default defineConfig(async () => ({
     vue(),
     vuetify({ autoImport: true }),
   ],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkgVersion),
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

@@ -1,56 +1,36 @@
 import { defineStore } from 'pinia'
-import { onScopeDispose } from 'vue'
-import { listen } from '@tauri-apps/api/event'
-import type { UnlistenFn } from '@tauri-apps/api/event'
+import { useMultiEventSubscription } from '../composables/useEventSubscription'
 import { useNotificationStore } from './notificationStore'
 import { logError } from '../utils/logger'
 
 export const useLauncherStore = defineStore('launcher', () => {
-  // Listeners
-  let unlistenLaunched: UnlistenFn | null = null;
-  let unlistenExited: UnlistenFn | null = null;
-  let unlistenError: UnlistenFn | null = null;
+  const eventSubs = useMultiEventSubscription()
 
-  // 当 store 的作用域销毁时自动清理监听器
-  onScopeDispose(() => {
-    unsubscribe();
-  });
+  eventSubs.add<string>('minecraft-launched', (event) => {
+    const msg = String(event.payload ?? '游戏已启动')
+    const notificationStore = useNotificationStore()
+    notificationStore.success('Minecraft 已启动', msg)
+  })
+
+  eventSubs.add<string>('minecraft-exited', (event) => {
+    const msg = String(event.payload ?? '游戏已退出')
+    const notificationStore = useNotificationStore()
+    notificationStore.info('Minecraft 已退出', msg)
+  })
+
+  eventSubs.add<string>('minecraft-error', (event) => {
+    const msg = String(event.payload ?? '未知错误')
+    logError('Minecraft 运行错误', msg, 'LauncherStore')
+    const notificationStore = useNotificationStore()
+    notificationStore.error('Minecraft 运行错误', msg, true)
+  })
 
   async function subscribe() {
-    if (unlistenLaunched) return; // Already subscribed
-
-    const notificationStore = useNotificationStore()
-
-    unlistenLaunched = await listen('minecraft-launched', (event) => {
-      const msg = String(event.payload ?? '游戏已启动')
-      notificationStore.success('Minecraft 已启动', msg)
-    })
-
-    unlistenExited = await listen('minecraft-exited', (event) => {
-      const msg = String(event.payload ?? '游戏已退出')
-      notificationStore.info('Minecraft 已退出', msg)
-    })
-
-    unlistenError = await listen('minecraft-error', (event) => {
-      const msg = String(event.payload ?? '未知错误')
-      logError('Minecraft 运行错误', msg, 'LauncherStore')
-      notificationStore.error('Minecraft 运行错误', msg, true)
-    })
+    await eventSubs.subscribeAll()
   }
 
   function unsubscribe() {
-    if (unlistenLaunched) {
-      unlistenLaunched();
-      unlistenLaunched = null;
-    }
-    if (unlistenExited) {
-      unlistenExited();
-      unlistenExited = null;
-    }
-    if (unlistenError) {
-      unlistenError();
-      unlistenError = null;
-    }
+    eventSubs.unsubscribeAll()
   }
 
   return {

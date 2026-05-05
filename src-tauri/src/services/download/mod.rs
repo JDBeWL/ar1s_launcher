@@ -15,5 +15,7 @@ mod version;
 
 pub use batch::download_all_files;
 pub use http::get_http_client;
+pub use manifest::get_version_size;
 pub use manifest::get_versions;
+pub use manifest::VersionSizeInfo;
 pub use version::process_and_download_version;

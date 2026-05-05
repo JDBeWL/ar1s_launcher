@@ -187,36 +187,66 @@ fn calculate_max_memory(total_memory: u32, base_need: u32) -> u32 {
 }
 
 /// 优化JVM内存参数
-pub fn optimize_jvm_memory_args(memory_mb: u32, version: &str) -> Vec<String> {
+/// 根据系统 CPU 核心数、游戏版本和 Java 版本动态调整参数，充分利用多核性能
+pub fn optimize_jvm_memory_args(memory_mb: u32, version: &str, java_version: Option<u32>) -> Vec<String> {
     let mut args = Vec::new();
     
-    // 基础内存参数
-    args.push(format!("-Xmx{}M", memory_mb));
-    args.push(format!("-Xms{}M", memory_mb / 2)); // 初始堆大小为最大堆的一半
+    let cpu_cores = num_cpus::get() as u32;
+    // GC 线程数：留 1-2 核给游戏主线程和系统
+    let gc_threads = if cpu_cores <= 2 { 1 } else { (cpu_cores - 1).min(4) };
+    // 并行 GC 线程（Full GC 用）
+    let parallel_gc_threads = cpu_cores.min(8);
     
-    // 垃圾回收优化
-    if version.starts_with("1.17") || version.starts_with("1.18") || 
+    // 基础内存参数：Xms = Xmx，避免堆动态扩展/收缩的开销
+    args.push(format!("-Xmx{}M", memory_mb));
+    args.push(format!("-Xms{}M", memory_mb));
+    
+    // 判断是否为新版本（1.17+，需要 Java 17+）
+    let is_new_version = version.starts_with("1.17") || version.starts_with("1.18") || 
        version.starts_with("1.19") || version.starts_with("1.20") ||
-       version.starts_with("1.21") {
-        // 新版本使用G1GC
+       version.starts_with("1.21") || version.starts_with("1.22");
+    
+    // ZGC 需要 Java 15+，分代 ZGC 需要 Java 21+
+    let java_major = java_version.unwrap_or(17);
+    let supports_zgc = java_major >= 15;
+    let supports_generational_zgc = java_major >= 21;
+    // 大内存（≥4GB）+ 新版本 + Java 15+ 更适合用 ZGC
+    let use_zgc = memory_mb >= 4096 && is_new_version && supports_zgc;
+
+    if use_zgc {
+        // ZGC：低延迟并发 GC，适合大内存 + 多核
+        args.push("-XX:+UseZGC".to_string());
+        args.push(format!("-XX:ConcGCThreads={}", gc_threads));
+        args.push(format!("-XX:ParallelGCThreads={}", parallel_gc_threads));
+        // ZGC 分代模式（Java 21+ 支持），显著降低分配停顿
+        if supports_generational_zgc {
+            args.push("-XX:+ZGenerational".to_string());
+            args.push("-XX:+UnlockExperimentalVMOptions".to_string());
+        }
+    } else if is_new_version {
+        // G1GC：中等内存的通用选择
         args.push("-XX:+UseG1GC".to_string());
-        args.push("-XX:G1HeapRegionSize=4M".to_string());
+        args.push(format!("-XX:ParallelGCThreads={}", parallel_gc_threads));
+        args.push(format!("-XX:ConcGCThreads={}", gc_threads));
         args.push("-XX:+UnlockExperimentalVMOptions".to_string());
         args.push("-XX:G1NewSizePercent=20".to_string());
         args.push("-XX:G1ReservePercent=20".to_string());
         args.push("-XX:MaxGCPauseMillis=50".to_string());
         args.push("-XX:G1HeapWastePercent=5".to_string());
     } else {
-        // 旧版本使用并行GC
+        // 旧版本使用并行 GC
         args.push("-XX:+UseParallelGC".to_string());
-        args.push("-XX:ParallelGCThreads=2".to_string());
+        args.push(format!("-XX:ParallelGCThreads={}", parallel_gc_threads));
     }
     
-    // 通用优化参数
-    args.push("-XX:+AlwaysPreTouch".to_string());
-    args.push("-XX:+DisableExplicitGC".to_string());
-    args.push("-XX:+UseCompressedOops".to_string());
-    args.push("-XX:-UseAdaptiveSizePolicy".to_string());
+    // JIT 编译器线程数，加速启动时的代码编译
+    args.push(format!("-XX:CICompilerCount={}", gc_threads.min(4)));
+
+    
+    // 字符串去重（仅 G1GC 支持），减少大整合包的内存占用
+    if !use_zgc && is_new_version {
+        args.push("-XX:+UseStringDeduplication".to_string());
+    }
     
     // 内存溢出时生成堆转储
     args.push("-XX:+HeapDumpOnOutOfMemoryError".to_string());
@@ -345,9 +375,9 @@ mod tests {
     
     #[test]
     fn test_jvm_args_generation() {
-        let args = optimize_jvm_memory_args(2048, "1.20.1");
+        let args = optimize_jvm_memory_args(2048, "1.20.1", Some(17));
         assert!(args.iter().any(|arg| arg.contains("-Xmx2048M")));
-        assert!(args.iter().any(|arg| arg.contains("-Xms1024M")));
+        assert!(args.iter().any(|arg| arg.contains("-Xms2048M")));
     }
 
     #[test]
@@ -375,16 +405,41 @@ mod tests {
 
     #[test]
     fn test_jvm_args_old_version_uses_parallel_gc() {
-        let args = optimize_jvm_memory_args(2048, "1.12.2");
+        let args = optimize_jvm_memory_args(2048, "1.12.2", Some(8));
         assert!(args.iter().any(|arg| arg == "-XX:+UseParallelGC"));
         assert!(!args.iter().any(|arg| arg == "-XX:+UseG1GC"));
     }
 
     #[test]
     fn test_jvm_args_new_version_uses_g1gc() {
-        let args = optimize_jvm_memory_args(4096, "1.20.1");
+        // 2GB 内存 + 新版本使用 G1GC（< 4GB 不走 ZGC）
+        let args = optimize_jvm_memory_args(2048, "1.20.1", Some(17));
         assert!(args.iter().any(|arg| arg == "-XX:+UseG1GC"));
         assert!(!args.iter().any(|arg| arg == "-XX:+UseParallelGC"));
+    }
+
+    #[test]
+    fn test_jvm_args_large_memory_uses_zgc() {
+        // 4GB+ 内存 + 新版本 + Java 21 使用 ZGC（含分代模式）
+        let args = optimize_jvm_memory_args(4096, "1.20.1", Some(21));
+        assert!(args.iter().any(|arg| arg == "-XX:+UseZGC"));
+        assert!(args.iter().any(|arg| arg == "-XX:+ZGenerational"));
+    }
+
+    #[test]
+    fn test_jvm_args_zgc_no_generational_on_java17() {
+        // Java 17 支持 ZGC 但不支持分代模式
+        let args = optimize_jvm_memory_args(4096, "1.20.1", Some(17));
+        assert!(args.iter().any(|arg| arg == "-XX:+UseZGC"));
+        assert!(!args.iter().any(|arg| arg == "-XX:+ZGenerational"));
+    }
+
+    #[test]
+    fn test_jvm_args_no_zgc_on_java8() {
+        // Java 8 不支持 ZGC，即使大内存也用 G1GC
+        let args = optimize_jvm_memory_args(4096, "1.20.1", Some(8));
+        assert!(!args.iter().any(|arg| arg == "-XX:+UseZGC"));
+        assert!(args.iter().any(|arg| arg == "-XX:+UseG1GC"));
     }
 
     #[test]

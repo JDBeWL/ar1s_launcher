@@ -53,6 +53,9 @@ function handleGlobalShortcut(event: KeyboardEvent) {
   } else if (key === 'i') {
     event.preventDefault()
     router.push('/instance-manager')
+  } else if (key === '/') {
+    event.preventDefault()
+    shortcutHelpVisible.value = !shortcutHelpVisible.value
   }
 }
 
@@ -61,26 +64,14 @@ function getThemeName() {
 }
 
 function applyTheme() {
-  theme.global.name.value = getThemeName()
+  theme.change(getThemeName())
   localStorage.setItem('theme', isDarkMode.value ? 'dark' : 'light')
 }
 
 // 切换主题模式
 function toggleTheme() {
-  // 临时禁用所有过渡效果
-  const html = document.documentElement
-  html.classList.add('no-transition')
-  document.body.classList.add('no-transition')
-  
   isDarkMode.value = !isDarkMode.value
   applyTheme()
-  
-  // 强制重绘后移除禁用类
-  // 使用 setTimeout 确保浏览器有足够时间应用样式
-  setTimeout(() => {
-    html.classList.remove('no-transition')
-    document.body.classList.remove('no-transition')
-  }, 50)
 }
 
 function handlePaletteChange(event: Event) {
@@ -93,6 +84,15 @@ function handlePaletteChange(event: Event) {
 
 const downloadStore = useDownloadStore()
 const launcherStore = useLauncherStore()
+
+const shortcutHelpVisible = ref(false)
+const shortcuts = [
+  { keys: 'Ctrl + ,', description: '打开设置' },
+  { keys: 'Ctrl + D', description: '打开下载' },
+  { keys: 'Ctrl + N', description: '添加实例' },
+  { keys: 'Ctrl + I', description: '实例管理' },
+  { keys: 'Ctrl + /', description: '快捷键帮助' },
+]
 
 // 初始化下载监听器和主题
 onMounted(async () => {
@@ -135,25 +135,39 @@ onUnmounted(() => {
           title="启动" 
           to="/" 
           class="nav-item mb-1"
-        />
+        >
+          <v-tooltip activator="parent" location="right" :disabled="!rail">启动</v-tooltip>
+        </v-list-item>
         <v-list-item 
           prepend-icon="mdi-download" 
           title="下载" 
           to="/download" 
           class="nav-item mb-1"
-        />
+        >
+          <v-tooltip activator="parent" location="right" :disabled="!rail">
+            下载 <kbd class="shortcut-key">Ctrl+D</kbd>
+          </v-tooltip>
+        </v-list-item>
         <v-list-item 
           prepend-icon="mdi-plus-circle-outline" 
           title="添加实例" 
           to="/add-instance" 
           class="nav-item mb-1"
-        />
+        >
+          <v-tooltip activator="parent" location="right" :disabled="!rail">
+            添加实例 <kbd class="shortcut-key">Ctrl+N</kbd>
+          </v-tooltip>
+        </v-list-item>
         <v-list-item 
           prepend-icon="mdi-folder-multiple-outline" 
           title="实例管理" 
           to="/instance-manager" 
           class="nav-item"
-        />
+        >
+          <v-tooltip activator="parent" location="right" :disabled="!rail">
+            实例管理 <kbd class="shortcut-key">Ctrl+I</kbd>
+          </v-tooltip>
+        </v-list-item>
       </v-list>
 
       <template v-slot:append>
@@ -163,7 +177,11 @@ onUnmounted(() => {
             title="设置" 
             to="/settings" 
             class="nav-item"
-          />
+          >
+            <v-tooltip activator="parent" location="right" :disabled="!rail">
+              设置 <kbd class="shortcut-key">Ctrl+,</kbd>
+            </v-tooltip>
+          </v-list-item>
         </v-list>
       </template>
     </v-navigation-drawer>
@@ -190,10 +208,10 @@ onUnmounted(() => {
       </v-btn>
       
       <!-- 窗口控制按钮 -->
-      <v-btn icon data-tauri-no-drag @click="windowControls.minimize()" variant="text">
+      <v-btn icon data-tauri-no-drag @click="windowControls.minimize()" variant="text" class="window-control-btn">
         <v-icon size="20">mdi-minus</v-icon>
       </v-btn>
-      <v-btn icon data-tauri-no-drag @click="windowControls.toggleMaximize()" variant="text">
+      <v-btn icon data-tauri-no-drag @click="windowControls.toggleMaximize()" variant="text" class="window-control-btn">
         <v-icon size="18">mdi-square-outline</v-icon>
       </v-btn>
       <v-btn icon data-tauri-no-drag @click="windowControls.close()" variant="text" class="close-btn">
@@ -203,9 +221,7 @@ onUnmounted(() => {
 
     <v-main>
       <router-view v-slot="{ Component }">
-        <transition name="fade-slide" mode="out-in">
-          <component :is="Component" />
-        </transition>
+        <component :is="Component" />
       </router-view>
     </v-main>
     
@@ -213,6 +229,25 @@ onUnmounted(() => {
     <GlobalDownloadStatus />
     <!-- 全局通知组件 -->
     <GlobalNotification />
+
+    <!-- 快捷键帮助面板 -->
+    <v-dialog v-model="shortcutHelpVisible" max-width="380">
+      <v-card color="surface-container-high">
+        <v-card-text class="pa-5">
+          <div class="text-h6 font-weight-bold mb-4">快捷键</div>
+          <div class="shortcut-list">
+            <div v-for="s in shortcuts" :key="s.keys" class="shortcut-row">
+              <span class="text-body-2">{{ s.description }}</span>
+              <kbd class="shortcut-key-lg">{{ s.keys }}</kbd>
+            </div>
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="shortcutHelpVisible = false">关闭</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-app>
 </template>
 
@@ -221,10 +256,23 @@ onUnmounted(() => {
   color-scheme: light dark;
 }
 
-/* 让 v-main 成为滚动容器，滚动条紧贴内容区域 */
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: rgb(var(--v-theme-background));
+}
+
+.v-application {
+  background-color: rgb(var(--v-theme-background)) !important;
+}
+
 .v-main {
-  height: 100vh;
+  --v-layout-top: 0px !important;
+  height: calc(100vh - 64px);
+  margin-top: 64px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* Scrollbar styling */
@@ -261,11 +309,7 @@ onUnmounted(() => {
   padding: 8px;
 }
 
-/* Navigation item
- * padding 0 12px → 清除 Vuetify 默认 4px 垂直 padding，水平 12px
- * icon center = 12px padding + 12px half-icon = 24px
- * Rail item = 64 - 8*2 = 48px → center = 24px ✓
- * 两种模式布局完全一致，过渡无跳变 */
+/* Navigation item */
 .v-list-item.nav-item {
   --v-list-prepend-gap: 0;
   padding: 0 12px;
@@ -307,6 +351,11 @@ onUnmounted(() => {
   color: rgb(var(--v-theme-on-error));
 }
 
+/* Window control button hover */
+.titlebar .window-control-btn:hover {
+  background-color: rgba(var(--v-theme-on-surface), 0.08);
+}
+
 /* MD3 Surface tones */
 .v-app .surface-container {
   background-color: rgb(var(--v-theme-surface-container));
@@ -320,19 +369,40 @@ onUnmounted(() => {
   background-color: rgb(var(--v-theme-surface-container-highest));
 }
 
-/* Route transition */
-.fade-slide-enter-active,
-.fade-slide-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+/* Shortcut key styles */
+.shortcut-key {
+  display: inline-block;
+  padding: 1px 5px;
+  margin-left: 6px;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.4;
+  background: rgba(var(--v-theme-on-surface), 0.12);
+  border-radius: 4px;
+  color: rgba(var(--v-theme-on-surface), 0.7);
 }
 
-.fade-slide-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
+.shortcut-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.fade-slide-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.shortcut-key-lg {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: 1.5;
+  background: rgba(var(--v-theme-on-surface), 0.08);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.15);
+  border-radius: 6px;
+  color: rgba(var(--v-theme-on-surface), 0.8);
 }
 </style>

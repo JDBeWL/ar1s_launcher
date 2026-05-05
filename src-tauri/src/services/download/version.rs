@@ -4,11 +4,11 @@ use super::batch::download_all_files;
 use super::http::get_http_client;
 use crate::errors::LauncherError;
 use crate::models::{DownloadJob, VersionManifest};
-use crate::services::config::load_config;
+use crate::services::config::{self, load_config};
 use log::{info, warn};
 use std::fs;
 use std::path::PathBuf;
-use tauri::Window;
+use tauri::{Emitter, Window};
 
 /// 处理并下载指定版本
 pub async fn process_and_download_version(
@@ -120,6 +120,12 @@ pub async fn process_and_download_version(
             // 保存版本元数据文件
             let version_json_path = version_dir.join(format!("{}.json", actual_version_id));
             fs::write(version_json_path, text)?;
+
+            // 触发游戏目录变更事件，通知前端刷新版本列表
+            if let Ok(game_dir_str) = config::get_game_dir() {
+                let _ = window.emit("game-dir-changed", &game_dir_str);
+            }
+
             Ok(())
         }
         Err(e) => {

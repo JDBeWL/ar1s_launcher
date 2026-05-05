@@ -66,18 +66,41 @@ pub fn build_arguments(
             game_dir.to_string_lossy().to_string()
         };
 
+        let auth_access_token = options
+            .access_token
+            .as_deref()
+            .unwrap_or("0");
+
+        let auth_uuid = options
+            .uuid
+            .as_deref()
+            .unwrap_or(uuid);
+
+        let user_type = if options.auth_type.as_deref() == Some("microsoft") {
+            "msa"
+        } else {
+            "mojang"
+        };
+
+        let version_type = if let Some(t) = version_json["type"].as_str() {
+            if t == "snapshot" || t == "old_beta" || t == "old_alpha" {
+                t
+            } else {
+                "release"
+            }
+        } else {
+            "release"
+        };
+
         arg.replace("${auth_player_name}", &options.username)
             .replace("${version_name}", &base_mc_version)
             .replace("${game_directory}", &actual_game_dir)
             .replace("${assets_root}", &assets_dir.to_string_lossy())
             .replace("${assets_index_name}", assets_index)
-            .replace("${auth_uuid}", uuid)
-            .replace("${auth_access_token}", "0")
-            .replace("${user_type}", "mojang")
-            .replace(
-                "${version_type}",
-                version_json["type"].as_str().unwrap_or("release"),
-            )
+            .replace("${auth_uuid}", auth_uuid)
+            .replace("${auth_access_token}", auth_access_token)
+            .replace("${user_type}", user_type)
+            .replace("${version_type}", version_type)
             .replace("${user_properties}", "{}")
             // 新版 Forge (1.13+) 需要的占位符
             .replace("${library_directory}", &libraries_dir.to_string_lossy())
@@ -90,7 +113,7 @@ pub fn build_arguments(
     // 处理新版 (1.13+) `arguments` 格式
     if let Some(arguments) = version_json.get("arguments") {
         jvm_args = parse_jvm_arguments(arguments, current_os, &replace_placeholders);
-        game_args_vec = parse_game_arguments(arguments, &replace_placeholders);
+        game_args_vec = parse_game_arguments(arguments, current_os, &replace_placeholders);
     }
     // 处理旧版 `minecraftArguments` 格式
     else if let Some(mc_args) = version_json["minecraftArguments"].as_str() {
@@ -147,6 +170,7 @@ fn parse_jvm_arguments(
 /// 解析游戏参数
 fn parse_game_arguments(
     arguments: &serde_json::Value,
+    current_os: &str,
     replace_placeholders: &impl Fn(&str) -> String,
 ) -> Vec<String> {
     let mut game_args = vec![];
@@ -155,6 +179,20 @@ fn parse_game_arguments(
         for arg in game {
             if let Some(s) = arg.as_str() {
                 game_args.push(replace_placeholders(s));
+            } else if let Some(obj) = arg.as_object() {
+                if is_rule_allowed(obj, current_os) {
+                    if let Some(value) = obj.get("value") {
+                        if let Some(s) = value.as_str() {
+                            game_args.push(replace_placeholders(s));
+                        } else if let Some(arr) = value.as_array() {
+                            for item in arr {
+                                if let Some(s) = item.as_str() {
+                                    game_args.push(replace_placeholders(s));
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -163,24 +201,92 @@ fn parse_game_arguments(
 }
 
 /// 检查规则是否允许
+/// Minecraft 规则语义：
+/// - allow 规则：只允许匹配的 OS/特性，其他被排除
+/// - disallow 规则：禁止匹配的 OS/特性
+/// - features 规则：根据启动器支持的功能决定是否包含参数
 fn is_rule_allowed(obj: &serde_json::Map<String, serde_json::Value>, current_os: &str) -> bool {
     let Some(rules) = obj.get("rules").and_then(|r| r.as_array()) else {
         return true;
     };
 
     let mut allowed = true;
+
     for rule in rules {
+        let action = rule["action"].as_str().unwrap_or("");
+
+        // 检查 features 条件
+        if let Some(features) = rule.get("features") {
+            let feature_allowed = check_features(features);
+            match action {
+                "allow" => {
+                    allowed = feature_allowed;
+                }
+                "disallow" => {
+                    if feature_allowed {
+                        allowed = false;
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+
+        // 检查 OS 条件
         if let Some(os) = rule.get("os") {
             if let Some(name) = os["name"].as_str() {
-                if name == current_os {
-                    allowed = rule["action"].as_str() == Some("allow");
-                } else {
-                    allowed = rule["action"].as_str() != Some("allow");
+                match action {
+                    "allow" => {
+                        if name == current_os {
+                            allowed = true;
+                        } else if !allowed {
+                            // 已被其他 allow 规则排除了，保持排除
+                        } else {
+                            allowed = false;
+                        }
+                    }
+                    "disallow" => {
+                        if name == current_os {
+                            allowed = false;
+                        }
+                    }
+                    _ => {}
                 }
+            }
+        } else {
+            // 没有 OS 也没有 features 条件的规则
+            match action {
+                "allow" => {
+                    allowed = true;
+                }
+                "disallow" => {
+                    allowed = false;
+                }
+                _ => {}
             }
         }
     }
+
     allowed
+}
+
+/// 检查启动器是否支持指定的 features
+/// Minecraft 1.20+ 的版本 JSON 使用 features 来控制可选参数
+fn check_features(features: &serde_json::Value) -> bool {
+    // 启动器支持的 features
+    const SUPPORTED_FEATURES: &[&str] = &[
+        "has_custom_resolution",  // 启动器支持 --width/--height
+    ];
+
+    if let Some(obj) = features.as_object() {
+        // 所有请求的 features 都必须是启动器支持的
+        for (key, value) in obj {
+            if value.as_bool() == Some(true) && !SUPPORTED_FEATURES.contains(&key.as_str()) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// 自动补齐 tweakClass（仅在 LaunchWrapper 主类下）

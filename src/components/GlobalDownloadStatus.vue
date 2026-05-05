@@ -18,7 +18,11 @@ const showNotification = computed({
   }
 });
 
-// 取消下载
+const progressPercentage = computed(() => {
+  if (downloadProgress.value.total_bytes === 0) return 0
+  return Math.min((downloadProgress.value.bytes_downloaded / downloadProgress.value.total_bytes) * 100, 100)
+})
+
 function cancelDownload() {
   downloadStore.cancelDownload();
 }
@@ -26,7 +30,6 @@ function cancelDownload() {
 
 <template>
   <div>
-    <!-- 下载通知组件 -->
     <NotificationDownload
       v-if="isDownloading || downloadProgress.status === 'completed'"
       v-model="showNotification"
@@ -38,7 +41,6 @@ function cancelDownload() {
       @cancel="cancelDownload"
     />
     
-    <!-- 悬浮按钮，用于重新显示已隐藏的下载通知 -->
     <v-btn
       v-if="(isDownloading || downloadProgress.status === 'completed') && !showNotification"
       icon
@@ -46,9 +48,19 @@ function cancelDownload() {
       size="large"
       class="download-fab"
       @click="showNotification = true"
-      title="显示下载状态"
     >
       <v-icon size="large">mdi-download</v-icon>
+      <v-progress-circular
+        v-if="isDownloading"
+        :model-value="progressPercentage"
+        size="52"
+        width="3"
+        color="primary-container"
+        class="download-fab-progress"
+      />
+      <v-tooltip activator="parent" location="left">
+        {{ isDownloading ? `下载中 ${progressPercentage.toFixed(0)}%` : '下载完成' }}
+      </v-tooltip>
     </v-btn>
   </div>
 </template>
@@ -56,11 +68,20 @@ function cancelDownload() {
 <style scoped>
 .download-fab.v-btn {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
+  bottom: 24px;
+  right: 24px;
   z-index: 999;
   width: 56px;
   height: 56px;
   min-width: 56px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.download-fab-progress {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 </style>

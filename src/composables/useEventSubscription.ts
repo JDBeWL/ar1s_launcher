@@ -44,8 +44,14 @@ export function useEventSubscription<T>(
  * 多事件订阅管理器
  * 用于同时管理多个事件的订阅
  */
+interface SubscriptionHandle {
+  subscribe: () => Promise<void>;
+  unsubscribe: () => void;
+  isSubscribed: boolean;
+}
+
 export function useMultiEventSubscription() {
-  const subscriptions: Array<{ unsubscribe: () => void }> = [];
+  const subscriptions: SubscriptionHandle[] = [];
 
   function add<T>(eventName: string, handler: EventCallback<T>) {
     const sub = useEventSubscription(eventName, handler);
@@ -54,11 +60,7 @@ export function useMultiEventSubscription() {
   }
 
   async function subscribeAll() {
-    await Promise.all(
-      subscriptions
-        .filter((s): s is { subscribe: () => Promise<void> } => 'subscribe' in s && typeof (s as { subscribe: unknown }).subscribe === 'function')
-        .map(s => s.subscribe())
-    );
+    await Promise.all(subscriptions.map(s => s.subscribe()));
   }
 
   function unsubscribeAll() {

@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import vuetify from './plugins/vuetify'
+import './style.css'
 
 // 设置应用标题
 document.title = 'Ar1s Launcher'

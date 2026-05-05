@@ -163,6 +163,10 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         fullscreen: false,
         instance_last_played: std::collections::HashMap::new(),
         last_selected_version: None,
+        auth_type: crate::models::AuthType::Offline,
+        ms_access_token: None,
+        ms_refresh_token: None,
+        ms_expires_at: None,
     };
 
     // 首次运行时自动检测Java

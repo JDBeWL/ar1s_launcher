@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ModrinthModpack } from '../../composables/useModrinth';
+import type { ModrinthModpack } from '../../types/events';
 
 defineProps<{
   modpack: ModrinthModpack

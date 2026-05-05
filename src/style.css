@@ -6,43 +6,121 @@
   -webkit-text-size-adjust: 100%;
 }
 
-/* 主题切换时禁用所有过渡 - 使用高优先级选择器 */
-html.no-transition,
-html.no-transition *,
-html.no-transition *::before,
-html.no-transition *::after,
-.no-transition,
-.no-transition *,
-.no-transition *::before,
-.no-transition *::after {
+/* 全局禁用所有过渡和动画，确保界面响应迅速 */
+*,
+*::before,
+*::after {
   transition: none !important;
+  transition-property: none !important;
   transition-duration: 0s !important;
-  transition-delay: 0s !important;
   animation: none !important;
   animation-duration: 0s !important;
 }
 
-/* 进度条动画 - 使用:where()降低Vuetify优先级 */
-:where(.v-progress-linear__determinate),
-:where(.v-progress-linear__indeterminate),
-:where(.v-progress-circular__overlay) {
-  animation-duration: 1s;
+/* 显式禁用 Vuetify 的内置过渡类 */
+.v-expand-transition-enter-active,
+.v-expand-transition-leave-active,
+.v-fade-transition-enter-active,
+.v-fade-transition-leave-active,
+.v-slide-y-transition-enter-active,
+.v-slide-y-transition-leave-active,
+.v-slide-x-transition-enter-active,
+.v-slide-x-transition-leave-active,
+.v-scale-transition-enter-active,
+.v-scale-transition-leave-active,
+.v-dialog-transition-enter-active,
+.v-dialog-transition-leave-active {
+  transition: none !important;
+  transition-duration: 0s !important;
 }
 
-/* 弹窗和通知动画 */
-:where(.v-snackbar__wrapper),
-:where(.v-dialog),
-:where(.v-overlay__content),
-:where(.v-menu__content) {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+/* 禁用 Vuetify 组件默认的交互过渡（如按钮点击、列表悬停） */
+.v-btn,
+.v-card,
+.v-list-item,
+.v-field,
+.v-input,
+.v-selection-control,
+.v-switch__track,
+.v-switch__thumb,
+.v-overlay__scrim,
+.v-window-item,
+.v-tab {
+  transition: none !important;
+  transition-duration: 0s !important;
 }
 
-/* 修复 v-select 下拉菜单圆角问题 */
+/* 侧边栏抽屉动画例外 - 显式恢复伸缩动画所需属性 */
+.v-navigation-drawer,
+.v-main,
+.v-application {
+  transition-property: width, transform, visibility, left, right, padding, margin !important;
+  transition-duration: 0.2s !important;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* 侧边栏内容不应该有延迟 */
+.v-navigation-drawer * {
+  transition: none !important;
+  transition-duration: 0s !important;
+}
+
+/* 进度条动画例外 - 这些是功能性动画，需要保留 */
+/* 使用更加具体的选择器确保 Vuetify 内部样式能生效 */
+.v-progress-linear__determinate,
+.v-progress-linear__indeterminate,
+.v-progress-linear__background,
+.v-progress-circular__overlay,
+.v-progress-circular__underlay {
+  transition: inherit !important;
+  transition-duration: inherit !important;
+  animation-duration: inherit !important;
+}
+
+/* 进度条本身的动画帧定义需要保留 */
+.v-progress-linear__indeterminate--active .v-progress-linear__determinate {
+  animation-duration: 2s !important;
+}
+
+.v-progress-circular--indeterminate > svg {
+  animation-duration: 1.4s !important;
+}
+
+/* 修复 v-select 下拉菜单样式 - 实现真正的“一体化融合”效果 */
+
+/* 当下拉菜单打开或输入框激活时，消除输入框底部的圆角 */
+:where(.v-select--active-menu) .v-field__outline,
+:where(.v-select.v-field--focused) .v-field__outline {
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  transition: border-radius 0s !important;
+}
+
+/* 移除激活/聚焦时加粗的主色框（保持 1px 细线并使用中性色） */
+.v-field--focused .v-field__outline {
+  --v-field-border-width: 1px !important;
+  /* --v-field-border-opacity: 0.15 !important; */
+}
+
 .v-overlay .v-select-menu-content {
-  border-radius: 12px;
+  /* 边框颜色跟随系统边框色，不再使用主题色 */
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.15) !important;
+  border-top: none !important; /* 移除顶部边框，实现物理连接感 */
+
+  /* 形状：顶部直角，底部圆角 */
+  border-top-left-radius: 0 !important;
+  border-top-right-radius: 0 !important;
+  border-bottom-left-radius: 12px !important;
+  border-bottom-right-radius: 12px !important;
+
   overflow: hidden;
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2) !important;
+
+  /* 确保位置精确对接 */
+  margin-top: 0 !important;
 }
 
+/* 菜单内部列表样式微调 */
 .v-overlay .v-select-menu-content .v-list {
   padding: 0;
   border-radius: 0;
@@ -56,6 +134,6 @@ html.no-transition *::after,
 
 /* 通用页面容器 - 统一最大宽度和居中 */
 .page-container {
-  max-width: 900px;
+  max-width: 1200px;
   margin: 0 auto;
 }

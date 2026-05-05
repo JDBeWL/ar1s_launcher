@@ -23,8 +23,20 @@ const snackbarIcon = computed(() => {
   return icons[currentNotification.value.type]
 })
 
+const snackbarTimeout = computed(() => {
+  if (!currentNotification.value) return 4000
+  if (currentNotification.value.type === 'error') return 6000
+  return 4000
+})
+
 function closeSnackbar() {
   if (currentNotification.value) {
+    store.removeNotification(currentNotification.value.id)
+  }
+}
+
+function onSnackbarUpdate(value: boolean) {
+  if (!value && currentNotification.value) {
     store.removeNotification(currentNotification.value.id)
   }
 }
@@ -59,9 +71,10 @@ const confirmColor = computed(() => store.confirmType)
   <v-snackbar
     :model-value="hasNotification"
     :color="snackbarColor"
-    :timeout="-1"
+    :timeout="snackbarTimeout"
     location="top right"
     elevation="2"
+    @update:model-value="onSnackbarUpdate"
   >
     <div class="d-flex align-center">
       <v-icon class="mr-2">{{ snackbarIcon }}</v-icon>

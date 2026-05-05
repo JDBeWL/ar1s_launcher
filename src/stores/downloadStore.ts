@@ -1,14 +1,13 @@
 import { defineStore } from 'pinia'
-import { ref, computed, onScopeDispose } from 'vue'
-import { listen, emit } from '@tauri-apps/api/event'
-import type { UnlistenFn } from '@tauri-apps/api/event'
+import { ref, computed } from 'vue'
+import { emit } from '@tauri-apps/api/event'
+import { useEventSubscription } from '../composables/useEventSubscription'
 import type { DownloadProgress, DownloadStatus } from '../types/events'
 import { api } from '../services/api'
 import { useNotificationStore } from './notificationStore'
 import { getErrorMessage } from '../utils/format'
 import { logError } from '../utils/logger'
 
-// Add 'idle' to the possible statuses for the store
 export type StoreDownloadStatus = DownloadStatus | 'idle';
 
 export interface DownloadState extends Omit<DownloadProgress, 'status'> {
@@ -16,7 +15,6 @@ export interface DownloadState extends Omit<DownloadProgress, 'status'> {
 }
 
 export const useDownloadStore = defineStore('download', () => {
-  // State
   const selectedVersion = ref('')
   const downloadError = ref<string | null>(null);
   const downloadProgress = ref<DownloadState>({
@@ -32,47 +30,37 @@ export const useDownloadStore = defineStore('download', () => {
   const showNotification = ref(false)
   const userHidNotification = ref(false)
 
-  // Listeners
-  let unlistenDownloadProgress: UnlistenFn | null = null;
+  const eventSub = useEventSubscription<DownloadProgress>('download-progress', (event) => {
+    const data = event.payload
+    downloadProgress.value = data as DownloadState;
 
-  // 当 store 的作用域销毁时自动清理监听器
-  onScopeDispose(() => {
-    unsubscribe();
-  });
+    if (data.status === 'downloading' && !userHidNotification.value) {
+      showNotification.value = true
+    }
 
-  async function subscribe() {
-    if (unlistenDownloadProgress) return;
-    unlistenDownloadProgress = await listen('download-progress', (event) => {
-      const data = event.payload as DownloadProgress
-      downloadProgress.value = data as DownloadState;
-
-      if (data.status === 'downloading' && !userHidNotification.value) {
+    if (data.status === 'completed' && !completionNotified.value) {
+      completionNotified.value = true
+      if (!userHidNotification.value) {
         showNotification.value = true
       }
-
-      if (data.status === 'completed' && !completionNotified.value) {
-        completionNotified.value = true
-        if (!userHidNotification.value) {
-          showNotification.value = true
-        }
-      } else if (data.status === 'cancelled' || data.status === 'error') {
-        completionNotified.value = false
-        selectedVersion.value = ''
-        userHidNotification.value = false
-        if (data.status === 'error') {
-            downloadError.value = data.error || '下载过程中发生未知错误';
-            const notificationStore = useNotificationStore()
-            notificationStore.error('下载失败', data.error || '下载过程中发生未知错误', true)
-        }
+    } else if (data.status === 'cancelled' || data.status === 'error') {
+      completionNotified.value = false
+      selectedVersion.value = ''
+      userHidNotification.value = false
+      if (data.status === 'error') {
+          downloadError.value = data.error || '下载过程中发生未知错误';
+          const notificationStore = useNotificationStore()
+          notificationStore.error('下载失败', data.error || '下载过程中发生未知错误', true)
       }
-    })
+    }
+  })
+
+  async function subscribe() {
+    await eventSub.subscribe()
   }
 
   function unsubscribe() {
-    if (unlistenDownloadProgress) {
-      unlistenDownloadProgress();
-      unlistenDownloadProgress = null;
-    }
+    eventSub.unsubscribe()
   }
 
   // Actions

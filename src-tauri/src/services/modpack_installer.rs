@@ -368,6 +368,11 @@ impl ModpackInstaller {
         send_progress(100, "整合包安装完成！", false);
         info!("整合包 {} 安装完成", options.instance_name);
 
+        // 触发游戏目录变更事件，通知前端刷新版本列表
+        if let Ok(game_dir_str) = config::get_game_dir() {
+            let _ = window.emit("game-dir-changed", &game_dir_str);
+        }
+
         Ok(())
     }
 

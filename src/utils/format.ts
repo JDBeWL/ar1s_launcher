@@ -29,7 +29,28 @@ const LOADER_ICONS: Record<string, { list: string; select: string }> = {
   fabric: { list: 'mdi-texture-box', select: 'mdi-feather' },
   quilt: { list: 'mdi-quilt', select: 'mdi-square-rounded' },
   neoforge: { list: 'mdi-anvil', select: 'mdi-anvil' },
+  modded: { list: 'mdi-puzzle', select: 'mdi-puzzle' },
+  unknown: { list: 'mdi-help-circle', select: 'mdi-help-circle' },
   none: { list: 'mdi-minecraft', select: 'mdi-close-circle-outline' },
+}
+
+/** 加载器主题色配置 */
+const LOADER_COLORS: Record<string, { color: string; bgColor: string }> = {
+  forge: { color: 'blue', bgColor: 'blue-container' },
+  fabric: { color: 'red', bgColor: 'red-container' },
+  quilt: { color: 'purple', bgColor: 'purple-container' },
+  neoforge: { color: 'orange', bgColor: 'orange-container' },
+  modded: { color: 'teal', bgColor: 'teal-container' },
+  unknown: { color: 'grey', bgColor: 'grey-container' },
+  none: { color: 'primary', bgColor: 'primary-container' },
+}
+
+/**
+ * 根据加载器类型获取对应主题色
+ */
+export function getLoaderColor(loaderType?: string): { color: string; bgColor: string } {
+  const key = (loaderType || 'none').toLowerCase()
+  return LOADER_COLORS[key] || LOADER_COLORS['none']
 }
 
 /**
@@ -59,4 +80,75 @@ export function getErrorMessage(error: unknown): string {
     return String((error as { message: unknown }).message)
   }
   return String(error)
+}
+
+interface ParsedVersion {
+  type: 'release' | 'rc' | 'pre' | 'snapshot' | 'other' | 'unknown'
+  parts: number[]
+  suffixNum: number
+}
+
+const VERSION_TYPE_PRIORITY: Record<string, number> = {
+  release: 3,
+  rc: 2,
+  pre: 1,
+  other: 0,
+  snapshot: -1,
+  unknown: -2,
+}
+
+function parseVersion(v: string): ParsedVersion {
+  const snapshotMatch = v.match(/^(\d+)w(\d+)([a-z])$/)
+  if (snapshotMatch) {
+    return { type: 'snapshot', parts: [parseInt(snapshotMatch[1]), parseInt(snapshotMatch[2])], suffixNum: 0 }
+  }
+
+  const match = v.match(/^([\d.]+)(?:-(.+))?$/)
+  if (!match) return { type: 'unknown', parts: [0], suffixNum: 0 }
+
+  const parts = match[1].split('.').map(n => parseInt(n) || 0)
+  const suffix = match[2] || ''
+
+  if (suffix.startsWith('rc')) {
+    return { type: 'rc', parts, suffixNum: parseInt(suffix.slice(2)) || 0 }
+  }
+  if (suffix.startsWith('pre')) {
+    return { type: 'pre', parts, suffixNum: parseInt(suffix.slice(3)) || 0 }
+  }
+  if (suffix) {
+    return { type: 'other', parts, suffixNum: 0 }
+  }
+
+  return { type: 'release', parts, suffixNum: 0 }
+}
+
+const parseVersionCache = new Map<string, ParsedVersion>()
+
+function cachedParseVersion(v: string): ParsedVersion {
+  let parsed = parseVersionCache.get(v)
+  if (!parsed) {
+    parsed = parseVersion(v)
+    parseVersionCache.set(v, parsed)
+  }
+  return parsed
+}
+
+export function compareVersionDesc(a: string, b: string): number {
+  const va = cachedParseVersion(a)
+  const vb = cachedParseVersion(b)
+
+  if (va.type === 'snapshot' && vb.type !== 'snapshot') return 1
+  if (vb.type === 'snapshot' && va.type !== 'snapshot') return -1
+
+  const maxLen = Math.max(va.parts.length, vb.parts.length)
+  for (let i = 0; i < maxLen; i++) {
+    const av = va.parts[i] ?? 0
+    const bv = vb.parts[i] ?? 0
+    if (av !== bv) return bv - av
+  }
+
+  const typeDiff = (VERSION_TYPE_PRIORITY[vb.type] ?? 0) - (VERSION_TYPE_PRIORITY[va.type] ?? 0)
+  if (typeDiff !== 0) return typeDiff
+
+  return (vb.suffixNum ?? 0) - (va.suffixNum ?? 0)
 }

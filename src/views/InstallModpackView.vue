@@ -276,6 +276,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useNotificationStore } from '../stores/notificationStore'
 import { modpackApi, instanceApi } from '../services'
 import { logError } from '../utils/logger'
+import { compareVersionDesc } from '../utils/format'
 import type { ModrinthVersion, InstallProgressPayload } from '../types/events'
 
 const route = useRoute()
@@ -506,54 +507,6 @@ onUnmounted(() => {
     clearTimeout(instanceNameCheckTimeout)
   }
 })
-
-function compareVersionDesc(a: string, b: string): number {
-  const parseVersion = (v: string) => {
-    const snapshotMatch = v.match(/^(\d+)w(\d+)([a-z])$/)
-    if (snapshotMatch) {
-      return { type: 'snapshot', parts: [parseInt(snapshotMatch[1]), parseInt(snapshotMatch[2])], suffix: snapshotMatch[3], suffixNum: 0 }
-    }
-    
-    const match = v.match(/^([\d.]+)(?:-(.+))?$/)
-    if (!match) return { type: 'unknown', parts: [0], suffix: v, suffixNum: 0 }
-    
-    const parts = match[1].split('.').map(n => parseInt(n) || 0)
-    const suffix = match[2] || ''
-    
-    let type = 'release'
-    let suffixNum = 0
-    if (suffix.startsWith('rc')) {
-      type = 'rc'
-      suffixNum = parseInt(suffix.slice(2)) || 0
-    } else if (suffix.startsWith('pre')) {
-      type = 'pre'
-      suffixNum = parseInt(suffix.slice(3)) || 0
-    } else if (suffix) {
-      type = 'other'
-    }
-    
-    return { type, parts, suffix, suffixNum }
-  }
-  
-  const va = parseVersion(a)
-  const vb = parseVersion(b)
-  
-  if (va.type === 'snapshot' && vb.type !== 'snapshot') return 1
-  if (vb.type === 'snapshot' && va.type !== 'snapshot') return -1
-  
-  const maxLen = Math.max(va.parts.length, vb.parts.length)
-  for (let i = 0; i < maxLen; i++) {
-    const av = va.parts[i] ?? 0
-    const bv = vb.parts[i] ?? 0
-    if (av !== bv) return bv - av
-  }
-  
-  const typePriority: Record<string, number> = { release: 3, rc: 2, pre: 1, other: 0, snapshot: -1, unknown: -2 }
-  const typeDiff = (typePriority[vb.type] ?? 0) - (typePriority[va.type] ?? 0)
-  if (typeDiff !== 0) return typeDiff
-  
-  return (vb.suffixNum ?? 0) - (va.suffixNum ?? 0)
-}
 </script>
 
 <style scoped>

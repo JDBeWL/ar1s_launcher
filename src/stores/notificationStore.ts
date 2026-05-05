@@ -13,18 +13,16 @@ export interface Notification {
 }
 
 let notificationId = 0
+const MAX_NOTIFICATIONS = 5
 
 export const useNotificationStore = defineStore('notification', () => {
-  // Snackbar 通知队列
   const notifications = ref<Notification[]>([])
   
-  // Dialog 详情
   const dialogVisible = ref(false)
   const dialogTitle = ref('')
   const dialogContent = ref('')
   const dialogType = ref<NotificationType>('info')
 
-  // 确认对话框
   const confirmVisible = ref(false)
   const confirmTitle = ref('')
   const confirmContent = ref('')
@@ -34,6 +32,10 @@ export const useNotificationStore = defineStore('notification', () => {
   function notify(type: NotificationType, title: string, message?: string, timeout = 4000) {
     const id = ++notificationId
     notifications.value.push({ id, type, title, message, timeout })
+    
+    if (notifications.value.length > MAX_NOTIFICATIONS) {
+      notifications.value.splice(0, notifications.value.length - MAX_NOTIFICATIONS)
+    }
     
     if (timeout > 0) {
       setTimeout(() => {

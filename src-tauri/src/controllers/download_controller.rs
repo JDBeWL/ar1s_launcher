@@ -1,6 +1,7 @@
 use crate::errors::LauncherError;
 use crate::models::VersionManifest;
 use crate::services::download;
+use crate::services::download::VersionSizeInfo;
 use crate::services::download::batch::set_cancel_flag;
 use tauri::{Emitter, Window};
 
@@ -8,6 +9,15 @@ use tauri::{Emitter, Window};
 #[tauri::command]
 pub async fn get_versions() -> Result<VersionManifest, LauncherError> {
     download::get_versions().await
+}
+
+/// 获取指定版本的文件大小信息
+#[tauri::command]
+pub async fn get_version_size(
+    version_id: String,
+    mirror: Option<String>,
+) -> Result<VersionSizeInfo, LauncherError> {
+    download::get_version_size(version_id, mirror).await
 }
 
 /// 下载 Minecraft 版本

@@ -5,29 +5,13 @@
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
-interface LogEntry {
-  level: LogLevel;
-  message: string;
-  error?: unknown;
-  context?: string;
-  timestamp: number;
-}
-
 class Logger {
-  private formatMessage(level: LogLevel, message: string, context?: string): string {
+  private formatMessage(_level: LogLevel, message: string, context?: string): string {
     const prefix = context ? `[${context}]` : '';
     return `${prefix} ${message}`.trim();
   }
 
   private log(level: LogLevel, message: string, error?: unknown, context?: string): void {
-    const entry: LogEntry = {
-      level,
-      message,
-      error,
-      context,
-      timestamp: Date.now(),
-    };
-
     const formattedMessage = this.formatMessage(level, message, context);
 
     // 根据环境决定输出方式

@@ -25,6 +25,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
             controllers::download_controller::get_versions,
+            controllers::download_controller::get_version_size,
             controllers::download_controller::download_version,
             controllers::download_controller::cancel_download,
             controllers::launcher_controller::launch_minecraft,
@@ -48,6 +49,12 @@ pub fn run() {
             controllers::auth_controller::set_saved_username,
             controllers::auth_controller::get_saved_uuid,
             controllers::auth_controller::set_saved_uuid,
+            controllers::auth_controller::get_auth_status,
+            controllers::auth_controller::start_microsoft_login,
+            controllers::auth_controller::complete_microsoft_login,
+            controllers::auth_controller::refresh_microsoft_auth,
+            controllers::auth_controller::logout_microsoft,
+            controllers::auth_controller::set_auth_type,
             controllers::config_controller::get_total_memory,
             controllers::config_controller::get_memory_stats,
             controllers::config_controller::recommend_memory,

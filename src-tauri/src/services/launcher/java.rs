@@ -45,3 +45,44 @@ pub fn resolve_java_path(config: &GameConfig) -> Result<String, LauncherError> {
         ))
     }
 }
+
+/// 检测 Java 版本号
+/// 返回主版本号，如 Java 17 返回 17，Java 21 返回 21
+/// 如果检测失败返回 None
+pub fn detect_java_version(java_path: &str) -> Option<u32> {
+    let output = Command::new(java_path)
+        .arg("-version")
+        .output()
+        .ok()?;
+
+    // java -version 输出到 stderr
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    
+    // 格式1: java version "1.8.0_XXX" (Java 8 及更早)
+    // 格式2: java version "17.0.X" (Java 9+)
+    // 格式3: openjdk version "21.0.X" (OpenJDK)
+    for line in stderr.lines() {
+        if line.contains("version") {
+            // 提取引号中的版本号
+            if let Some(start) = line.find('"') {
+                if let Some(end) = line[start + 1..].find('"') {
+                    let version_str = &line[start + 1..start + 1 + end];
+                    let parts: Vec<&str> = version_str.split('.').collect();
+                    if parts.is_empty() {
+                        continue;
+                    }
+                    if let Ok(major) = parts[0].parse::<u32>() {
+                        // Java 8 及更早使用 1.x 格式
+                        return if major == 1 && parts.len() > 1 {
+                            parts[1].parse::<u32>().ok()
+                        } else {
+                            Some(major)
+                        };
+                    }
+                }
+            }
+        }
+    }
+    
+    None
+}

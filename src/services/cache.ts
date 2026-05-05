@@ -135,25 +135,6 @@ export async function withCache<T>(
   return data;
 }
 
-/**
- * 使缓存失效的装饰器
- * 用于写操作后清除相关缓存
- */
-export function invalidateCache(...prefixes: string[]) {
-  return function <T extends (...args: unknown[]) => Promise<unknown>>(fn: T): T {
-    return (async (...args: Parameters<T>) => {
-      const result = await fn(...args);
-      
-      // 清除相关缓存
-      for (const prefix of prefixes) {
-        cache.deleteByPrefix(prefix);
-      }
-      
-      return result;
-    }) as T;
-  };
-}
-
 // 定期清理过期缓存（每 5 分钟）
 if (typeof window !== 'undefined') {
   setInterval(() => {

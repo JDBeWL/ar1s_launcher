@@ -19,11 +19,16 @@ pub fn extract_natives(
         format!("Natives目录: {}", natives_dir.display()),
     );
 
+    // 如果 natives 目录已存在且非空，跳过解压（缓存复用）
     if natives_dir.exists() {
-        emit(
-            "log-debug",
-            format!("清理旧的Natives目录: {}", natives_dir.display()),
-        );
+        if fs::read_dir(&natives_dir).map(|mut d| d.next().is_some()).unwrap_or(false) {
+            emit(
+                "log-debug",
+                "Natives目录已存在且非空，跳过解压（使用缓存）".to_string(),
+            );
+            return Ok(natives_dir);
+        }
+        // 目录存在但为空，删除后重新创建
         fs::remove_dir_all(&natives_dir)?;
     }
     fs::create_dir_all(&natives_dir)?;

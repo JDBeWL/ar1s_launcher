@@ -1,8 +1,9 @@
 //! 游戏进程启动和监控逻辑
 
 use crate::errors::LauncherError;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,7 +34,7 @@ pub fn spawn_and_monitor_process(
     let _ = window.emit("log-debug", format!("最终启动命令: {:?}", command));
     window.emit("launch-command", format!("{:?}", command))?;
 
-    // 启动游戏进程但不等待它结束
+    // 启动游戏进程
     let child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -53,24 +54,59 @@ pub fn spawn_and_monitor_process(
 
 /// 启动监控线程（带超时机制）
 fn spawn_monitor_thread(mut child: Child, window: tauri::Window, pid: u32) {
+    let stdout = child.stdout.take().expect("Failed to open stdout");
+    let stderr = child.stderr.take().expect("Failed to open stderr");
+
+    let is_running = Arc::new(AtomicBool::new(true));
+    let window_clone = window.clone();
+    let is_running_stdout = is_running.clone();
+
+    // 启动 stdout 读取线程
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                let _ = window_clone.emit("log-debug", l);
+            }
+            if !is_running_stdout.load(Ordering::SeqCst) {
+                break;
+            }
+        }
+    });
+
+    let window_clone_err = window.clone();
+    let is_running_stderr = is_running.clone();
+    // 启动 stderr 读取线程
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            if let Ok(l) = line {
+                let _ = window_clone_err.emit("log-error", l);
+            }
+            if !is_running_stderr.load(Ordering::SeqCst) {
+                break;
+            }
+        }
+    });
+
     std::thread::spawn(move || {
         let start_time = Instant::now();
-        let is_running = Arc::new(AtomicBool::new(true));
+        let is_running_main = is_running.clone();
 
         // 启动超时检查线程
-        let is_running_clone = is_running.clone();
-        let window_clone = window.clone();
+        let is_running_timeout = is_running.clone();
+        let window_timeout = window.clone();
         let timeout_thread = std::thread::spawn(move || {
-            while is_running_clone.load(Ordering::SeqCst) {
-                std::thread::sleep(Duration::from_secs(60)); // 每分钟检查一次
+            while is_running_timeout.load(Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_secs(60));
                 
-                if !is_running_clone.load(Ordering::SeqCst) {
+                if !is_running_timeout.load(Ordering::SeqCst) {
                     break;
                 }
 
                 let elapsed = start_time.elapsed();
                 if elapsed > MAX_GAME_RUNTIME {
-                    let _ = window_clone.emit(
+                    let _ = window_timeout.emit(
                         "log-warning",
                         format!(
                             "游戏运行时间超过 {} 小时，监控线程将停止",
@@ -84,13 +120,12 @@ fn spawn_monitor_thread(mut child: Child, window: tauri::Window, pid: u32) {
 
         // 等待进程结束
         match wait_for_process_with_timeout(&mut child, MAX_GAME_RUNTIME) {
-            Ok(Some(output)) => {
-                is_running.store(false, Ordering::SeqCst);
-                handle_process_exit(output, &window);
+            Ok(Some(status)) => {
+                is_running_main.store(false, Ordering::SeqCst);
+                handle_process_exit(status, &window);
             }
             Ok(None) => {
-                // 超时，进程仍在运行
-                is_running.store(false, Ordering::SeqCst);
+                is_running_main.store(false, Ordering::SeqCst);
                 let _ = window.emit(
                     "log-warning",
                     format!("游戏进程 (PID: {}) 运行超时，停止监控", pid),
@@ -101,13 +136,12 @@ fn spawn_monitor_thread(mut child: Child, window: tauri::Window, pid: u32) {
                 );
             }
             Err(e) => {
-                is_running.store(false, Ordering::SeqCst);
+                is_running_main.store(false, Ordering::SeqCst);
                 let _ = window.emit("log-error", format!("监控游戏进程时出错: {}", e));
                 let _ = window.emit("minecraft-error", format!("监控游戏进程时出错: {}", e));
             }
         }
 
-        // 等待超时检查线程结束
         let _ = timeout_thread.join();
     });
 }
@@ -116,49 +150,16 @@ fn spawn_monitor_thread(mut child: Child, window: tauri::Window, pid: u32) {
 fn wait_for_process_with_timeout(
     child: &mut Child,
     timeout: Duration,
-) -> Result<Option<std::process::Output>, std::io::Error> {
+) -> Result<Option<ExitStatus>, std::io::Error> {
     let start = Instant::now();
 
     loop {
-        // 检查进程是否已结束
         match child.try_wait()? {
-            Some(status) => {
-                // 进程已结束，收集输出
-                let stdout = child
-                    .stdout
-                    .take()
-                    .map(|mut s| {
-                        let mut buf = Vec::new();
-                        use std::io::Read;
-                        // 使用有限的读取避免阻塞
-                        let _ = s.read_to_end(&mut buf);
-                        buf
-                    })
-                    .unwrap_or_default();
-
-                let stderr = child
-                    .stderr
-                    .take()
-                    .map(|mut s| {
-                        let mut buf = Vec::new();
-                        use std::io::Read;
-                        let _ = s.read_to_end(&mut buf);
-                        buf
-                    })
-                    .unwrap_or_default();
-
-                return Ok(Some(std::process::Output {
-                    status,
-                    stdout,
-                    stderr,
-                }));
-            }
+            Some(status) => return Ok(Some(status)),
             None => {
-                // 进程仍在运行
                 if start.elapsed() > timeout {
-                    return Ok(None); // 超时
+                    return Ok(None);
                 }
-                // 短暂休眠避免 CPU 空转
                 std::thread::sleep(Duration::from_millis(500));
             }
         }
@@ -166,31 +167,7 @@ fn wait_for_process_with_timeout(
 }
 
 /// 处理进程退出
-fn handle_process_exit(output: std::process::Output, window: &tauri::Window) {
-    let status = output.status;
-
-    // 输出 stdout（限制大小避免内存问题）
-    if !output.stdout.is_empty() {
-        let stdout_str = String::from_utf8_lossy(&output.stdout);
-        let truncated = if stdout_str.len() > 10000 {
-            format!("{}...[truncated]", &stdout_str[..10000])
-        } else {
-            stdout_str.to_string()
-        };
-        let _ = window.emit("log-debug", format!("游戏 stdout:\n{}", truncated));
-    }
-
-    // 输出 stderr（限制大小）
-    if !output.stderr.is_empty() {
-        let stderr_str = String::from_utf8_lossy(&output.stderr);
-        let truncated = if stderr_str.len() > 10000 {
-            format!("{}...[truncated]", &stderr_str[..10000])
-        } else {
-            stderr_str.to_string()
-        };
-        let _ = window.emit("log-error", format!("游戏 stderr:\n{}", truncated));
-    }
-
+fn handle_process_exit(status: ExitStatus, window: &tauri::Window) {
     let _ = window.emit(
         "log-debug",
         format!("游戏进程退出，状态码: {:?}", status.code()),
@@ -198,35 +175,9 @@ fn handle_process_exit(output: std::process::Output, window: &tauri::Window) {
 
     // 如果游戏以非零退出码退出，发送错误事件
     if status.code().unwrap_or(-1) != 0 {
-        let mut combined = String::new();
-        if !output.stdout.is_empty() {
-            combined.push_str("[stdout]\n");
-            let stdout_str = String::from_utf8_lossy(&output.stdout);
-            if stdout_str.len() > 5000 {
-                combined.push_str(&stdout_str[..5000]);
-                combined.push_str("...[truncated]");
-            } else {
-                combined.push_str(&stdout_str);
-            }
-            combined.push('\n');
-        }
-        if !output.stderr.is_empty() {
-            combined.push_str("[stderr]\n");
-            let stderr_str = String::from_utf8_lossy(&output.stderr);
-            if stderr_str.len() > 5000 {
-                combined.push_str(&stderr_str[..5000]);
-                combined.push_str("...[truncated]");
-            } else {
-                combined.push_str(&stderr_str);
-            }
-        }
         let _ = window.emit(
             "minecraft-error",
-            format!(
-                "游戏以非零退出 (code={:?})，输出:\n{}",
-                status.code(),
-                combined
-            ),
+            format!("游戏以非零状态码退出: {:?}", status.code()),
         );
     }
 
@@ -236,3 +187,4 @@ fn handle_process_exit(output: std::process::Output, window: &tauri::Window) {
         format!("游戏已退出，状态码: {:?}", status.code()),
     );
 }
+

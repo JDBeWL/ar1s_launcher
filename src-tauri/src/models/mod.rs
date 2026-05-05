@@ -22,6 +22,20 @@ pub fn default_false() -> bool {
     false
 }
 
+// 认证类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthType {
+    Offline,
+    Microsoft,
+}
+
+impl Default for AuthType {
+    fn default() -> Self {
+        AuthType::Offline
+    }
+}
+
 // 游戏配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameConfig {
@@ -57,6 +71,18 @@ pub struct GameConfig {
     pub instance_last_played: HashMap<String, i64>,
     /// 上次选择的游戏版本
     pub last_selected_version: Option<String>,
+    /// 认证类型 (offline / microsoft)
+    #[serde(default)]
+    pub auth_type: AuthType,
+    /// Microsoft 正版 access_token
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ms_access_token: Option<String>,
+    /// Microsoft refresh_token
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ms_refresh_token: Option<String>,
+    /// 正版 token 过期时间 (Unix 时间戳秒)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ms_expires_at: Option<i64>,
 }
 
 // 游戏目录信息
@@ -99,12 +125,14 @@ pub struct LaunchOptions {
     pub version: String,
     pub username: String,
     pub memory: Option<u32>,
-    /// 窗口宽度
     pub window_width: Option<u32>,
-    /// 窗口高度
     pub window_height: Option<u32>,
-    /// 是否全屏
     pub fullscreen: Option<bool>,
+    pub auth_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
 }
 
 // 下载状态
@@ -159,6 +187,7 @@ pub struct InstanceInfo {
     pub loader_type: Option<String>,
     pub game_version: Option<String>,
     pub last_played: Option<i64>,
+    pub mod_count: Option<u32>,
 }
 
 // 整合包相关模型

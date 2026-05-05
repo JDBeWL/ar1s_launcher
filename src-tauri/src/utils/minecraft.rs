@@ -70,6 +70,35 @@ pub fn evaluate_rules(rules: Option<&serde_json::Value>) -> bool {
     allowed
 }
 
+/// 修改 options.txt 设置游戏语言
+pub fn set_game_language(instance_dir: &std::path::Path, lang: &str) -> std::io::Result<()> {
+    let options_path = instance_dir.join("options.txt");
+    let mut content = if options_path.exists() {
+        std::fs::read_to_string(&options_path)?
+    } else {
+        String::new()
+    };
+
+    let lang_line = format!("lang:{}", lang);
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let mut found = false;
+
+    for line in lines.iter_mut() {
+        if line.starts_with("lang:") {
+            *line = lang_line.clone();
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        lines.push(lang_line);
+    }
+
+    std::fs::write(&options_path, lines.join("\n"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

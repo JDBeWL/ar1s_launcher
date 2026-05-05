@@ -5,7 +5,7 @@ import InstanceCard from "../components/instance/InstanceCard.vue";
 import { useNotificationStore } from "../stores/notificationStore";
 import { instanceApi } from "../services";
 import type { GameInstance } from "../types/events";
-import { formatLastPlayed, getLoaderIcon, getErrorMessage } from "../utils/format";
+import { formatLastPlayed, getLoaderIcon, getLoaderColor, getErrorMessage } from "../utils/format";
 import { logError } from "../utils/logger";
 
 const router = useRouter();
@@ -20,6 +20,7 @@ const renameDialog = ref(false);
 const renameInstanceName = ref("");
 const currentInstance = ref<GameInstance | null>(null);
 const deleteDialog = ref(false);
+const deleteConfirmName = ref('');
 const sortBy = ref(localStorage.getItem('instanceSortBy') || 'lastPlayed');
 
 const sortOptions = [
@@ -99,8 +100,13 @@ async function renameInstance() {
 
 function openDeleteDialog(instance: GameInstance) {
   currentInstance.value = instance;
+  deleteConfirmName.value = '';
   deleteDialog.value = true;
 }
+
+const deleteConfirmed = computed(() => {
+  return deleteConfirmName.value === currentInstance.value?.name;
+});
 
 async function deleteInstance() {
   if (!currentInstance.value) return;
@@ -211,11 +217,32 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 加载状态 -->
-    <div v-if="loading" class="text-center py-12">
-      <v-progress-circular indeterminate size="40" color="primary" />
-      <div class="text-body-2 text-on-surface-variant mt-3">加载中...</div>
-    </div>
+    <!-- 加载状态 - 骨架屏 -->
+    <template v-if="loading">
+      <v-row dense>
+        <v-col
+          v-for="i in 6"
+          :key="i"
+          cols="12"
+          sm="6"
+          md="4"
+        >
+          <v-card color="surface-container" variant="flat" class="skeleton-card">
+            <v-card-text class="pa-4">
+              <div class="d-flex align-center mb-3">
+                <v-skeleton-loader type="avatar" class="mr-3" style="width: 44px; height: 44px;" />
+                <div class="flex-grow-1">
+                  <v-skeleton-loader type="text" style="width: 60%;" />
+                  <v-skeleton-loader type="text" style="width: 40%;" class="mt-1" />
+                </div>
+              </div>
+              <v-skeleton-loader type="text" style="width: 50%;" class="mb-3" />
+              <v-skeleton-loader type="button" style="width: 100%;" />
+            </v-card-text>
+          </v-card>
+        </v-col>
+      </v-row>
+    </template>
 
     <!-- 空状态 -->
     <div v-else-if="instances.length === 0" class="text-center py-12">
@@ -269,8 +296,8 @@ onMounted(() => {
           class="py-3"
         >
           <template #prepend>
-            <v-avatar size="44" color="primary-container" class="mr-3">
-              <v-icon size="22" color="on-primary-container">{{ getLoaderIcon(instance.loaderType) }}</v-icon>
+            <v-avatar size="44" :color="getLoaderColor(instance.loaderType).bgColor" class="mr-3">
+              <v-icon size="22" :color="getLoaderColor(instance.loaderType).color">{{ getLoaderIcon(instance.loaderType) }}</v-icon>
             </v-avatar>
           </template>
 
@@ -361,18 +388,26 @@ onMounted(() => {
     </v-dialog>
 
     <!-- 删除确认对话框 -->
-    <v-dialog v-model="deleteDialog" max-width="360">
+    <v-dialog v-model="deleteDialog" max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
           <div class="text-h6 font-weight-bold mb-2">删除实例</div>
-          <div class="text-body-2 text-on-surface-variant">
+          <div class="text-body-2 text-on-surface-variant mb-4">
             确定要删除 <strong class="text-on-surface">{{ currentInstance?.name }}</strong> 吗？此操作无法撤销。
           </div>
+          <v-text-field
+            v-model="deleteConfirmName"
+            placeholder="请输入实例名称以确认删除"
+            density="comfortable"
+            variant="outlined"
+            hide-details
+            autofocus
+          />
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
           <v-btn variant="text" @click="deleteDialog = false">取消</v-btn>
-          <v-btn color="error" @click="deleteInstance">删除</v-btn>
+          <v-btn color="error" :disabled="!deleteConfirmed" @click="deleteInstance">删除</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

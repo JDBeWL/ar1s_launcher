@@ -1,6 +1,5 @@
-import { ref, onScopeDispose } from 'vue';
-import { listen } from '@tauri-apps/api/event';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import { ref } from 'vue';
+import { useEventSubscription } from './useEventSubscription';
 import { configApi } from '../services';
 import { logError } from '../utils/logger';
 
@@ -9,8 +8,11 @@ export function useVersionManager() {
     const selectedVersion = ref('');
     const loading = ref(false);
     const gameDir = ref('');
-    
-    let unlistenGameDirChanged: UnlistenFn | null = null;
+
+    const eventSub = useEventSubscription<string>('game-dir-changed', (event) => {
+        gameDir.value = event.payload;
+        loadInstalledVersions();
+    });
 
     async function loadGameDir() {
         try {
@@ -27,8 +29,7 @@ export function useVersionManager() {
             const dirInfo = await configApi.getGameDirInfo();
             if (dirInfo?.versions) {
                 installedVersions.value = dirInfo.versions;
-                
-                // 尝试加载上次选择的版本
+
                 if (!selectedVersion.value) {
                     const lastVersion = await configApi.getLastSelectedVersion();
                     if (lastVersion && installedVersions.value.includes(lastVersion)) {
@@ -46,24 +47,12 @@ export function useVersionManager() {
     }
 
     async function initListeners() {
-        // 避免重复监听
-        if (unlistenGameDirChanged) return;
-        
-        unlistenGameDirChanged = await listen<string>('game-dir-changed', (event) => {
-            gameDir.value = event.payload;
-            loadInstalledVersions();
-        });
+        await eventSub.subscribe()
     }
 
     function cleanup() {
-        if (unlistenGameDirChanged) {
-            unlistenGameDirChanged();
-            unlistenGameDirChanged = null;
-        }
+        eventSub.unsubscribe()
     }
-
-    // 作用域销毁时自动清理
-    onScopeDispose(cleanup);
 
     return {
         installedVersions,

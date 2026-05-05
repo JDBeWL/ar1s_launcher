@@ -194,6 +194,12 @@ pub async fn create_instance(
     }
 
     send_progress(100, "实例创建完成！", false);
+
+    // 触发游戏目录变更事件，通知前端刷新版本列表
+    if let Ok(game_dir_str) = config::get_game_dir() {
+        let _ = window.emit("game-dir-changed", &game_dir_str);
+    }
+
     Ok(())
 }
 
@@ -236,30 +242,47 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
                             .and_then(|v| v["id"].as_str().map(String::from))
                             .unwrap_or_else(|| name.clone());
 
+                        let mod_count = count_mods(&path);
+
                         // 解析加载器类型和游戏版本
                         let (loader_type, game_version) = json_value
                             .as_ref()
                             .map(|v| {
                                 let inherits = v["inheritsFrom"].as_str();
                                 let id = v["id"].as_str().unwrap_or("");
+                                let main_class = v["mainClass"].as_str().unwrap_or("");
                                 
-                                if let Some(base_version) = inherits {
-                                    // 有继承关系，说明是模组加载器版本
-                                    let loader = if id.contains("forge") || id.contains("Forge") {
-                                        "Forge"
-                                    } else if id.contains("fabric") || id.contains("Fabric") {
-                                        "Fabric"
-                                    } else if id.contains("quilt") || id.contains("Quilt") {
-                                        "Quilt"
-                                    } else if id.contains("neoforge") || id.contains("NeoForge") {
-                                        "NeoForge"
-                                    } else {
-                                        "None"
-                                    };
-                                    (Some(loader.to_string()), Some(base_version.to_string()))
+                                // 尝试从 ID 或 mainClass 中识别加载器
+                                let mut detected_loader = if id.to_lowercase().contains("forge") || main_class.contains("forge") || main_class.contains("LaunchWrapper") || main_class.contains("modlauncher") {
+                                    Some("Forge".to_string())
+                                } else if id.to_lowercase().contains("fabric") || main_class.contains("fabricmc") || main_class.contains("knot") && main_class.contains("fabric") {
+                                    Some("Fabric".to_string())
+                                } else if id.to_lowercase().contains("quilt") || main_class.contains("quiltmc") || main_class.contains("knot") && main_class.contains("quilt") {
+                                    Some("Quilt".to_string())
+                                } else if id.to_lowercase().contains("neoforge") || main_class.contains("neoforge") {
+                                    Some("NeoForge".to_string())
                                 } else {
-                                    (Some("None".to_string()), Some(version_id.clone()))
-                                }
+                                    None
+                                };
+
+                                // 如果有继承关系，优先使用继承信息
+                                let detected_version = if let Some(base_version) = inherits {
+                                    if detected_loader.is_none() {
+                                        detected_loader = Some("Unknown".to_string());
+                                    }
+                                    Some(base_version.to_string())
+                                } else {
+                                    Some(version_id.clone())
+                                };
+
+                                // 如果还是没检测到加载器，但有 mods 文件夹，则标记为 "Modded"
+                                let final_loader = if detected_loader.is_none() && mod_count.unwrap_or(0) > 0 {
+                                    Some("Modded".to_string())
+                                } else {
+                                    detected_loader.or(Some("None".to_string()))
+                                };
+
+                                (final_loader, detected_version)
                             })
                             .unwrap_or((None, None));
 
@@ -278,6 +301,7 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
                             loader_type,
                             game_version,
                             last_played: config::get_instance_last_played(&name),
+                            mod_count,
                         });
                     }
                 }
@@ -285,6 +309,24 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
         }
     }
     Ok(instances)
+}
+
+fn count_mods(instance_path: &Path) -> Option<u32> {
+    let mods_dir = instance_path.join("mods");
+    if !mods_dir.is_dir() {
+        return None;
+    }
+    let count = fs::read_dir(&mods_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "jar")
+                .unwrap_or(false)
+        })
+        .count() as u32;
+    if count == 0 { None } else { Some(count) }
 }
 
 /// 删除实例
@@ -378,6 +420,16 @@ pub async fn launch_instance(instance_name: String, window: Window) -> Result<()
 
     // 注意: update_instance_last_played 已在 launcher::launch_minecraft 中调用，此处无需重复
 
+    let (auth_type, access_token, uuid) = match config.auth_type {
+        crate::models::AuthType::Microsoft => {
+            let at = "microsoft".to_string();
+            let token = config.ms_access_token.clone();
+            let uid = config.uuid.clone();
+            (Some(at), token, uid)
+        }
+        crate::models::AuthType::Offline => (None, None, None),
+    };
+
     let launch_options = LaunchOptions {
         version: instance_name,
         username: config.username.unwrap_or_else(|| "Player".to_string()),
@@ -385,6 +437,9 @@ pub async fn launch_instance(instance_name: String, window: Window) -> Result<()
         window_width: config.window_width,
         window_height: config.window_height,
         fullscreen: Some(config.fullscreen),
+        auth_type,
+        access_token,
+        uuid,
     };
 
     launcher::launch_minecraft(launch_options, window).await

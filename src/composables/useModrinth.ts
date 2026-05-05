@@ -2,26 +2,7 @@ import { ref, computed, watch } from 'vue';
 import { api } from '../services';
 import { useDebounceFn } from './useDebounce';
 import { logError } from '../utils/logger';
-
-export interface ModrinthModpack {
-    slug: string;
-    title: string;
-    author: string;
-    downloads: number;
-    game_versions: string[];
-    loaders: string[];
-    description: string;
-    icon_url?: string;
-    date_created: string;
-    date_modified: string;
-    latest_version: string;
-    categories: string[];
-}
-
-export interface ModrinthSearchResult {
-    hits: ModrinthModpack[];
-    total_hits: number;
-}
+import type { ModrinthModpack } from '../types/events';
 
 export function useModrinth() {
     const modpackSearchQuery = ref("");

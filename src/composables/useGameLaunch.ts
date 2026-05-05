@@ -1,6 +1,5 @@
-import { ref, onScopeDispose } from 'vue';
-import { listen } from '@tauri-apps/api/event';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import { ref } from 'vue';
+import { useEventSubscription } from './useEventSubscription';
 import { versionApi, launcherApi } from '../services';
 import { useSettingsStore } from '../stores/settings';
 import { useNotificationStore } from '../stores/notificationStore';
@@ -8,18 +7,29 @@ import { getErrorMessage } from '../utils/format';
 import { logError } from '../utils/logger';
 import type { DownloadProgress } from '../types/events';
 
+interface AuthInfo {
+    authType: string;
+    accessToken: string;
+    uuid: string;
+}
+
 export function useGameLaunch() {
     const loading = ref(false);
     const isRepairing = ref(false);
     const repairProgress = ref<DownloadProgress | null>(null);
     const settingsStore = useSettingsStore();
     const notificationStore = useNotificationStore();
-    
-    let unlistenRepairProgress: UnlistenFn | null = null;
+
+    const repairEventSub = useEventSubscription<DownloadProgress>('download-progress', (event) => {
+        if (isRepairing.value) {
+            repairProgress.value = event.payload;
+        }
+    });
 
     async function launchGame(
         version: string,
         username: string,
+        auth?: AuthInfo,
     ) {
         if (!version) {
             notificationStore.warning('请先选择一个版本');
@@ -34,7 +44,6 @@ export function useGameLaunch() {
             if (missingFiles.length > 0) {
                 loading.value = false;
                 
-                // 询问用户是否修复
                 const shouldRepair = await notificationStore.confirm(
                     '文件缺失',
                     `检测到 ${missingFiles.length} 个游戏文件缺失，是否立即修复？`,
@@ -51,6 +60,9 @@ export function useGameLaunch() {
                 version,
                 username,
                 memory: settingsStore.maxMemory,
+                auth_type: auth?.authType,
+                access_token: auth?.accessToken,
+                uuid: auth?.uuid,
             });
         } catch (err) {
             logError('Failed to launch game', err, 'useGameLaunch');
@@ -70,12 +82,7 @@ export function useGameLaunch() {
             percent: 0,
         };
 
-        // 清理之前的监听器
-        cleanupRepairListener();
-        
-        unlistenRepairProgress = await listen<DownloadProgress>('download-progress', (event) => {
-            repairProgress.value = event.payload;
-        });
+        await repairEventSub.subscribe();
 
         try {
             const mirror = settingsStore.downloadMirror === 'bmcl' ? 'bmcl' : undefined;
@@ -86,21 +93,11 @@ export function useGameLaunch() {
             logError('Repair failed', err, 'useGameLaunch');
             notificationStore.error('修复失败', getErrorMessage(err), true);
         } finally {
-            cleanupRepairListener();
+            repairEventSub.unsubscribe();
             isRepairing.value = false;
             repairProgress.value = null;
         }
     }
-
-    function cleanupRepairListener() {
-        if (unlistenRepairProgress) {
-            unlistenRepairProgress();
-            unlistenRepairProgress = null;
-        }
-    }
-
-    // 作用域销毁时自动清理
-    onScopeDispose(cleanupRepairListener);
 
     return {
         loading,

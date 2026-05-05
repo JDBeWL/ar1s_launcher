@@ -1,37 +1,53 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick } from 'vue';
-import GeneralSettings from "../components/settings/GeneralSettings.vue";
-import JavaSettings from "../components/settings/JavaSettings.vue";
-import MemorySettings from "../components/settings/MemorySettings.vue";
-import WindowSettings from "../components/settings/WindowSettings.vue";
+import { ref, onMounted, onUnmounted, nextTick, computed, defineAsyncComponent } from 'vue';
+
+const GeneralSettings = defineAsyncComponent(() => import('../components/settings/GeneralSettings.vue'));
+const AuthSettings = defineAsyncComponent(() => import('../components/settings/AuthSettings.vue'));
+const JavaSettings = defineAsyncComponent(() => import('../components/settings/JavaSettings.vue'));
+const MemorySettings = defineAsyncComponent(() => import('../components/settings/MemorySettings.vue'));
+const WindowSettings = defineAsyncComponent(() => import('../components/settings/WindowSettings.vue'));
 
 const activeSection = ref('general');
 const contentRef = ref<HTMLElement | null>(null);
 const isScrollingByClick = ref(false);
+const isSmallScreen = ref(false);
 
 const sections = [
   { id: 'general', title: '常规设置', icon: 'mdi-cog-outline' },
+  { id: 'auth', title: '账户与认证', icon: 'mdi-account-circle-outline' },
   { id: 'java', title: 'Java 配置', icon: 'mdi-language-java' },
   { id: 'memory', title: '内存管理', icon: 'mdi-memory' },
   { id: 'window', title: '窗口设置', icon: 'mdi-monitor' },
 ];
 
+const activeTab = computed({
+  get: () => activeSection.value,
+  set: (val: string) => scrollToSection(val)
+});
+
+function checkScreenSize() {
+  isSmallScreen.value = window.innerWidth < 768;
+}
+
 function scrollToSection(sectionId: string) {
   isScrollingByClick.value = true;
   activeSection.value = sectionId;
+
+  if (isSmallScreen.value) return;
+
   const element = document.getElementById(`section-${sectionId}`);
   if (element) {
     element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    // 等待平滑滚动完成后再恢复 scroll spy
     setTimeout(() => {
       isScrollingByClick.value = false;
     }, 600);
+  } else {
+    isScrollingByClick.value = false;
   }
 }
 
-// Scroll spy：监听右侧内容滚动，自动高亮对应的左侧导航项
 function handleScroll() {
-  if (isScrollingByClick.value) return;
+  if (isScrollingByClick.value || isSmallScreen.value) return;
 
   const container = contentRef.value;
   if (!container) return;
@@ -39,13 +55,11 @@ function handleScroll() {
   const scrollTop = container.scrollTop;
   const containerHeight = container.clientHeight;
 
-  // 如果滚到底部，高亮最后一个
   if (scrollTop + containerHeight >= container.scrollHeight - 10) {
     activeSection.value = sections[sections.length - 1].id;
     return;
   }
 
-  // 找到当前可见区域中最靠上的 section
   for (let i = sections.length - 1; i >= 0; i--) {
     const el = document.getElementById(`section-${sections[i].id}`);
     if (el) {
@@ -61,62 +75,101 @@ function handleScroll() {
 }
 
 onMounted(() => {
+  checkScreenSize();
+  window.addEventListener('resize', checkScreenSize);
   nextTick(() => {
     contentRef.value?.addEventListener('scroll', handleScroll, { passive: true });
   });
 });
 
 onUnmounted(() => {
+  window.removeEventListener('resize', checkScreenSize);
   contentRef.value?.removeEventListener('scroll', handleScroll);
 });
 </script>
 
 <template>
   <div class="settings-container">
-    <!-- 左侧导航 -->
-    <div class="settings-nav">
-      <div class="nav-header pa-4">
-        <h1 class="text-h5 font-weight-bold">设置</h1>
-        <p class="text-body-2 text-on-surface-variant mt-1">管理启动器配置</p>
+    <!-- 小屏幕：顶部标签页 -->
+    <template v-if="isSmallScreen">
+      <div class="settings-mobile">
+        <div class="pa-4 pb-0">
+          <h1 class="text-h5 font-weight-bold">设置</h1>
+          <p class="text-body-2 text-on-surface-variant mt-1">管理启动器配置</p>
+        </div>
+        <v-tabs
+          v-model="activeTab"
+          color="primary"
+          density="comfortable"
+          class="px-2"
+          show-arrows
+        >
+          <v-tab
+            v-for="section in sections"
+            :key="section.id"
+            :value="section.id"
+            :prepend-icon="section.icon"
+            size="small"
+          >
+            {{ section.title }}
+          </v-tab>
+        </v-tabs>
+
+        <div class="settings-mobile-content pa-4">
+          <GeneralSettings v-if="activeSection === 'general'" />
+          <AuthSettings v-else-if="activeSection === 'auth'" />
+          <JavaSettings v-else-if="activeSection === 'java'" />
+          <MemorySettings v-else-if="activeSection === 'memory'" />
+          <WindowSettings v-else-if="activeSection === 'window'" />
+        </div>
       </div>
-      
-      <v-list nav density="comfortable" class="px-2" bg-color="transparent">
-        <v-list-item
-          v-for="section in sections"
-          :key="section.id"
-          :active="activeSection === section.id"
-          :prepend-icon="section.icon"
-          :title="section.title"
-          class="mb-1 settings-nav-item"
-          @click="scrollToSection(section.id)"
-        />
-      </v-list>
-    </div>
+    </template>
 
-    <!-- 右侧内容 -->
-    <div ref="contentRef" class="settings-content">
-      <div class="content-wrapper pa-6">
-        <!-- 常规设置 -->
-        <section id="section-general" class="settings-section mb-8">
-          <GeneralSettings />
-        </section>
-
-        <!-- Java 配置 -->
-        <section id="section-java" class="settings-section mb-8">
-          <JavaSettings />
-        </section>
-
-        <!-- 内存管理 -->
-        <section id="section-memory" class="settings-section mb-8">
-          <MemorySettings />
-        </section>
-
-        <!-- 窗口设置 -->
-        <section id="section-window" class="settings-section mb-8">
-          <WindowSettings />
-        </section>
+    <!-- 大屏幕：左侧导航 + 右侧内容 -->
+    <template v-else>
+      <div class="settings-nav">
+        <div class="nav-header pa-4">
+          <h1 class="text-h5 font-weight-bold">设置</h1>
+          <p class="text-body-2 text-on-surface-variant mt-1">管理启动器配置</p>
+        </div>
+        
+        <v-list nav density="comfortable" class="px-2" bg-color="transparent">
+          <v-list-item
+            v-for="section in sections"
+            :key="section.id"
+            :active="activeSection === section.id"
+            :prepend-icon="section.icon"
+            :title="section.title"
+            class="mb-1 settings-nav-item"
+            @click="scrollToSection(section.id)"
+          />
+        </v-list>
       </div>
-    </div>
+
+      <div ref="contentRef" class="settings-content">
+        <div class="content-wrapper pa-6">
+          <section id="section-general" class="settings-section mb-8">
+            <GeneralSettings />
+          </section>
+
+          <section id="section-auth" class="settings-section mb-8">
+            <AuthSettings />
+          </section>
+
+          <section id="section-java" class="settings-section mb-8">
+            <JavaSettings />
+          </section>
+
+          <section id="section-memory" class="settings-section mb-8">
+            <MemorySettings />
+          </section>
+
+          <section id="section-window" class="settings-section mb-8">
+            <WindowSettings />
+          </section>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -125,6 +178,19 @@ onUnmounted(() => {
   display: flex;
   height: calc(100vh - 64px);
   overflow: hidden;
+}
+
+.settings-mobile {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-mobile-content {
+  flex: 1;
+  overflow-y: auto;
 }
 
 .settings-nav {
@@ -160,9 +226,14 @@ onUnmounted(() => {
 .settings-section {
   scroll-margin-top: 24px;
 }
+
+@media (max-width: 767px) {
+  .settings-container {
+    flex-direction: column;
+  }
+}
 </style>
 
-<!-- 子组件共享样式（非 scoped，供 GeneralSettings/JavaSettings 等使用） -->
 <style>
 .settings-group {
   margin-bottom: 32px;

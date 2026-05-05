@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { useModrinth, type ModrinthModpack } from '../../composables/useModrinth';
+import { useModrinth } from '../../composables/useModrinth';
+import type { ModrinthModpack } from '../../types/events';
 import ModpackCard from './ModpackCard.vue';
 
 const router = useRouter();

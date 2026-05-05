@@ -34,7 +34,11 @@ pub async fn launch_minecraft(
     };
 
     // 保存用户名和 UUID 到配置文件
-    let uuid = java::generate_offline_uuid(&options.username);
+    let uuid = if options.auth_type.as_deref() == Some("microsoft") {
+        options.uuid.clone().unwrap_or_else(|| java::generate_offline_uuid(&options.username))
+    } else {
+        java::generate_offline_uuid(&options.username)
+    };
     let mut config = load_config()?;
     config.username = Some(options.username.clone());
     config.uuid = Some(uuid.clone());
@@ -126,6 +130,14 @@ pub async fn launch_minecraft(
     let java_path = java::resolve_java_path(&config)?;
     emit("log-debug", format!("使用的Java路径: {}", java_path));
 
+    // 检测 Java 版本，用于 JVM 参数优化
+    let java_version = java::detect_java_version(&java_path);
+    if let Some(v) = java_version {
+        emit("log-debug", format!("检测到Java版本: {}", v));
+    } else {
+        emit("log-warning", "无法检测Java版本，将使用默认JVM参数".to_string());
+    }
+
     let lwjgl_lib_path = natives_dir.to_string_lossy().to_string();
     let memory_mb = options.memory.unwrap_or(2048);
 
@@ -134,8 +146,8 @@ pub async fn launch_minecraft(
         emit("log-warning", format!("内存设置警告: {}", e));
     }
 
-    // 生成优化的 JVM 内存参数
-    let mut final_args = optimize_jvm_memory_args(memory_mb, &options.version);
+    // 生成优化的 JVM 内存参数（传入 Java 版本）
+    let mut final_args = optimize_jvm_memory_args(memory_mb, &options.version, java_version);
 
     // 添加其他必要的 JVM 参数
     final_args.extend([
@@ -179,6 +191,13 @@ pub async fn launch_minecraft(
     } else {
         game_dir
     };
+
+    // 设置游戏语言
+    if let Some(ref lang) = config.language {
+        if let Err(e) = crate::utils::minecraft::set_game_language(&working_dir, lang) {
+            emit("log-warning", format!("无法设置游戏语言: {}", e));
+        }
+    }
 
     process::spawn_and_monitor_process(&java_path, final_args, &working_dir, window)
 }

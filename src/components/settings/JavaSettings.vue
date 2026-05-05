@@ -145,8 +145,8 @@ onMounted(async () => {
           <div class="text-body-2 text-on-surface-variant mb-2">检测到的 Java 安装：</div>
           <v-list density="compact" class="java-list" bg-color="surface-container-high">
             <v-list-item
-              v-for="(path, index) in settingsStore.javaInstallations"
-              :key="index"
+              v-for="path in settingsStore.javaInstallations"
+              :key="path"
               :active="javaPath === path"
               @click="selectJavaPath(path)"
             >

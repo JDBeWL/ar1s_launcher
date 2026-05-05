@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, computed, onUnmounted, watch, nextTick } from "vue";
 import { useDownloadStore } from '@/stores/downloadStore';
 import { useSettingsStore } from '@/stores/settings';
 import { useNotificationStore } from '@/stores/notificationStore';
 import { versionApi } from '@/services';
-import type { MinecraftVersion } from '@/types/events';
+import type { MinecraftVersion, VersionSizeInfo } from '@/types/events';
 import { useVersionManager } from '@/composables/useVersionManager';
 import { logError } from '@/utils/logger';
 
@@ -18,8 +18,10 @@ const loading = ref(false);
 const searchQuery = ref('');
 const versionType = ref('release');
 const sortOrder = ref('newest');
-const itemsPerPage = 12;
-const currentPage = ref(1);
+const batchSize = 24;
+const displayedCount = ref(batchSize);
+const sentinelRef = ref<HTMLElement | null>(null);
+let observer: IntersectionObserver | null = null;
 
 const formatDateTime = (value: string) => {
   const date = new Date(value);
@@ -27,7 +29,6 @@ const formatDateTime = (value: string) => {
   return date.toLocaleDateString();
 };
 
-// 根据版本类型获取对应图标
 const getVersionIcon = (type: string) => {
   switch (type) {
     case 'release':
@@ -39,7 +40,6 @@ const getVersionIcon = (type: string) => {
   }
 };
 
-// 获取版本类型名称
 const getVersionTypeName = (type: string) => {
   switch (type) {
     case 'release':
@@ -55,7 +55,6 @@ const getVersionTypeName = (type: string) => {
   }
 };
 
-// 获取版本标签颜色
 const getVersionChipColor = (type: string) => {
   switch (type) {
     case 'release':
@@ -75,8 +74,9 @@ function isInstalled(versionId: string) {
 }
 
 async function fetchVersions() {
+  const isRefresh = allVersions.value.length > 0;
   try {
-    loading.value = true;
+    if (!isRefresh) loading.value = true;
     const result = await versionApi.getVersions();
     if (result?.versions) {
       allVersions.value = result.versions;
@@ -102,21 +102,43 @@ const filteredVersions = computed(() => {
     return matchesSearch && matchesType;
   });
 
-  if (sortOrder.value === 'newest') {
-    filtered.sort((a, b) => new Date(b.releaseTime).getTime() - new Date(a.releaseTime).getTime());
-  } else if (sortOrder.value === 'oldest') {
-    filtered.sort((a, b) => new Date(a.releaseTime).getTime() - new Date(b.releaseTime).getTime());
+  if (sortOrder.value === 'newest' || sortOrder.value === 'oldest') {
+    const withTimestamp = filtered.map(v => ({ v, t: new Date(v.releaseTime).getTime() }));
+    withTimestamp.sort((a, b) => sortOrder.value === 'newest' ? b.t - a.t : a.t - b.t);
+    return withTimestamp.map(item => item.v);
   }
   
   return filtered;
 });
 
-const paginatedVersions = computed(() => {
-  const start = (currentPage.value - 1) * itemsPerPage;
-  return filteredVersions.value.slice(start, start + itemsPerPage);
+const displayedVersions = computed(() => {
+  return filteredVersions.value.slice(0, displayedCount.value);
 });
 
-const totalPages = computed(() => Math.ceil(filteredVersions.value.length / itemsPerPage));
+const hasMore = computed(() => displayedCount.value < filteredVersions.value.length);
+
+function loadMore() {
+  if (hasMore.value) {
+    displayedCount.value += batchSize;
+  }
+}
+
+function setupObserver() {
+  if (observer) observer.disconnect();
+  observer = new IntersectionObserver((entries) => {
+    if (entries[0]?.isIntersecting && hasMore.value) {
+      loadMore();
+    }
+  }, { rootMargin: '200px' });
+  if (sentinelRef.value) {
+    observer.observe(sentinelRef.value);
+  }
+}
+
+watch([searchQuery, versionType, sortOrder], () => {
+  displayedCount.value = batchSize;
+  nextTick(() => setupObserver());
+});
 
 onMounted(async () => {
   await Promise.all([
@@ -125,6 +147,14 @@ onMounted(async () => {
     loadGameDir(),
     initListeners()
   ]);
+  nextTick(() => setupObserver());
+});
+
+onUnmounted(() => {
+  if (observer) {
+    observer.disconnect();
+    observer = null;
+  }
 });
 </script>
 
@@ -165,7 +195,6 @@ onMounted(async () => {
               hide-details
               clearable
               :disabled="isDownloading"
-              @update:model-value="currentPage = 1"
             >
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-magnify</v-icon>
@@ -180,7 +209,6 @@ onMounted(async () => {
               divided
               color="primary"
               :disabled="isDownloading"
-              @update:model-value="currentPage = 1"
             >
               <v-btn value="release" size="small">正式版</v-btn>
               <v-btn value="snapshot" size="small">快照</v-btn>
@@ -235,7 +263,7 @@ onMounted(async () => {
       </v-row>
     </template>
 
-    <div v-else-if="paginatedVersions.length === 0" class="text-center py-12">
+    <div v-else-if="displayedVersions.length === 0" class="text-center py-12">
       <v-avatar size="80" color="surface-container-high" class="mb-4">
         <v-icon size="40" color="on-surface-variant">mdi-magnify-close</v-icon>
       </v-avatar>
@@ -247,7 +275,7 @@ onMounted(async () => {
       <!-- 版本网格 -->
       <v-row dense>
         <v-col
-          v-for="item in paginatedVersions"
+          v-for="item in displayedVersions"
           :key="item.id"
           cols="12"
           sm="6"
@@ -309,21 +337,12 @@ onMounted(async () => {
         </v-col>
       </v-row>
 
-      <!-- 分页 -->
-      <div v-if="totalPages > 1" class="d-flex justify-center mt-5">
-        <v-pagination
-          v-model="currentPage"
-          :length="totalPages"
-          :disabled="isDownloading"
-          :total-visible="5"
-          density="comfortable"
-          color="primary"
-        />
-      </div>
+      <!-- 无限滚动哨兵 -->
+      <div ref="sentinelRef" class="infinite-scroll-sentinel" />
 
       <!-- 统计信息 -->
       <div class="text-center text-caption text-on-surface-variant mt-3">
-        共 {{ filteredVersions.length }} 个版本
+        {{ hasMore ? `已显示 ${displayedVersions.length} / ${filteredVersions.length} 个版本` : `共 ${filteredVersions.length} 个版本` }}
       </div>
     </template>
   </v-container>
@@ -338,5 +357,10 @@ onMounted(async () => {
   width: 32px;
   height: 32px;
   object-fit: contain;
+}
+
+.infinite-scroll-sentinel {
+  height: 1px;
+  width: 100%;
 }
 </style>

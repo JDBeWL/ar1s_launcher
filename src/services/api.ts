@@ -3,6 +3,7 @@
  * 统一封装 Tauri invoke 调用，提供类型安全和请求去重
  */
 import { invoke } from '@tauri-apps/api/core';
+import { withCache, cache, CacheKeys } from './cache';
 import type {
   VersionManifest,
   GameInstance,
@@ -12,8 +13,13 @@ import type {
   InstanceNameValidation,
   GameDirInfo,
   ModrinthVersion,
+  ModrinthSearchResult,
   WindowSettings,
   AutoMemoryConfig,
+  AuthStatus,
+  DeviceCodeInfo,
+  MicrosoftAuthResult,
+  VersionSizeInfo,
 } from '../types/events';
 
 // ============ 请求去重机制 ============
@@ -70,9 +76,16 @@ export function getPendingRequestCount(): number {
 // ============ 版本相关 API ============
 
 export const versionApi = {
-  /** 获取 Minecraft 版本列表 */
+  /** 获取 Minecraft 版本列表（缓存 5 分钟） */
   async getVersions(): Promise<VersionManifest> {
-    return dedupedInvoke<VersionManifest>('get_versions');
+    return withCache(CacheKeys.VERSIONS, () =>
+      dedupedInvoke<VersionManifest>('get_versions')
+    );
+  },
+
+  /** 获取指定版本的文件大小信息 */
+  async getVersionSize(versionId: string, mirror?: string): Promise<VersionSizeInfo> {
+    return invoke<VersionSizeInfo>('get_version_size', { versionId, mirror });
   },
 
   /** 下载指定版本 */
@@ -95,9 +108,11 @@ export const versionApi = {
 // ============ 实例相关 API ============
 
 export const instanceApi = {
-  /** 获取实例列表 */
+  /** 获取实例列表（缓存 2 分钟） */
   async getInstances(): Promise<GameInstance[]> {
-    return dedupedInvoke<GameInstance[]>('get_instances');
+    return withCache(CacheKeys.INSTANCES, () =>
+      dedupedInvoke<GameInstance[]>('get_instances'), 2 * 60 * 1000
+    );
   },
 
   /** 创建实例 */
@@ -106,16 +121,19 @@ export const instanceApi = {
     baseVersionId: string,
     loader?: { type: string; mc_version: string; loader_version: string }
   ): Promise<void> {
+    cache.deleteByPrefix(CacheKeys.INSTANCES);
     return invoke('create_instance', { newInstanceName, baseVersionId, loader });
   },
 
   /** 删除实例 */
   async deleteInstance(instanceName: string): Promise<void> {
+    cache.deleteByPrefix(CacheKeys.INSTANCES);
     return invoke('delete_instance', { instanceName });
   },
 
   /** 重命名实例 */
   async renameInstance(oldName: string, newName: string): Promise<void> {
+    cache.deleteByPrefix(CacheKeys.INSTANCES);
     return invoke('rename_instance', { oldName, newName });
   },
 
@@ -143,42 +161,55 @@ export const instanceApi = {
 // ============ 加载器相关 API ============
 
 export const loaderApi = {
-  /** 获取可用的加载器类型 */
+  /** 获取可用的加载器类型（缓存 5 分钟） */
   async getAvailableLoaders(minecraftVersion: string): Promise<AvailableLoaders> {
-    return dedupedInvoke<AvailableLoaders>('get_available_loaders', { minecraftVersion });
+    return withCache(`${CacheKeys.LOADERS}:${minecraftVersion}`, () =>
+      dedupedInvoke<AvailableLoaders>('get_available_loaders', { minecraftVersion })
+    );
   },
 
-  /** 获取 Forge 版本列表 */
+  /** 获取 Forge 版本列表（缓存 5 分钟） */
   async getForgeVersions(minecraftVersion: string): Promise<ForgeVersion[]> {
-    return dedupedInvoke<ForgeVersion[]>('get_forge_versions', { minecraftVersion });
+    return withCache(`${CacheKeys.LOADERS}:forge:${minecraftVersion}`, () =>
+      dedupedInvoke<ForgeVersion[]>('get_forge_versions', { minecraftVersion })
+    );
   },
 
-  /** 获取 Fabric 版本列表 */
+  /** 获取 Fabric 版本列表（缓存 5 分钟） */
   async getFabricVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
-    return dedupedInvoke<LoaderVersionInfo[]>('get_fabric_versions', { minecraftVersion });
+    return withCache(`${CacheKeys.LOADERS}:fabric:${minecraftVersion}`, () =>
+      dedupedInvoke<LoaderVersionInfo[]>('get_fabric_versions', { minecraftVersion })
+    );
   },
 
-  /** 获取 Quilt 版本列表 */
+  /** 获取 Quilt 版本列表（缓存 5 分钟） */
   async getQuiltVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
-    return dedupedInvoke<LoaderVersionInfo[]>('get_quilt_versions', { minecraftVersion });
+    return withCache(`${CacheKeys.LOADERS}:quilt:${minecraftVersion}`, () =>
+      dedupedInvoke<LoaderVersionInfo[]>('get_quilt_versions', { minecraftVersion })
+    );
   },
 
-  /** 获取 NeoForge 版本列表 */
+  /** 获取 NeoForge 版本列表（缓存 5 分钟） */
   async getNeoForgeVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
-    return dedupedInvoke<LoaderVersionInfo[]>('get_neoforge_versions', { minecraftVersion });
+    return withCache(`${CacheKeys.LOADERS}:neoforge:${minecraftVersion}`, () =>
+      dedupedInvoke<LoaderVersionInfo[]>('get_neoforge_versions', { minecraftVersion })
+    );
   },
 };
 
 // ============ Java 相关 API ============
 
 export const javaApi = {
-  /** 查找 Java 安装 */
+  /** 查找 Java 安装（缓存 10 分钟） */
   async findJavaInstallations(): Promise<string[]> {
-    return dedupedInvoke<string[]>('find_java_installations_command');
+    return withCache(CacheKeys.JAVA, () =>
+      dedupedInvoke<string[]>('find_java_installations_command'), 10 * 60 * 1000
+    );
   },
 
   /** 强制刷新 Java 安装列表 */
   async refreshJavaInstallations(): Promise<string[]> {
+    cache.delete(CacheKeys.JAVA);
     return invoke<string[]>('refresh_java_installations');
   },
 
@@ -208,12 +239,15 @@ export const configApi = {
 
   /** 设置游戏目录 */
   async setGameDir(path: string): Promise<void> {
+    cache.deleteByPrefix(`${CacheKeys.CONFIG}:game_dir_info`);
     return invoke('set_game_dir', { path });
   },
 
-  /** 获取游戏目录信息（已安装版本等） */
+  /** 获取游戏目录信息（缓存 2 分钟） */
   async getGameDirInfo(): Promise<GameDirInfo> {
-    return dedupedInvoke<GameDirInfo>('get_game_dir_info');
+    return withCache(`${CacheKeys.CONFIG}:game_dir_info`, () =>
+      dedupedInvoke<GameDirInfo>('get_game_dir_info'), 2 * 60 * 1000
+    );
   },
 
   /** 获取下载线程数 */
@@ -246,9 +280,11 @@ export const configApi = {
     return invoke('set_last_selected_version', { version });
   },
 
-  /** 获取总内存 */
+  /** 获取总内存（缓存 10 分钟） */
   async getTotalMemory(): Promise<number> {
-    return dedupedInvoke<number>('get_total_memory');
+    return withCache(`${CacheKeys.CONFIG}:total_memory`, () =>
+      dedupedInvoke<number>('get_total_memory'), 10 * 60 * 1000
+    );
   },
 
   /** 获取窗口设置 */
@@ -266,9 +302,11 @@ export const configApi = {
     return dedupedInvoke<string | null>('check_memory_warning', { memoryMb });
   },
 
-  /** 获取自动内存配置 */
+  /** 获取自动内存配置（缓存 10 分钟） */
   async getAutoMemoryConfig(): Promise<AutoMemoryConfig> {
-    return dedupedInvoke<AutoMemoryConfig>('get_auto_memory_config');
+    return withCache(`${CacheKeys.CONFIG}:auto_memory`, () =>
+      dedupedInvoke<AutoMemoryConfig>('get_auto_memory_config'), 10 * 60 * 1000
+    );
   },
 
   /** 设置自动内存开关 */
@@ -309,6 +347,36 @@ export const userApi = {
   async setSavedUuid(uuid: string): Promise<void> {
     return invoke('set_saved_uuid', { uuid });
   },
+
+  /** 获取认证状态 */
+  async getAuthStatus(): Promise<AuthStatus> {
+    return dedupedInvoke<AuthStatus>('get_auth_status');
+  },
+
+  /** 开始 Microsoft 设备代码登录流程 */
+  async startMicrosoftLogin(): Promise<DeviceCodeInfo> {
+    return invoke<DeviceCodeInfo>('start_microsoft_login');
+  },
+
+  /** 完成 Microsoft 登录（轮询等待用户授权） */
+  async completeMicrosoftLogin(deviceCode: string): Promise<MicrosoftAuthResult> {
+    return invoke<MicrosoftAuthResult>('complete_microsoft_login', { deviceCode });
+  },
+
+  /** 刷新 Microsoft 认证 token */
+  async refreshMicrosoftAuth(): Promise<MicrosoftAuthResult> {
+    return invoke<MicrosoftAuthResult>('refresh_microsoft_auth');
+  },
+
+  /** 退出 Microsoft 登录 */
+  async logoutMicrosoft(): Promise<void> {
+    return invoke('logout_microsoft');
+  },
+
+  /** 设置认证类型 */
+  async setAuthType(authType: string): Promise<void> {
+    return invoke('set_auth_type', { authType });
+  },
 };
 
 // ============ 启动器相关 API ============
@@ -322,30 +390,15 @@ export const launcherApi = {
     window_width?: number;
     window_height?: number;
     fullscreen?: boolean;
+    auth_type?: string;
+    access_token?: string;
+    uuid?: string;
   }): Promise<void> {
     return invoke('launch_minecraft', { options });
   },
 };
 
 // ============ 整合包相关 API ============
-
-export interface ModrinthSearchResult {
-  hits: Array<{
-    slug: string;
-    title: string;
-    author: string;
-    downloads: number;
-    game_versions: string[];
-    loaders: string[];
-    description: string;
-    icon_url?: string;
-    date_created: string;
-    date_modified: string;
-    latest_version: string;
-    categories: string[];
-  }>;
-  total_hits: number;
-}
 
 export const modpackApi = {
   /** 搜索 Modrinth 整合包 */

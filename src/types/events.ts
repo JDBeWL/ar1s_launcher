@@ -33,6 +33,12 @@ export interface VersionManifest {
   versions: MinecraftVersion[];
 }
 
+export interface VersionSizeInfo {
+  version_id: string;
+  client_size: number;
+  total_size: number;
+}
+
 // 游戏实例 (对应后端 InstanceInfo，使用 camelCase)
 export interface GameInstance {
   id: string;
@@ -43,6 +49,7 @@ export interface GameInstance {
   loaderType?: string;
   gameVersion?: string;
   lastPlayed?: number;
+  modCount?: number;
 }
 
 // 创建实例参数
@@ -103,6 +110,28 @@ export interface GameDirInfo {
   total_size: number;
 }
 
+// Modrinth 整合包搜索结果条目
+export interface ModrinthModpack {
+  slug: string;
+  title: string;
+  author: string;
+  downloads: number;
+  game_versions: string[];
+  loaders: string[];
+  description: string;
+  icon_url?: string;
+  date_created: string;
+  date_modified: string;
+  latest_version: string;
+  categories: string[];
+}
+
+// Modrinth 整合包搜索结果
+export interface ModrinthSearchResult {
+  hits: ModrinthModpack[];
+  total_hits: number;
+}
+
 // Modrinth 整合包版本 (对应后端 ModrinthModpackVersion，使用 snake_case)
 export interface ModrinthVersion {
   id: string;
@@ -146,4 +175,32 @@ export interface AutoMemoryConfig {
   enabled: boolean;
   max_limit_mb: number;
   safety_margin_percent: number;
+}
+
+// 认证状态
+export interface AuthStatus {
+  authType: 'offline' | 'microsoft';
+  loggedIn: boolean;
+  username: string | null;
+  uuid: string | null;
+  accessToken: string | null;
+  expiresAt: number | null;
+}
+
+// Microsoft 登录设备代码信息
+export interface DeviceCodeInfo {
+  userCode: string;
+  deviceCode: string;
+  verificationUri: string;
+  interval: number;
+  expiresIn: number;
+}
+
+// Microsoft 认证结果
+export interface MicrosoftAuthResult {
+  username: string;
+  uuid: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
 }
