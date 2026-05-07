@@ -7,6 +7,7 @@ import { versionApi } from '@/services';
 import type { MinecraftVersion } from '@/types/events';
 import { useVersionManager } from '@/composables/useVersionManager';
 import { logError } from '@/utils/logger';
+import { sortVersionsByReleaseTime } from '@/utils/format';
 
 const downloadStore = useDownloadStore();
 const settingsStore = useSettingsStore();
@@ -103,9 +104,7 @@ const filteredVersions = computed(() => {
   });
 
   if (sortOrder.value === 'newest' || sortOrder.value === 'oldest') {
-    const withTimestamp = filtered.map(v => ({ v, t: new Date(v.releaseTime).getTime() }));
-    withTimestamp.sort((a, b) => sortOrder.value === 'newest' ? b.t - a.t : a.t - b.t);
-    return withTimestamp.map(item => item.v);
+    return sortVersionsByReleaseTime(filtered, sortOrder.value);
   }
   
   return filtered;
@@ -142,7 +141,7 @@ watch([searchQuery, versionType, sortOrder], () => {
 
 onMounted(async () => {
   await Promise.all([
-    settingsStore.loadDownloadMirror(),
+    settingsStore.loadSettings(),
     fetchVersions(),
     loadGameDir(),
     initListeners()

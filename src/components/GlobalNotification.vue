@@ -64,6 +64,18 @@ const confirmIcon = computed(() => {
 })
 
 const confirmColor = computed(() => store.confirmType)
+
+const choiceIcon = computed(() => {
+  const icons = {
+    success: 'mdi-check-circle',
+    error: 'mdi-alert-circle',
+    warning: 'mdi-alert',
+    info: 'mdi-information'
+  }
+  return icons[store.choiceType]
+})
+
+const choiceColor = computed(() => store.choiceType)
 </script>
 
 <template>
@@ -121,6 +133,42 @@ const confirmColor = computed(() => store.confirmType)
         <v-spacer />
         <v-btn variant="text" @click="store.handleConfirm(false)">取消</v-btn>
         <v-btn color="primary" variant="elevated" @click="store.handleConfirm(true)">确定</v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
+  <!-- 选择 Dialog -->
+  <v-dialog v-model="store.choiceVisible" max-width="560" persistent>
+    <v-card>
+      <v-card-title class="d-flex align-center justify-space-between py-3 px-4">
+        <span :class="`text-${choiceColor} d-flex align-center`">
+          <v-icon start :color="choiceColor" class="mr-2">{{ choiceIcon }}</v-icon>
+          {{ store.choiceTitle }}
+        </span>
+        <v-btn
+          icon="mdi-close"
+          variant="text"
+          density="comfortable"
+          size="small"
+          @click="store.handleChoice(null)"
+        />
+      </v-card-title>
+      <v-divider />
+      <v-card-text class="pt-4">
+        {{ store.choiceContent }}
+      </v-card-text>
+      <v-card-actions class="d-flex flex-wrap ga-2 px-4 pb-4">
+        <v-spacer class="d-none d-sm-flex" />
+        <v-btn
+          v-for="opt in store.choiceOptions"
+          :key="opt.id"
+          :color="opt.color || 'primary'"
+          :variant="opt.variant || 'elevated'"
+          class="text-none flex-grow-1 flex-sm-grow-0"
+          @click="store.handleChoice(opt.id)"
+        >
+          {{ opt.label }}
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

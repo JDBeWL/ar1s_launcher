@@ -4,7 +4,7 @@ use crate::services::config;
 
 #[tauri::command(rename = "get_config")]
 pub fn get_config() -> Result<GameConfig, LauncherError> {
-    config::load_config()
+    Ok((*config::load_config()?).clone())
 }
 
 #[tauri::command]
@@ -128,7 +128,7 @@ pub fn get_window_settings() -> Result<WindowSettings, LauncherError> {
 
 #[tauri::command]
 pub fn set_window_settings(width: Option<u32>, height: Option<u32>, fullscreen: bool) -> Result<(), LauncherError> {
-    let mut config = config::load_config()?;
+    let mut config = (*config::load_config()?).clone();
     config.window_width = width;
     config.window_height = height;
     config.fullscreen = fullscreen;

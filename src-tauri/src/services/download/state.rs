@@ -40,9 +40,8 @@ impl DownloadState {
             .and_then(|content| serde_json::from_str(&content).ok())
     }
 
-    /// 保存状态到文件并重置 dirty 标志
     pub fn save_to_file(&mut self, path: &std::path::Path) -> Result<(), std::io::Error> {
-        let content = serde_json::to_string_pretty(self)
+        let content = serde_json::to_string(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         std::fs::write(path, content)?;
         self.dirty = false;

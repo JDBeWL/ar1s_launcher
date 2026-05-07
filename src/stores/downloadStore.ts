@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { emit } from '@tauri-apps/api/event'
-import { useEventSubscription } from '../composables/useEventSubscription'
 import type { DownloadProgress, DownloadStatus } from '../types/events'
 import { api } from '../services/api'
 import { useNotificationStore } from './notificationStore'
@@ -13,6 +12,8 @@ export type StoreDownloadStatus = DownloadStatus | 'idle';
 export interface DownloadState extends Omit<DownloadProgress, 'status'> {
   status: StoreDownloadStatus;
 }
+
+let downloadProgressUnlisten: (() => void) | null = null;
 
 export const useDownloadStore = defineStore('download', () => {
   const selectedVersion = ref('')
@@ -29,10 +30,10 @@ export const useDownloadStore = defineStore('download', () => {
   const completionNotified = ref(false)
   const showNotification = ref(false)
   const userHidNotification = ref(false)
+  const isInitialized = ref(false)
 
-  const eventSub = useEventSubscription<DownloadProgress>('download-progress', (event) => {
-    const data = event.payload
-    downloadProgress.value = data as DownloadState;
+  function handleDownloadProgress(event: DownloadProgress) {
+    const data = event as DownloadState;
 
     if (data.status === 'downloading' && !userHidNotification.value) {
       showNotification.value = true
@@ -53,14 +54,31 @@ export const useDownloadStore = defineStore('download', () => {
           notificationStore.error('下载失败', data.error || '下载过程中发生未知错误', true)
       }
     }
-  })
-
-  async function subscribe() {
-    await eventSub.subscribe()
   }
 
-  function unsubscribe() {
-    eventSub.unsubscribe()
+  async function init() {
+    if (isInitialized.value) return;
+    
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      const unlisten = await listen<DownloadProgress>('download-progress', (event) => {
+        downloadProgress.value = event.payload as DownloadState;
+        handleDownloadProgress(event.payload);
+      });
+      downloadProgressUnlisten = unlisten;
+      isInitialized.value = true;
+      logError('Download store initialized', undefined, 'DownloadStore');
+    } catch (err) {
+      logError('Failed to initialize download store', err, 'DownloadStore');
+    }
+  }
+
+  function cleanup() {
+    if (downloadProgressUnlisten) {
+      downloadProgressUnlisten();
+      downloadProgressUnlisten = null;
+      isInitialized.value = false;
+    }
   }
 
   // Actions
@@ -119,8 +137,8 @@ export const useDownloadStore = defineStore('download', () => {
     showNotification,
     userHidNotification,
 
-    subscribe,
-    unsubscribe,
+    init,
+    cleanup,
     startDownload,
     cancelDownload,
     toggleNotification,

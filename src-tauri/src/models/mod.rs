@@ -43,6 +43,10 @@ pub struct GameConfig {
     #[serde(default = "default_true")]
     pub version_isolation: bool,
     pub java_path: Option<String>,
+    #[serde(default)]
+    pub custom_java_paths: Vec<String>,
+    #[serde(default = "default_false")]
+    pub auto_match_java: bool,
     #[serde(default = "default_download_threads")]
     pub download_threads: u8,
     pub language: Option<String>,
@@ -83,6 +87,37 @@ pub struct GameConfig {
     /// 正版 token 过期时间 (Unix 时间戳秒)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ms_expires_at: Option<i64>,
+}
+
+impl Default for GameConfig {
+    fn default() -> Self {
+        Self {
+            game_dir: String::new(),
+            version_isolation: true,
+            java_path: None,
+            custom_java_paths: Vec::new(),
+            auto_match_java: false,
+            download_threads: default_download_threads(),
+            language: None,
+            isolate_saves: true,
+            isolate_resourcepacks: true,
+            isolate_logs: true,
+            username: None,
+            uuid: None,
+            max_memory: default_max_memory(),
+            download_mirror: None,
+            auto_memory_enabled: false,
+            window_width: None,
+            window_height: None,
+            fullscreen: false,
+            instance_last_played: HashMap::new(),
+            last_selected_version: None,
+            auth_type: AuthType::default(),
+            ms_access_token: None,
+            ms_refresh_token: None,
+            ms_expires_at: None,
+        }
+    }
 }
 
 // 游戏目录信息
@@ -133,6 +168,24 @@ pub struct LaunchOptions {
     pub access_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uuid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub override_java_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaCompatibilityResult {
+    pub compatible: bool,
+    pub current_java_version: Option<u32>,
+    pub required_java_version: u32,
+    pub recommended_min_java_version: u32,
+    pub recommended_max_java_version: u32,
+    pub current_java_path: Option<String>,
+    pub recommended_java_path: Option<String>,
+    pub recommended_java_version: Option<u32>,
+    pub recommended_java_optimal: bool,
+    pub recommended_java_warning: Option<String>,
+    pub auto_match_enabled: bool,
 }
 
 // 下载状态
@@ -164,7 +217,7 @@ pub struct DownloadJob {
     pub fallback_url: Option<String>,
     pub path: PathBuf,
     pub size: u64,
-    pub hash: String,
+    pub hash: Option<String>,
 }
 
 // 实例配置
@@ -185,6 +238,7 @@ pub struct InstanceInfo {
     pub path: String,
     pub created_time: Option<String>,
     pub loader_type: Option<String>,
+    pub loader_version: Option<String>,
     pub game_version: Option<String>,
     pub last_played: Option<i64>,
     pub mod_count: Option<u32>,

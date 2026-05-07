@@ -21,6 +21,20 @@ function truncateText(text: string, length: number): string {
   if (text.length <= length) return text;
   return text.substring(0, length) + '...';
 }
+
+const ALLOWED_IMAGE_HOSTS = new Set(['cdn.modrinth.com', 'assets.modrinth.com']);
+
+function sanitizeModrinthImageUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return '';
+    if (!ALLOWED_IMAGE_HOSTS.has(parsed.hostname)) return '';
+    return url;
+  } catch {
+    return '';
+  }
+}
 </script>
 
 <template>
@@ -39,7 +53,7 @@ function truncateText(text: string, length: number): string {
           class="mr-3 flex-shrink-0"
           :color="modpack.icon_url ? undefined : 'secondary-container'"
         >
-          <v-img v-if="modpack.icon_url" :src="modpack.icon_url" cover />
+          <v-img v-if="sanitizeModrinthImageUrl(modpack.icon_url)" :src="sanitizeModrinthImageUrl(modpack.icon_url)" cover />
           <v-icon v-else size="28" color="on-secondary-container">mdi-package-variant</v-icon>
         </v-avatar>
 

@@ -5,6 +5,7 @@ import { formatLastPlayed, getLoaderColor } from '../../utils/format';
 
 const props = defineProps<{
   instance: GameInstance;
+  launching?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -16,11 +17,32 @@ const emit = defineEmits<{
 
 const loaderColor = computed(() => getLoaderColor(props.instance.loaderType));
 
-const loaderLabel = computed(() => {
+const versionLabel = computed(() => {
+  const lt = props.instance.loaderType;
+  const gv = props.instance.gameVersion || props.instance.version;
+  const lv = props.instance.loaderVersion;
+
+  if (!lt || lt === 'None') {
+    return gv || '原版';
+  }
+  if (lt === 'Modded') {
+    return lv ? `${gv} - 整合包` : `${gv} - 整合包/模组`;
+  }
+  if (lt === 'Unknown') {
+    return gv || '未知加载器';
+  }
+
+  if (lv) {
+    return `${gv} - ${lt} ${lv}`;
+  }
+  return `${gv} - ${lt}`;
+});
+
+const chipLabel = computed(() => {
   const lt = props.instance.loaderType;
   if (!lt || lt === 'None') return '原版';
-  if (lt === 'Modded') return '整合包/模组';
-  if (lt === 'Unknown') return '未知加载器';
+  if (lt === 'Modded') return '整合包';
+  if (lt === 'Unknown') return '未知';
   return lt;
 });
 </script>
@@ -41,18 +63,18 @@ const loaderLabel = computed(() => {
           <div class="text-h6 font-weight-bold text-truncate name-text" :title="instance.name">
             {{ instance.name }}
           </div>
-          <div class="d-flex align-center flex-wrap ga-2 mt-1">
+          <div class="d-flex align-center mt-1 version-line">
             <v-chip
               size="x-small"
               :color="loaderColor.color"
               variant="tonal"
               label
-              class="font-weight-bold"
+              class="font-weight-bold flex-shrink-0"
             >
-              {{ loaderLabel }}
+              {{ chipLabel }}
             </v-chip>
-            <span class="text-caption text-on-surface-variant font-weight-medium">
-              {{ instance.gameVersion || instance.version }}
+            <span class="text-caption text-on-surface-variant font-weight-medium version-text" :title="versionLabel">
+              {{ versionLabel }}
             </span>
           </div>
         </div>
@@ -105,6 +127,7 @@ const loaderLabel = computed(() => {
         :color="loaderColor.color"
         block
         class="launch-btn font-weight-bold"
+        :loading="props.launching"
         @click="emit('launch', instance)"
       >
         <v-icon start size="18" class="mr-2">mdi-play</v-icon>
@@ -147,6 +170,18 @@ const loaderLabel = computed(() => {
 }
 
 .min-width-0 {
+  min-width: 0;
+}
+
+.version-line {
+  gap: 6px;
+  min-width: 0;
+}
+
+.version-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   min-width: 0;
 }
 

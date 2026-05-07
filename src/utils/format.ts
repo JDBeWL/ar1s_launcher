@@ -152,3 +152,27 @@ export function compareVersionDesc(a: string, b: string): number {
 
   return (vb.suffixNum ?? 0) - (va.suffixNum ?? 0)
 }
+
+export type SortOrder = 'newest' | 'oldest';
+
+export interface VersionLike {
+  id?: string;
+  version?: string;
+  releaseTime?: string;
+}
+
+function getReleaseTime(item: VersionLike): number {
+  if (!item.releaseTime) return 0;
+  return new Date(item.releaseTime).getTime() || 0;
+}
+
+export function sortVersionsByReleaseTime<T extends VersionLike>(
+  items: T[],
+  order: SortOrder = 'newest'
+): T[] {
+  return [...items].sort((a, b) => {
+    const timeA = getReleaseTime(a);
+    const timeB = getReleaseTime(b);
+    return order === 'newest' ? timeB - timeA : timeA - timeB;
+  });
+}

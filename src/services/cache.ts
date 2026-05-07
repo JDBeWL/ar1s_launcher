@@ -9,25 +9,50 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
+const CACHE_MISS_SYMBOL = Symbol('CACHE_MISS');
+
 class MemoryCache {
   private cache = new Map<string, CacheEntry<unknown>>();
-  private defaultTTL = 5 * 60 * 1000; // 默认 5 分钟
+  private defaultTTL = 5 * 60 * 1000;
+  private maxSize = 200;
 
-  /**
-   * 获取缓存
-   */
-  get<T>(key: string): T | null {
+  has(key: string): boolean {
+    const entry = this.cache.get(key);
+    if (!entry) return false;
+    if (Date.now() > entry.expiresAt) {
+      this.cache.delete(key);
+      return false;
+    }
+    return true;
+  }
+
+  private evictOldest(): void {
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    for (const [key, entry] of this.cache.entries()) {
+      if (entry.timestamp < oldestTime) {
+        oldestTime = entry.timestamp;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey !== null) {
+      this.cache.delete(oldestKey);
+    }
+  }
+
+  get<T>(key: string): T | typeof CACHE_MISS_SYMBOL {
     const entry = this.cache.get(key);
     
     if (!entry) {
-      return null;
+      return CACHE_MISS_SYMBOL;
     }
 
-    // 检查是否过期
     if (Date.now() > entry.expiresAt) {
       this.cache.delete(key);
-      return null;
+      return CACHE_MISS_SYMBOL;
     }
+
+    entry.timestamp = Date.now();
 
     return entry.data as T;
   }
@@ -39,6 +64,9 @@ class MemoryCache {
    * @param ttl 过期时间（毫秒），默认 5 分钟
    */
   set<T>(key: string, data: T, ttl?: number): void {
+    if (this.cache.size >= this.maxSize) {
+      this.evictOldest();
+    }
     const now = Date.now();
     this.cache.set(key, {
       data,
@@ -120,16 +148,12 @@ export async function withCache<T>(
   fetcher: () => Promise<T>,
   ttl?: number
 ): Promise<T> {
-  // 先检查缓存
   const cached = cache.get<T>(key);
-  if (cached !== null) {
+  if (cached !== CACHE_MISS_SYMBOL) {
     return cached;
   }
 
-  // 获取数据
   const data = await fetcher();
-  
-  // 存入缓存
   cache.set(key, data, ttl);
   
   return data;

@@ -12,6 +12,7 @@ const loginDialog = ref(false)
 const userCode = ref('')
 const verificationUri = ref('')
 const loginError = ref('')
+const authCodeWaiting = ref(false)
 
 const debouncedSaveUsername = useDebounceFn((name: string) => {
   authStore.saveUsername(name)
@@ -28,6 +29,39 @@ async function switchAuthType(type: 'offline' | 'microsoft') {
 }
 
 async function startMicrosoftLogin() {
+  loginLoading.value = true
+  loginError.value = ''
+  try {
+    const authUrl = await authStore.startAuthCodeLogin()
+    authCodeWaiting.value = true
+
+    try {
+      await openUrl(authUrl)
+    } catch {
+      logError('Failed to auto-open browser', undefined, 'AuthSettings')
+    }
+
+    try {
+      await authStore.completeAuthCodeLogin()
+      authCodeWaiting.value = false
+    } catch (err) {
+      authCodeWaiting.value = false
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!msg.includes('拒绝了授权') && !msg.includes('被拒绝')) {
+        loginError.value = msg
+      }
+      logError('Microsoft auth code login failed', err, 'AuthSettings')
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    loginError.value = msg
+    logError('Failed to start auth code flow', err, 'AuthSettings')
+  } finally {
+    loginLoading.value = false
+  }
+}
+
+async function startDeviceCodeLogin() {
   loginLoading.value = true
   loginError.value = ''
   try {
@@ -220,6 +254,22 @@ onMounted(async () => {
             <v-icon start size="20">mdi-microsoft</v-icon>
             使用 Microsoft 账户登录
           </v-btn>
+          <div class="d-flex align-center my-2" style="white-space:nowrap">
+            <v-divider class="flex-grow-1" />
+            <span class="text-caption text-on-surface-variant px-3">或者</span>
+            <v-divider class="flex-grow-1" />
+          </div>
+          <v-btn
+            block
+            variant="text"
+            color="on-surface-variant"
+            size="small"
+            :disabled="loginLoading"
+            @click="startDeviceCodeLogin"
+          >
+            <v-icon start size="16">mdi-form-textbox</v-icon>
+            使用安全代码登录
+          </v-btn>
           <div v-if="loginError" class="text-caption text-error mt-2">
             {{ loginError }}
           </div>
@@ -230,7 +280,32 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- Microsoft 登录对话框 -->
+    <!-- Microsoft 浏览器登录等待对话框 -->
+    <v-dialog v-model="authCodeWaiting" persistent max-width="380">
+      <v-card color="surface-container-high">
+        <v-card-text class="pa-5">
+          <div class="text-center mb-4">
+            <v-avatar size="56" color="primary" class="mb-3">
+              <v-icon size="28" color="on-primary">mdi-microsoft</v-icon>
+            </v-avatar>
+            <div class="text-h6 font-weight-bold">正在登录</div>
+          </div>
+
+          <v-card color="surface-container" variant="flat" class="mb-4">
+            <v-card-text class="pa-4">
+              <div class="text-body-2 text-on-surface-variant">请在浏览器中完成 Microsoft 账户登录，完成后将自动返回启动器</div>
+            </v-card-text>
+          </v-card>
+
+          <div class="text-center">
+            <v-progress-circular indeterminate size="32" color="primary" class="mr-2" />
+            <span class="text-body-2 text-on-surface-variant">等待浏览器登录中...</span>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
+    <!-- Microsoft 安全代码登录对话框 -->
     <v-dialog v-model="loginDialog" persistent max-width="420">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
@@ -246,7 +321,7 @@ onMounted(async () => {
               <div class="text-body-2 text-on-surface-variant mb-2">请按以下步骤操作：</div>
               <ol class="text-body-2 pl-4">
                 <li class="mb-1">在浏览器中打开下方链接</li>
-                <li class="mb-1">输入下方验证码</li>
+                <li class="mb-1">输入下方安全代码</li>
                 <li>按照提示完成登录</li>
               </ol>
             </v-card-text>
@@ -268,7 +343,7 @@ onMounted(async () => {
           </div>
 
           <div class="mb-4">
-            <div class="text-caption text-on-surface-variant mb-1">验证码</div>
+            <div class="text-caption text-on-surface-variant mb-1">安全代码</div>
             <div class="d-flex align-center">
               <v-chip
                 :text="userCode"

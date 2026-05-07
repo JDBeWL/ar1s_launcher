@@ -20,7 +20,7 @@ struct InstallProgress {
 /// 辅助函数：获取游戏目录和版本目录
 fn get_dirs() -> Result<(PathBuf, PathBuf), LauncherError> {
     let config = config::load_config()?;
-    let game_dir = PathBuf::from(config.game_dir);
+    let game_dir = PathBuf::from(&config.game_dir);
     let versions_dir = game_dir.join("versions");
     Ok((game_dir, versions_dir))
 }
@@ -86,7 +86,7 @@ pub async fn create_instance(
         let config = config::load_config()?;
         download::process_and_download_version(
             base_version_id.clone(),
-            config.download_mirror,
+            config.download_mirror.clone(),
             window,
         ).await?;
 
@@ -215,6 +215,252 @@ pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
     Ok(instances)
 }
 
+/// 从版本 JSON 的 arguments 中提取 FML 参数
+///
+/// Forge 版本 JSON 的 arguments.game 中包含：
+///   "--fml.forgeVersion", "36.2.39",
+///   "--fml.mcVersion", "1.16.5",
+///   "--fml.forgeGroup", "net.minecraftforge",
+///   "--fml.mcpVersion", "20210115.111550"
+///
+/// 也支持 NeoForge 的 "--fml.neoForgeVersion" 格式
+fn parse_fml_arguments(json_value: &Value) -> (Option<String>, Option<String>, Option<String>) {
+    let args = match json_value.get("arguments").and_then(|a| a.get("game")).and_then(|g| g.as_array()) {
+        Some(arr) => arr,
+        None => {
+            let raw_args = match json_value["minecraftArguments"].as_str() {
+                Some(s) => s,
+                None => return (None, None, None),
+            };
+            let tokens: Vec<&str> = raw_args.split_whitespace().collect();
+            let mut forge_ver: Option<String> = None;
+            let mut mc_ver: Option<String> = None;
+            let mut is_neoforge = false;
+
+            for (i, token) in tokens.iter().enumerate() {
+                match *token {
+                    "--fml.forgeVersion" => {
+                        if i + 1 < tokens.len() {
+                            forge_ver = Some(tokens[i + 1].to_string());
+                        }
+                    }
+                    "--fml.neoForgeVersion" => {
+                        if i + 1 < tokens.len() {
+                            forge_ver = Some(tokens[i + 1].to_string());
+                            is_neoforge = true;
+                        }
+                    }
+                    "--fml.mcVersion" => {
+                        if i + 1 < tokens.len() {
+                            mc_ver = Some(tokens[i + 1].to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if forge_ver.is_some() || mc_ver.is_some() {
+                let lt = if is_neoforge { "NeoForge" } else { "Forge" };
+                return (Some(lt.to_string()), forge_ver, mc_ver);
+            }
+            return (None, None, None);
+        }
+    };
+
+    let mut forge_ver: Option<String> = None;
+    let mut mc_ver: Option<String> = None;
+    let mut is_neoforge = false;
+
+    for (i, arg) in args.iter().enumerate() {
+        let token = match arg.as_str() {
+            Some(s) => s,
+            None => continue,
+        };
+
+        match token {
+            "--fml.forgeVersion" => {
+                if let Some(next) = args.get(i + 1).and_then(|v| v.as_str()) {
+                    forge_ver = Some(next.to_string());
+                }
+            }
+            "--fml.neoForgeVersion" => {
+                if let Some(next) = args.get(i + 1).and_then(|v| v.as_str()) {
+                    forge_ver = Some(next.to_string());
+                    is_neoforge = true;
+                }
+            }
+            "--fml.mcVersion" => {
+                if let Some(next) = args.get(i + 1).and_then(|v| v.as_str()) {
+                    mc_ver = Some(next.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if forge_ver.is_some() || mc_ver.is_some() {
+        let lt = if is_neoforge { "NeoForge" } else { "Forge" };
+        return (Some(lt.to_string()), forge_ver, mc_ver);
+    }
+
+    (None, None, None)
+}
+
+/// 从版本 JSON 的 patches 数组中提取加载器版本和游戏版本
+///
+/// Fabric/Quilt 的版本 JSON 使用 patches 结构：
+///   "patches": [
+///     { "id": "game", "version": "1.20.4", "priority": 0 },
+///     { "id": "fabric", "version": "0.15.11" },
+///     { "id": "quilt", "version": "0.19.2" }
+///   ]
+fn parse_patches(json_value: &Value) -> (Option<String>, Option<String>, Option<String>) {
+    let patches = match json_value["patches"].as_array() {
+        Some(arr) => arr,
+        None => return (None, None, None),
+    };
+
+    let mut game_version: Option<String> = None;
+    let mut loader_type: Option<String> = None;
+    let mut loader_version: Option<String> = None;
+
+    for patch in patches {
+        let id = match patch["id"].as_str() {
+            Some(s) => s,
+            None => continue,
+        };
+        let version = patch["version"].as_str().map(String::from);
+
+        match id {
+            "game" => {
+                game_version = version;
+            }
+            "fabric" => {
+                loader_type = Some("Fabric".to_string());
+                loader_version = version;
+            }
+            "quilt" => {
+                loader_type = Some("Quilt".to_string());
+                loader_version = version;
+            }
+            "forge" => {
+                loader_type = Some("Forge".to_string());
+                loader_version = version;
+            }
+            "neoforge" => {
+                loader_type = Some("NeoForge".to_string());
+                loader_version = version;
+            }
+            _ => {}
+        }
+    }
+
+    if loader_type.is_some() || game_version.is_some() {
+        return (loader_type, loader_version, game_version);
+    }
+
+    (None, None, None)
+}
+
+/// 从版本 JSON 的 libraries 数组中提取加载器类型和版本
+///
+/// 通过扫描 Maven 坐标识别加载器：
+/// - Forge: `net.minecraftforge:forge:1.16.5-36.2.39`
+/// - Fabric: `net.fabricmc:fabric-loader:0.15.11`
+/// - Quilt: `org.quiltmc:quilt-loader:0.19.2`
+/// - NeoForge: `net.neoforged:neoforge:20.1.2`
+fn parse_loader_from_libraries(json_value: &Value) -> (Option<String>, Option<String>) {
+    let libs = match json_value["libraries"].as_array() {
+        Some(arr) => arr,
+        None => return (None, None),
+    };
+
+    for lib in libs {
+        let name = match lib["name"].as_str() {
+            Some(n) => n,
+            None => continue,
+        };
+
+        let parts: Vec<&str> = name.split(':').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+
+        let group = parts[0];
+        let artifact = parts[1];
+        let version = parts[2];
+
+        if group == "net.minecraftforge" && artifact == "forge" {
+            let loader_ver = version.split('-').last().unwrap_or(version).to_string();
+            return (Some("Forge".to_string()), Some(loader_ver));
+        }
+
+        if group == "net.minecraftforge" && artifact == "fmlloader" {
+            let loader_ver = version.split('-').last().unwrap_or(version).to_string();
+            return (Some("Forge".to_string()), Some(loader_ver));
+        }
+
+        if group == "net.fabricmc" && artifact == "fabric-loader" {
+            return (Some("Fabric".to_string()), Some(version.to_string()));
+        }
+
+        if group == "org.quiltmc" && artifact == "quilt-loader" {
+            return (Some("Quilt".to_string()), Some(version.to_string()));
+        }
+
+        if group == "net.neoforged" && (artifact == "neoforge" || artifact == "fml") {
+            let loader_ver = version.split('-').last().unwrap_or(version).to_string();
+            return (Some("NeoForge".to_string()), Some(loader_ver));
+        }
+    }
+
+    (None, None)
+}
+
+/// 读取 instance.json 获取整合包元数据
+fn read_instance_metadata(instance_dir: &Path) -> Option<(String, Option<String>)> {
+    let meta_path = instance_dir.join("instance.json");
+    if !meta_path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(&meta_path).ok()?;
+    let json: Value = serde_json::from_str(&content).ok()?;
+
+    let mc_version = json["minecraft"].as_str().map(String::from)?;
+    let loader = json["loader"].as_str().map(String::from);
+
+    Some((mc_version, loader))
+}
+
+/// 通过继承链查找真实的 Minecraft 版本
+///
+/// 优先级：
+/// 1. 如果 `inheritsFrom` 本身就是合法的 MC 版本号（如 "1.16.5"），直接使用
+/// 2. 否则尝试读取父版本 JSON 继续递归（处理多层继承）
+/// 3. 都失败时回退到 version_id
+fn find_real_minecraft_version(
+    version_id: &str,
+    json_value: &Value,
+    versions_dir: &Path
+) -> Option<String> {
+    if let Some(inherits) = json_value["inheritsFrom"].as_str() {
+        if crate::utils::minecraft::parse_mc_version(inherits).is_some() {
+            return Some(inherits.to_string());
+        }
+        let parent_json_path = versions_dir.join(inherits).join(format!("{}.json", inherits));
+        if parent_json_path.exists() {
+            if let Ok(parent_content) = fs::read_to_string(&parent_json_path) {
+                if let Ok(parent_json) = serde_json::from_str::<Value>(&parent_content) {
+                    return find_real_minecraft_version(inherits, &parent_json, versions_dir);
+                }
+            }
+        }
+        Some(inherits.to_string())
+    } else {
+        Some(version_id.to_string())
+    }
+}
+
 /// 同步获取实例列表（在阻塞线程池中执行）
 fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, LauncherError> {
     let mut instances = Vec::new();
@@ -244,53 +490,118 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
 
                         let mod_count = count_mods(&path);
 
-                        // 解析加载器类型和游戏版本
-                        let (loader_type, game_version) = json_value
+                        let main_class = json_value
                             .as_ref()
-                            .map(|v| {
-                                let inherits = v["inheritsFrom"].as_str();
-                                let id = v["id"].as_str().unwrap_or("");
-                                let main_class = v["mainClass"].as_str().unwrap_or("");
-                                
-                                // 尝试从 ID 或 mainClass 中识别加载器
-                                let mut detected_loader = if id.to_lowercase().contains("forge") || main_class.contains("forge") || main_class.contains("LaunchWrapper") || main_class.contains("modlauncher") {
-                                    Some("Forge".to_string())
-                                } else if id.to_lowercase().contains("fabric") || main_class.contains("fabricmc") || main_class.contains("knot") && main_class.contains("fabric") {
-                                    Some("Fabric".to_string())
-                                } else if id.to_lowercase().contains("quilt") || main_class.contains("quiltmc") || main_class.contains("knot") && main_class.contains("quilt") {
-                                    Some("Quilt".to_string())
-                                } else if id.to_lowercase().contains("neoforge") || main_class.contains("neoforge") {
-                                    Some("NeoForge".to_string())
-                                } else {
-                                    None
-                                };
+                            .and_then(|v| v["mainClass"].as_str())
+                            .unwrap_or("");
 
-                                // 如果有继承关系，优先使用继承信息
-                                let detected_version = if let Some(base_version) = inherits {
-                                    if detected_loader.is_none() {
-                                        detected_loader = Some("Unknown".to_string());
-                                    }
-                                    Some(base_version.to_string())
-                                } else {
-                                    Some(version_id.clone())
-                                };
+                        let mut loader_type: Option<String> = None;
+                        let mut loader_version: Option<String> = None;
+                        let mut game_version: Option<String> = None;
 
-                                // 如果还是没检测到加载器，但有 mods 文件夹，则标记为 "Modded"
-                                let final_loader = if detected_loader.is_none() && mod_count.unwrap_or(0) > 0 {
-                                    Some("Modded".to_string())
-                                } else {
-                                    detected_loader.or(Some("None".to_string()))
-                                };
+                        if let Some(ref json) = json_value {
+                            if let (Some(lt), fv, mv) = parse_fml_arguments(json) {
+                                loader_type = Some(lt);
+                                loader_version = fv;
+                                game_version = mv;
+                            }
+                        }
 
-                                (final_loader, detected_version)
-                            })
-                            .unwrap_or((None, None));
+                        if let Some(ref json) = json_value {
+                            let (plt, plv, pgv) = parse_patches(json);
+                            if plt.is_some() {
+                                if loader_type.is_none() {
+                                    loader_type = plt;
+                                }
+                                if loader_version.is_none() {
+                                    loader_version = plv;
+                                }
+                                if game_version.is_none() {
+                                    game_version = pgv;
+                                }
+                            }
+                        }
+
+                        if let Some((meta_mc, meta_loader)) = read_instance_metadata(&path) {
+                            if game_version.is_none() {
+                                game_version = Some(meta_mc);
+                            }
+                            if loader_type.is_none() {
+                                if let Some(lt) = meta_loader {
+                                    loader_type = Some(match lt.as_str() {
+                                        "forge" => "Forge".to_string(),
+                                        "fabric" => "Fabric".to_string(),
+                                        "quilt" => "Quilt".to_string(),
+                                        "neoforge" => "NeoForge".to_string(),
+                                        other => {
+                                            let mut c = other.chars();
+                                            match c.next() {
+                                                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                                                None => other.to_string(),
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        }
+
+                        if let Some(ref json) = json_value {
+                            if let (Some(lt), Some(lv)) = parse_loader_from_libraries(json) {
+                                if loader_type.is_none() {
+                                    loader_type = Some(lt);
+                                }
+                                if loader_version.is_none() {
+                                    loader_version = Some(lv);
+                                }
+                            }
+                        }
+
+                        if loader_type.is_none() {
+                            if main_class.contains("forge") || main_class.contains("LaunchWrapper") || main_class.contains("modlauncher") {
+                                loader_type = Some("Forge".to_string());
+                            } else if main_class.contains("fabricmc") || (main_class.contains("knot") && main_class.to_lowercase().contains("fabric")) {
+                                loader_type = Some("Fabric".to_string());
+                            } else if main_class.contains("quiltmc") || (main_class.contains("knot") && main_class.to_lowercase().contains("quilt")) {
+                                loader_type = Some("Quilt".to_string());
+                            } else if main_class.contains("neoforge") {
+                                loader_type = Some("NeoForge".to_string());
+                            }
+                        }
+
+                        if game_version.is_none() {
+                            if let Some(json) = json_value.as_ref() {
+                                game_version = find_real_minecraft_version(&version_id, json, versions_dir);
+                            } else {
+                                game_version = Some(version_id.clone());
+                            }
+                        }
+
+                        if loader_type.is_none() {
+                            if json_value.as_ref().and_then(|v| v["inheritsFrom"].as_str()).is_some() {
+                                loader_type = Some("Unknown".to_string());
+                            } else if mod_count.unwrap_or(0) > 0 {
+                                loader_type = Some("Modded".to_string());
+                            } else {
+                                loader_type = Some("None".to_string());
+                            }
+                        }
 
                         let created = entry.metadata()
                             .and_then(|m| m.created())
                             .ok()
                             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                             .map(|d| d.as_secs().to_string());
+
+                        let config_last_played = config::get_instance_last_played(&name);
+                        let json_last_played = json_value
+                            .as_ref()
+                            .and_then(|v| v["lastPlayed"].as_i64());
+                        let last_played = match (config_last_played, json_last_played) {
+                            (Some(c), Some(j)) => Some(c.max(j)),
+                            (Some(c), None) => Some(c),
+                            (None, Some(j)) => Some(j),
+                            (None, None) => None,
+                        };
 
                         instances.push(InstanceInfo {
                             id: name.clone(),
@@ -299,8 +610,9 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
                             path: path.to_string_lossy().to_string(),
                             created_time: created,
                             loader_type,
+                            loader_version,
                             game_version,
-                            last_played: config::get_instance_last_played(&name),
+                            last_played,
                             mod_count,
                         });
                     }
@@ -409,13 +721,34 @@ pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherE
 }
 
 /// 启动实例
-pub async fn launch_instance(instance_name: String, window: Window) -> Result<(), LauncherError> {
+pub async fn launch_instance(instance_name: String, override_java_path: Option<String>, window: Window) -> Result<(), LauncherError> {
     let config = config::load_config()?;
     let (_, versions_dir) = get_dirs()?;
     let instance_dir = versions_dir.join(&instance_name);
 
-    if !instance_dir.join(format!("{}.json", instance_name)).exists() {
+    let json_path = instance_dir.join(format!("{}.json", instance_name));
+    if !json_path.exists() {
         return Err(LauncherError::Custom(format!("实例 '{}' 的配置文件不存在", instance_name)));
+    }
+
+    let json_content = fs::read_to_string(&json_path)?;
+    let json: Value = serde_json::from_str(&json_content)
+        .map_err(|e| LauncherError::Custom(format!("实例 '{}' 的配置文件格式无效: {}", instance_name, e)))?;
+
+    if !json.get("id").and_then(|v| v.as_str()).is_some() {
+        return Err(LauncherError::Custom(format!("实例 '{}' 的配置文件缺少 'id' 字段", instance_name)));
+    }
+    if !json.get("mainClass").and_then(|v| v.as_str()).is_some() {
+        return Err(LauncherError::Custom(format!("实例 '{}' 的配置文件缺少 'mainClass' 字段", instance_name)));
+    }
+
+    let config_last_played = config.instance_last_played.get(&instance_name).copied();
+    if let Some(ts) = config_last_played {
+        if let Some(json_played) = json.get("lastPlayed").and_then(|v| v.as_i64()) {
+            if json_played != ts {
+                warn!("实例 '{}' 的 lastPlayed 不一致 (config: {}, json: {}), 使用 config 值", instance_name, ts, json_played);
+            }
+        }
     }
 
     // 注意: update_instance_last_played 已在 launcher::launch_minecraft 中调用，此处无需重复
@@ -423,8 +756,40 @@ pub async fn launch_instance(instance_name: String, window: Window) -> Result<()
     let (auth_type, access_token, uuid) = match config.auth_type {
         crate::models::AuthType::Microsoft => {
             let at = "microsoft".to_string();
-            let token = config.ms_access_token.clone();
+            let mut token = config.ms_access_token.clone();
             let uid = config.uuid.clone();
+            let expires_at = config.ms_expires_at.unwrap_or(0);
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+
+            if now >= expires_at - 60 {
+                info!("Microsoft token 已过期或即将过期，正在刷新...");
+                if let Some(refresh_token) = config.ms_refresh_token.clone() {
+                    match crate::services::microsoft_auth::refresh_and_authenticate(&refresh_token).await {
+                        Ok(auth_result) => {
+                            let mut cfg = (*config::load_config()?).clone();
+                            cfg.ms_access_token = Some(auth_result.access_token.clone());
+                            cfg.ms_refresh_token = Some(auth_result.refresh_token.clone());
+                            cfg.ms_expires_at = Some(auth_result.expires_at);
+                            cfg.username = Some(auth_result.username.clone());
+                            cfg.uuid = Some(auth_result.uuid.clone());
+                            config::save_config(&cfg)?;
+
+                            token = Some(auth_result.access_token);
+                            info!("Microsoft token 刷新成功");
+                        }
+                        Err(e) => {
+                            warn!("Microsoft token 刷新失败: {}, 将使用旧 token 启动", e);
+                        }
+                    }
+                } else {
+                    warn!("未找到 refresh_token，无法刷新 Microsoft token");
+                }
+            }
+
             (Some(at), token, uid)
         }
         crate::models::AuthType::Offline => (None, None, None),
@@ -432,7 +797,7 @@ pub async fn launch_instance(instance_name: String, window: Window) -> Result<()
 
     let launch_options = LaunchOptions {
         version: instance_name,
-        username: config.username.unwrap_or_else(|| "Player".to_string()),
+        username: config.username.clone().unwrap_or_else(|| "Player".to_string()),
         memory: Some(config.max_memory),
         window_width: config.window_width,
         window_height: config.window_height,
@@ -440,6 +805,7 @@ pub async fn launch_instance(instance_name: String, window: Window) -> Result<()
         auth_type,
         access_token,
         uuid,
+        override_java_path,
     };
 
     launcher::launch_minecraft(launch_options, window).await
@@ -545,7 +911,7 @@ async fn merge_and_complete_instance(
                                     fallback_url: None,
                                     path,
                                     size,
-                                    hash: hash.to_string(),
+                                    hash: Some(hash.to_string()),
                                 });
                             }
                         }
@@ -584,7 +950,7 @@ fn collect_download_jobs(
                 fallback_url: None,
                 path,
                 size,
-                hash: sha1.to_string(),
+                hash: Some(sha1.to_string()),
             });
         }
     }
@@ -602,7 +968,7 @@ fn collect_download_jobs(
                 fallback_url: None,
                 path,
                 size,
-                hash: sha1.to_string(),
+                hash: Some(sha1.to_string()),
             });
         }
     }
@@ -635,7 +1001,7 @@ fn collect_download_jobs(
                         fallback_url: None,
                         path: libraries_dir.join(path),
                         size,
-                        hash: sha1.to_string(),
+                        hash: Some(sha1.to_string()),
                     });
                 }
             }
@@ -656,7 +1022,7 @@ fn collect_download_jobs(
                                     fallback_url: None,
                                     path: libraries_dir.join(path),
                                     size,
-                                    hash: sha1.to_string(),
+                                    hash: Some(sha1.to_string()),
                                 });
                             }
                         }

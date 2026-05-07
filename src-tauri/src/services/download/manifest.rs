@@ -1,8 +1,8 @@
 //! 版本清单获取逻辑
 
-use super::http::get_manifest_client;
 use crate::errors::LauncherError;
 use crate::models::VersionManifest;
+use crate::services::http_client;
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +15,7 @@ pub struct VersionSizeInfo {
 
 /// 获取 Minecraft 版本列表
 pub async fn get_versions() -> Result<VersionManifest, LauncherError> {
-    let client = get_manifest_client()?;
+    let client = http_client::get_client();
 
     let urls = [
         "https://bmclapi2.bangbang93.com/mc/game/version_manifest.json",
@@ -68,7 +68,7 @@ async fn fetch_versions(
 
 /// 获取指定版本的文件大小信息
 pub async fn get_version_size(version_id: String, mirror: Option<String>) -> Result<VersionSizeInfo, LauncherError> {
-    let client = get_manifest_client()?;
+    let client = http_client::get_client();
 
     let is_mirror = mirror.is_some();
     let base_url = if is_mirror {

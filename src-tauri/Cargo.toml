@@ -1,6 +1,6 @@
 [package]
 name = "ar1s_launcher"
-version = "0.5.1"
+version = "0.5.2"
 description = "Ar1s Launcher"
 authors = ["jdbEwl"]
 edition = "2024"
@@ -30,6 +30,10 @@ reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha1 = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+serde_urlencoded = "0.7"
+rand = "0.8"
 tokio = { version = "1", features = ["full"] }
 zip = "7.0"
 thiserror = "2"
@@ -40,5 +44,7 @@ regex = "1.12"
 sysinfo = "0.37"
 num_cpus = "1.16"
 opener = "0.8"
-rayon = "1.10"
+tempfile = "3"
+
+[dev-dependencies]
 

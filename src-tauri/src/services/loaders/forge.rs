@@ -10,7 +10,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::Command;
 use zip::ZipArchive;
@@ -52,6 +52,7 @@ pub async fn install_forge(
     let app_config = config::load_config()?;
     let java_path = app_config
         .java_path
+        .clone()
         .ok_or_else(|| LauncherError::Custom("未设置 Java 路径".to_string()))?;
 
     let forge_ver = ForgeVersion {
@@ -61,7 +62,8 @@ pub async fn install_forge(
     };
 
     // 下载安装器
-    let installer_path = download_forge_installer(&forge_ver).await?;
+    let installer_temp = download_forge_installer(&forge_ver).await?;
+    let installer_path = installer_temp.as_ref();
 
     // 预下载必要库 (旧版 Forge)
     if !is_new_forge(mc_version) {
@@ -79,7 +81,7 @@ pub async fn install_forge(
 
     // 尝试使用官方安装器
     info!("Forge: 尝试官方安装器");
-    let install_result = run_official_installer(&installer_path, game_dir, &java_path).await;
+    let install_result = run_official_installer(installer_path, game_dir, &java_path).await;
 
     let forge_version_id = get_forge_version_id(mc_version, forge_version);
 
@@ -91,17 +93,14 @@ pub async fn install_forge(
             warn!("Forge: 官方安装器失败: {}, 尝试手动安装", e);
 
             if is_new_forge(mc_version) {
-                manual_install_new_forge(&installer_path, game_dir, &forge_ver, &java_path).await?;
+                manual_install_new_forge(installer_path, game_dir, &forge_ver, &java_path).await?;
             } else {
-                manual_install_old_forge(&installer_path, game_dir, &forge_ver).await?;
+                manual_install_old_forge(installer_path, game_dir, &forge_ver).await?;
             }
         }
     }
 
-    // 清理安装器
-    if installer_path.exists() {
-        fs::remove_file(&installer_path).ok();
-    }
+    drop(installer_temp);
 
     // 重命名/复制版本 JSON 到实例名称
     let versions_dir = game_dir.join("versions");
@@ -159,15 +158,9 @@ pub async fn get_forge_versions(mc_version: &str) -> Result<Vec<ForgeVersion>, L
 
 // ============ 内部辅助函数 ============
 
-/// 判断是否为新版 Forge (1.13+)
 fn is_new_forge(mc_version: &str) -> bool {
-    let parts: Vec<&str> = mc_version.split('.').collect();
-    if parts.len() >= 2 {
-        if let Ok(minor) = parts[1].parse::<u32>() {
-            return minor >= 13;
-        }
-    }
-    false
+    crate::utils::minecraft::parse_mc_version(mc_version)
+        .map_or(false, |(major, minor)| major == 1 && minor >= 13)
 }
 
 /// 生成标准的 Forge 版本 ID
@@ -198,14 +191,12 @@ fn compare_forge_versions(a: &str, b: &str) -> std::cmp::Ordering {
 /// 下载 Forge 安装器
 async fn download_forge_installer(
     forge_version: &ForgeVersion,
-) -> Result<std::path::PathBuf, LauncherError> {
+) -> Result<tempfile::TempPath, LauncherError> {
     let installer_filename = format!(
         "forge-{}-{}-installer.jar",
         forge_version.mcversion, forge_version.version
     );
-    let installer_path = std::env::temp_dir().join(&installer_filename);
 
-    // 判断是否需要使用旧版 URL 格式
     let needs_old_format = forge_version.mcversion.starts_with("1.7")
         || forge_version.mcversion.starts_with("1.9")
         || forge_version.mcversion == "1.10";
@@ -255,10 +246,16 @@ async fn download_forge_installer(
         if let Ok(resp) = download_with_retry(url, client, 3).await {
             if let Ok(bytes) = resp.bytes().await {
                 if bytes.len() > 1024 && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
-                    fs::write(&installer_path, &bytes)
+                    let mut tmp = tempfile::Builder::new()
+                        .prefix(&installer_filename)
+                        .suffix(".jar")
+                        .tempfile()
+                        .map_err(|e| LauncherError::Custom(format!("创建临时文件失败: {}", e)))?;
+                    tmp.write_all(&bytes)
                         .map_err(|e| LauncherError::Custom(format!("写入安装器失败: {}", e)))?;
+                    let temp_path = tmp.into_temp_path();
                     info!("Forge: 安装器已下载");
-                    return Ok(installer_path);
+                    return Ok(temp_path);
                 }
             }
         }
@@ -458,23 +455,7 @@ async fn download_lzma_library(
 
 // ============ 手动安装逻辑 ============
 
-/// 从 Maven 坐标解析路径
-fn maven_to_path(name: &str, classifier: Option<&str>, extension: &str) -> Option<String> {
-    let parts: Vec<&str> = name.split(':').collect();
-    if parts.len() < 3 {
-        return None;
-    }
-
-    let (group, artifact, version) = (parts[0], parts[1], parts[2]);
-    let group_path = group.replace('.', "/");
-
-    let filename = match classifier {
-        Some(c) => format!("{}-{}-{}.{}", artifact, version, c, extension),
-        None => format!("{}-{}.{}", artifact, version, extension),
-    };
-
-    Some(format!("{}/{}/{}/{}", group_path, artifact, version, filename))
-}
+use crate::utils::minecraft::maven_name_to_path;
 
 /// 从 install_profile 下载库
 async fn download_library_from_profile(
@@ -533,7 +514,7 @@ async fn download_library_from_profile(
     }
 
     // 回退到从 name 构建路径
-    if let Some(maven_path) = maven_to_path(name, None, "jar") {
+    if let Some(maven_path) = maven_name_to_path(name, None, "jar") {
         let target_path = libraries_dir.join(&maven_path);
         if target_path.exists() {
             return Ok(());
@@ -847,7 +828,7 @@ async fn run_forge_processors(
             None => continue,
         };
 
-        let jar_path = match maven_to_path(jar_name, None, "jar") {
+        let jar_path = match maven_name_to_path(jar_name, None, "jar") {
             Some(p) => libraries_dir.join(p),
             None => continue,
         };
@@ -861,7 +842,7 @@ async fn run_forge_processors(
         if let Some(cp) = processor.get("classpath").and_then(|c| c.as_array()) {
             for lib in cp {
                 if let Some(lib_name) = lib.as_str() {
-                    if let Some(lib_path) = maven_to_path(lib_name, None, "jar") {
+                    if let Some(lib_path) = maven_name_to_path(lib_name, None, "jar") {
                         let full_path = libraries_dir.join(&lib_path);
                         if full_path.exists() {
                             classpath.push(full_path.to_string_lossy().to_string());
@@ -955,7 +936,7 @@ fn resolve_processor_arg(
         }
     } else if arg.starts_with('[') && arg.ends_with(']') {
         let artifact = &arg[1..arg.len() - 1];
-        if let Some(path) = maven_to_path(artifact, None, "jar") {
+        if let Some(path) = maven_name_to_path(artifact, None, "jar") {
             return libraries_dir.join(path).to_string_lossy().to_string();
         }
     }
@@ -971,7 +952,7 @@ fn resolve_data_value(
 ) -> String {
     if value.starts_with('[') && value.ends_with(']') {
         let artifact = &value[1..value.len() - 1];
-        if let Some(path) = maven_to_path(artifact, None, "jar") {
+        if let Some(path) = maven_name_to_path(artifact, None, "jar") {
             return libraries_dir.join(path).to_string_lossy().to_string();
         }
     }

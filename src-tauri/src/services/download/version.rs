@@ -35,8 +35,7 @@ pub async fn process_and_download_version(
     let libraries_base_dir = game_dir.join("libraries");
     let assets_base_dir = game_dir.join("assets");
 
-    // 使用全局 HTTP 客户端
-    let client = get_http_client()?;
+    let client = get_http_client();
 
     // 检查是否是整合包/mod加载器版本（本地版本 JSON 存在且有 inheritsFrom）
     let local_version_json_path = version_dir.join(format!("{}.json", version_id));
@@ -178,7 +177,7 @@ fn collect_client_jar(
         .as_str()
         .ok_or_else(|| LauncherError::Custom("无法获取客户端下载URL".to_string()))?;
     let client_size = client_info["size"].as_u64().unwrap_or(0);
-    let client_hash = client_info["sha1"].as_str().unwrap_or("").to_string();
+    let client_hash = client_info["sha1"].as_str().map(|h| h.to_string());
     let client_jar_path = version_dir.join(format!("{}.jar", version_id));
 
     downloads.push(DownloadJob {
@@ -267,7 +266,7 @@ async fn collect_assets(
                 fallback_url: if is_mirror { Some(original_url) } else { None },
                 path: file_path,
                 size,
-                hash: hash.to_string(),
+                hash: Some(hash.to_string()),
             });
         }
     }
@@ -323,7 +322,7 @@ fn create_library_job_from_name(
     base_url: &str,
 ) -> Option<DownloadJob> {
     let name = lib["name"].as_str()?;
-    let maven_path = maven_name_to_path(name)?;
+    let maven_path = maven_name_to_path(name, None, "jar")?;
     
     let target_path = libraries_base_dir.join(&maven_path);
     
@@ -364,7 +363,7 @@ fn create_library_job_from_name(
         fallback_url,
         path: target_path,
         size: 0,
-        hash: String::new(),
+        hash: None,
     })
 }
 
@@ -392,7 +391,7 @@ fn create_library_job(
     let url = artifact["url"].as_str()?;
     let path = artifact["path"].as_str()?;
     let size = artifact["size"].as_u64().unwrap_or(0);
-    let hash = artifact["sha1"].as_str().unwrap_or("").to_string();
+    let hash = artifact["sha1"].as_str().map(|h| h.to_string());
 
     let download_url = if is_mirror {
         // 替换各种库源为镜像
@@ -517,6 +516,6 @@ fn create_natives_job_from_name(
         fallback_url: if is_mirror { Some(natives_url) } else { None },
         path: libraries_base_dir.join(&natives_path),
         size: 0,
-        hash: String::new(),
+        hash: None,
     })
 }

@@ -1,5 +1,4 @@
 use crate::{load_config, save_config, LauncherError};
-use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -375,36 +374,52 @@ pub async fn find_java_installations_command() -> Result<Vec<String>, LauncherEr
     Ok(paths)
 }
 
+/// 同步版本：仅使用缓存，不触发扫描
+pub fn find_java_installations_command_sync() -> Result<Vec<String>, LauncherError> {
+    if let Some(cached_paths) = get_cached_java_paths() {
+        return Ok(cached_paths);
+    }
+    Ok(scan_java_installations_parallel())
+}
+
 /// 并行扫描 Java 安装（同步函数，在阻塞线程池中执行）
 fn scan_java_installations_parallel() -> Vec<String> {
     let java_dirs = get_java_installation_dirs();
-    
-    // 1. 并行扫描所有 Java 安装目录
-    let mut paths: Vec<String> = java_dirs
-        .par_iter()
-        .flat_map(|dir| find_java_in_directory(dir))
-        .collect();
 
-    // 2. 从 PATH 环境变量中查找 Java
+    let dir_results: Vec<Vec<String>> = std::thread::scope(|s| {
+        let handles: Vec<_> = java_dirs
+            .iter()
+            .map(|dir| s.spawn(|| find_java_in_directory(dir)))
+            .collect();
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    });
+
+    let mut paths: Vec<String> = dir_results.into_iter().flatten().collect();
+
     if let Ok(path_env) = std::env::var("PATH") {
         let separator = if cfg!(windows) { ';' } else { ':' };
         let path_entries: Vec<&str> = path_env.split(separator).collect();
-        
-        let path_java: Vec<String> = path_entries
-            .par_iter()
-            .filter_map(|path_entry| {
-                let path_buf = PathBuf::from(path_entry);
-                let java_exe = path_buf.join(if cfg!(windows) { "java.exe" } else { "java" });
-                
-                if java_exe.exists() && is_valid_java_executable(&java_exe) {
-                    Some(java_exe.to_string_lossy().replace("\\", "/"))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        
-        paths.extend(path_java);
+
+        let path_results: Vec<String> = std::thread::scope(|s| {
+            let handles: Vec<_> = path_entries
+                .iter()
+                .map(|entry| {
+                    s.spawn(|| {
+                        let path_buf = PathBuf::from(*entry);
+                        let java_exe = path_buf.join(if cfg!(windows) { "java.exe" } else { "java" });
+
+                        if java_exe.exists() && is_valid_java_executable(&java_exe) {
+                            Some(java_exe.to_string_lossy().replace("\\", "/"))
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+            handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
+        });
+
+        paths.extend(path_results);
     }
 
     // 3. 检查 JAVA_HOME 环境变量
@@ -478,28 +493,26 @@ pub async fn set_java_path_command(path: String) -> Result<(), LauncherError> {
         )));
     }
 
-    let mut config = load_config()?;
+    let mut config = (*load_config()?).clone();
     config.java_path = Some(normalized_path);
     save_config(&config)?;
 
     Ok(())
 }
 
-/// 验证Java路径是否有效
+/// 验证Java路径是否有效（支持相对路径）
 pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
-    let path_buf = PathBuf::from(&path);
-
-    // 如果是相对路径或命令名称（如"java"）
-    if path == "java" || (!path_buf.is_absolute() && !path.contains(std::path::MAIN_SEPARATOR)) {
+    // 如果是简单的命令名称（如"java"）
+    if path == "java" || path == "java.exe" {
         let java_cmd = if cfg!(windows) { "java.exe" } else { "java" };
         return Ok(find_java_in_path(java_cmd));
     }
 
-    // 如果是绝对路径
+    let path_buf = crate::services::launcher::java::resolve_path(&path);
+
     if path_buf.is_file() {
         Ok(is_valid_java_executable(&path_buf))
     } else if path_buf.is_dir() {
-        // 如果是目录，尝试查找bin目录下的java可执行文件
         let java_exe = path_buf
             .join("bin")
             .join(if cfg!(windows) { "java.exe" } else { "java" });
@@ -509,16 +522,16 @@ pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
     }
 }
 
-/// 获取 Java 版本信息
+/// 获取 Java 版本信息（支持相对路径）
 pub async fn get_java_version(path: String) -> Result<String, LauncherError> {
-    let path_buf = PathBuf::from(&path);
+    let resolved = crate::services::launcher::java::resolve_path(&path);
     
     let java_path = if path == "java" || path == "java.exe" {
         PathBuf::from(&path)
-    } else if path_buf.is_dir() {
-        path_buf.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" })
+    } else if resolved.is_dir() {
+        resolved.join("bin").join(if cfg!(windows) { "java.exe" } else { "java" })
     } else {
-        path_buf
+        resolved
     };
 
     let mut command = Command::new(&java_path);

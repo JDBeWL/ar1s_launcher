@@ -1,6 +1,7 @@
 //! JVM 和游戏参数构建逻辑
 
 use crate::models::{GameConfig, LaunchOptions};
+use crate::utils::minecraft::evaluate_rules_for_arguments;
 use std::path::Path;
 
 /// 从版本 JSON 中获取基础 Minecraft 版本名
@@ -48,7 +49,6 @@ pub fn build_arguments(
     game_dir: &Path,
     assets_dir: &Path,
     assets_index: &str,
-    current_os: &str,
     classpath: &[std::path::PathBuf],
     emit: &impl Fn(&str, String),
 ) -> (Vec<String>, Vec<String>) {
@@ -112,8 +112,8 @@ pub fn build_arguments(
 
     // 处理新版 (1.13+) `arguments` 格式
     if let Some(arguments) = version_json.get("arguments") {
-        jvm_args = parse_jvm_arguments(arguments, current_os, &replace_placeholders);
-        game_args_vec = parse_game_arguments(arguments, current_os, &replace_placeholders);
+        jvm_args = parse_jvm_arguments(arguments, &replace_placeholders);
+        game_args_vec = parse_game_arguments(arguments, &replace_placeholders);
     }
     // 处理旧版 `minecraftArguments` 格式
     else if let Some(mc_args) = version_json["minecraftArguments"].as_str() {
@@ -135,7 +135,6 @@ pub fn build_arguments(
 /// 解析 JVM 参数
 fn parse_jvm_arguments(
     arguments: &serde_json::Value,
-    current_os: &str,
     replace_placeholders: &impl Fn(&str) -> String,
 ) -> Vec<String> {
     let mut jvm_args = vec![];
@@ -148,7 +147,7 @@ fn parse_jvm_arguments(
         if let Some(s) = arg.as_str() {
             jvm_args.push(replace_placeholders(s));
         } else if let Some(obj) = arg.as_object() {
-            if is_rule_allowed(obj, current_os) {
+            if evaluate_rules_for_arguments(obj.get("rules")) {
                 if let Some(value) = obj.get("value") {
                     if let Some(s) = value.as_str() {
                         jvm_args.push(replace_placeholders(s));
@@ -170,7 +169,6 @@ fn parse_jvm_arguments(
 /// 解析游戏参数
 fn parse_game_arguments(
     arguments: &serde_json::Value,
-    current_os: &str,
     replace_placeholders: &impl Fn(&str) -> String,
 ) -> Vec<String> {
     let mut game_args = vec![];
@@ -180,7 +178,7 @@ fn parse_game_arguments(
             if let Some(s) = arg.as_str() {
                 game_args.push(replace_placeholders(s));
             } else if let Some(obj) = arg.as_object() {
-                if is_rule_allowed(obj, current_os) {
+                if evaluate_rules_for_arguments(obj.get("rules")) {
                     if let Some(value) = obj.get("value") {
                         if let Some(s) = value.as_str() {
                             game_args.push(replace_placeholders(s));
@@ -198,95 +196,6 @@ fn parse_game_arguments(
     }
 
     game_args
-}
-
-/// 检查规则是否允许
-/// Minecraft 规则语义：
-/// - allow 规则：只允许匹配的 OS/特性，其他被排除
-/// - disallow 规则：禁止匹配的 OS/特性
-/// - features 规则：根据启动器支持的功能决定是否包含参数
-fn is_rule_allowed(obj: &serde_json::Map<String, serde_json::Value>, current_os: &str) -> bool {
-    let Some(rules) = obj.get("rules").and_then(|r| r.as_array()) else {
-        return true;
-    };
-
-    let mut allowed = true;
-
-    for rule in rules {
-        let action = rule["action"].as_str().unwrap_or("");
-
-        // 检查 features 条件
-        if let Some(features) = rule.get("features") {
-            let feature_allowed = check_features(features);
-            match action {
-                "allow" => {
-                    allowed = feature_allowed;
-                }
-                "disallow" => {
-                    if feature_allowed {
-                        allowed = false;
-                    }
-                }
-                _ => {}
-            }
-            continue;
-        }
-
-        // 检查 OS 条件
-        if let Some(os) = rule.get("os") {
-            if let Some(name) = os["name"].as_str() {
-                match action {
-                    "allow" => {
-                        if name == current_os {
-                            allowed = true;
-                        } else if !allowed {
-                            // 已被其他 allow 规则排除了，保持排除
-                        } else {
-                            allowed = false;
-                        }
-                    }
-                    "disallow" => {
-                        if name == current_os {
-                            allowed = false;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        } else {
-            // 没有 OS 也没有 features 条件的规则
-            match action {
-                "allow" => {
-                    allowed = true;
-                }
-                "disallow" => {
-                    allowed = false;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    allowed
-}
-
-/// 检查启动器是否支持指定的 features
-/// Minecraft 1.20+ 的版本 JSON 使用 features 来控制可选参数
-fn check_features(features: &serde_json::Value) -> bool {
-    // 启动器支持的 features
-    const SUPPORTED_FEATURES: &[&str] = &[
-        "has_custom_resolution",  // 启动器支持 --width/--height
-    ];
-
-    if let Some(obj) = features.as_object() {
-        // 所有请求的 features 都必须是启动器支持的
-        for (key, value) in obj {
-            if value.as_bool() == Some(true) && !SUPPORTED_FEATURES.contains(&key.as_str()) {
-                return false;
-            }
-        }
-    }
-    true
 }
 
 /// 自动补齐 tweakClass（仅在 LaunchWrapper 主类下）

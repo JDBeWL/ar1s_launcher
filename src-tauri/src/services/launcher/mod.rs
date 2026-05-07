@@ -10,7 +10,7 @@
 mod arguments;
 mod classpath;
 mod isolation;
-mod java;
+pub mod java;
 mod natives;
 mod process;
 mod version_json;
@@ -19,7 +19,7 @@ use crate::errors::LauncherError;
 use crate::models::LaunchOptions;
 use crate::services::config::{load_config, save_config, update_instance_last_played, set_last_selected_version};
 use crate::services::memory::{is_memory_setting_safe, optimize_jvm_memory_args};
-use std::path::PathBuf;
+use log::{info, warn};
 use tauri::Emitter;
 
 pub use classpath::find_library_jar;
@@ -33,13 +33,61 @@ pub async fn launch_minecraft(
         let _ = window.emit(event, msg);
     };
 
+    let mut options = options;
+
+    if options.auth_type.as_deref() == Some("microsoft") && options.access_token.is_none() {
+        let cfg = load_config()?;
+        if cfg.auth_type == crate::models::AuthType::Microsoft {
+            let expires_at = cfg.ms_expires_at.unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+
+            if now >= expires_at - 60 {
+                if let Some(refresh_token) = cfg.ms_refresh_token.clone() {
+                    match crate::services::microsoft_auth::refresh_and_authenticate(&refresh_token).await {
+                        Ok(auth_result) => {
+                            let mut save_cfg = (*load_config()?).clone();
+                            save_cfg.ms_access_token = Some(auth_result.access_token.clone());
+                            save_cfg.ms_refresh_token = Some(auth_result.refresh_token.clone());
+                            save_cfg.ms_expires_at = Some(auth_result.expires_at);
+                            save_cfg.username = Some(auth_result.username.clone());
+                            save_cfg.uuid = Some(auth_result.uuid.clone());
+                            save_config(&save_cfg)?;
+
+                            options.access_token = Some(auth_result.access_token);
+                            if options.uuid.is_none() {
+                                options.uuid = Some(auth_result.uuid);
+                            }
+                            info!("Microsoft token 刷新成功");
+                        }
+                        Err(e) => {
+                            warn!("Microsoft token 刷新失败: {}, 将使用旧 token", e);
+                            options.access_token = cfg.ms_access_token.clone();
+                        }
+                    }
+                } else {
+                    warn!("未找到 refresh_token，无法刷新 Microsoft token");
+                    options.access_token = cfg.ms_access_token.clone();
+                }
+            } else {
+                options.access_token = cfg.ms_access_token.clone();
+            }
+
+            if options.uuid.is_none() {
+                options.uuid = cfg.uuid.clone();
+            }
+        }
+    }
+
     // 保存用户名和 UUID 到配置文件
     let uuid = if options.auth_type.as_deref() == Some("microsoft") {
         options.uuid.clone().unwrap_or_else(|| java::generate_offline_uuid(&options.username))
     } else {
         java::generate_offline_uuid(&options.username)
     };
-    let mut config = load_config()?;
+    let mut config = (*load_config()?).clone();
     config.username = Some(options.username.clone());
     config.uuid = Some(uuid.clone());
     save_config(&config)?;
@@ -49,8 +97,8 @@ pub async fn launch_minecraft(
     // 保存上次选择的版本
     let _ = set_last_selected_version(&options.version);
 
-    // 设置路径
-    let game_dir = PathBuf::from(&config.game_dir);
+    // 设置路径（支持相对路径）
+    let game_dir = java::resolve_game_dir(&config.game_dir);
     let version_dir = game_dir.join("versions").join(&options.version);
 
     emit("log-debug", format!("尝试启动版本: {}", options.version));
@@ -94,7 +142,6 @@ pub async fn launch_minecraft(
         &libraries_base_dir,
         &version_dir,
         &options.version,
-        current_os,
         &emit,
     )?;
 
@@ -121,13 +168,31 @@ pub async fn launch_minecraft(
         &game_dir,
         &assets_base_dir,
         assets_index,
-        current_os,
         &classpath,
         &emit,
     );
 
+    // 解析实际的 Minecraft 版本号，用于 JVM 参数优化和 Java 匹配
+    let actual_mc_version = java::resolve_actual_mc_version(&options.version, &config.game_dir);
+
     // 5. 组装 Java 启动参数
-    let java_path = java::resolve_java_path(&config)?;
+    let java_path = if let Some(ref override_path) = options.override_java_path {
+        emit("log-info", format!("使用临时指定的 Java: {}", override_path));
+        override_path.clone()
+    } else if config.auto_match_java {
+        if let Some(matched) = java::auto_match_java_for_version(&actual_mc_version) {
+            emit("log-info", format!("自动匹配 Java: {} (版本 {})", matched.path, matched.version));
+            if let Some(ref warning) = matched.warning {
+                emit("log-warning", warning.clone());
+            }
+            matched.path
+        } else {
+            emit("log-warning", "自动匹配 Java 失败，使用配置中的 Java 路径".to_string());
+            java::resolve_java_path(&config)?
+        }
+    } else {
+        java::resolve_java_path(&config)?
+    };
     emit("log-debug", format!("使用的Java路径: {}", java_path));
 
     // 检测 Java 版本，用于 JVM 参数优化
@@ -146,8 +211,11 @@ pub async fn launch_minecraft(
         emit("log-warning", format!("内存设置警告: {}", e));
     }
 
+    // 解析实际的 Minecraft 版本号，用于 JVM 参数优化
+    let actual_mc_version = java::resolve_actual_mc_version(&options.version, &config.game_dir);
+    
     // 生成优化的 JVM 内存参数（传入 Java 版本）
-    let mut final_args = optimize_jvm_memory_args(memory_mb, &options.version, java_version);
+    let mut final_args = optimize_jvm_memory_args(memory_mb, &actual_mc_version, java_version);
 
     // 添加其他必要的 JVM 参数
     final_args.extend([

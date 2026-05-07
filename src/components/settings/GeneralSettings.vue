@@ -6,6 +6,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useSettingsStore } from '../../stores/settings';
 import { configApi } from '../../services';
 import { logError } from '../../utils/logger';
+import { getThemePalette } from '../../utils/storage';
 
 const settingsStore = useSettingsStore();
 const gameDir = ref('');
@@ -15,7 +16,7 @@ const isolateSaves = ref(true);
 const isolateResourcepacks = ref(true);
 const isolateLogs = ref(true);
 const appVersion = __APP_VERSION__;
-const themePalette = ref(localStorage.getItem('themePalette') || 'indigo');
+const themePalette = ref(getThemePalette());
 const themePalettes = [
   { title: 'MD3 经典紫', value: 'indigo' },
   { title: 'MD3 清新青', value: 'emerald' },
@@ -139,7 +140,7 @@ onMounted(async () => {
   await loadGameDir();
   await loadDownloadThreads();
   await loadVersionIsolation();
-  await settingsStore.loadDownloadMirror();
+  await settingsStore.loadSettings();
 
   try {
     const lang = await configApi.loadConfigKey('language');

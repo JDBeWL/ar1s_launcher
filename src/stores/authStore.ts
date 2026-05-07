@@ -99,6 +99,20 @@ export const useAuthStore = defineStore('auth', () => {
     return result
   }
 
+  async function startAuthCodeLogin() {
+    const authUrl = await userApi.startMicrosoftAuthCodeLogin()
+    return authUrl
+  }
+
+  async function completeAuthCodeLogin() {
+    const result = await userApi.completeMicrosoftAuthCodeLogin()
+    msLoggedIn.value = true
+    msUsername.value = result.username
+    msUuid.value = result.uuid
+    msExpiresAt.value = result.expiresAt
+    return result
+  }
+
   async function logoutMicrosoft() {
     try {
       await userApi.logoutMicrosoft()
@@ -132,6 +146,8 @@ export const useAuthStore = defineStore('auth', () => {
     switchAuthType,
     requestDeviceCode,
     completeMicrosoftLogin,
+    startAuthCodeLogin,
+    completeAuthCodeLogin,
     logoutMicrosoft,
     init,
   }

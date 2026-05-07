@@ -1,5 +1,6 @@
 use crate::errors::LauncherError;
 use crate::models::DownloadJob;
+use crate::utils::minecraft::{evaluate_rules, get_mc_os_name};
 use log::{debug, info, warn};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
@@ -141,37 +142,33 @@ pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), 
 /// 验证文件完整性和哈希值
 pub fn verify_file(
     path: &std::path::Path,
-    expected_hash: &str,
+    expected_hash: Option<&str>,
     expected_size: u64,
 ) -> Result<bool, LauncherError> {
-    // 检查文件是否存在
     if !path.exists() {
         return Ok(false);
     }
     
-    // 检查文件大小
     let actual_size = std::fs::metadata(path)?.len();
     if expected_size > 0 && actual_size != expected_size {
         warn!("文件大小不匹配: 期望 {} 字节, 实际 {} 字节", expected_size, actual_size);
         return Ok(false);
     }
     
-    // 如果提供了哈希值，验证文件哈希
-    if !expected_hash.is_empty() {
+    if let Some(hash) = expected_hash {
         let mut file = std::fs::File::open(path)?;
         let mut hasher = Sha1::new();
         std::io::copy(&mut file, &mut hasher)?;
         let actual_hash = hasher.finalize();
         let actual_hash_str = format!("{:x}", actual_hash);
-        let is_valid = actual_hash_str.to_lowercase() == expected_hash.to_lowercase();
+        let is_valid = actual_hash_str.to_lowercase() == hash.to_lowercase();
         
         if !is_valid {
-            warn!("文件哈希不匹配: 期望 {}, 实际 {}", expected_hash, actual_hash_str);
+            warn!("文件哈希不匹配: 期望 {}, 实际 {}", hash, actual_hash_str);
         }
         
         Ok(is_valid)
     } else {
-        // 如果没有提供哈希值，只检查大小
         Ok(true)
     }
 }
@@ -190,7 +187,7 @@ pub async fn verify_and_repair_file(
     }
     
     // 2. 验证文件完整性
-    if verify_file(path, &job.hash, job.size)? {
+    if verify_file(path, job.hash.as_deref(), job.size)? {
         debug!("文件验证通过: {}", path.display());
         return Ok(true);
     }
@@ -230,7 +227,7 @@ pub async fn verify_and_repair_file(
     std::fs::write(path, &content)?;
     
     // 3.4 验证重新下载的文件
-    if verify_file(path, &job.hash, job.size)? {
+    if verify_file(path, job.hash.as_deref(), job.size)? {
         info!("文件修复成功: {}", path.display());
         // 删除备份文件
         let _ = std::fs::remove_file(&backup_path);
@@ -294,7 +291,7 @@ pub fn collect_download_jobs_from_json(
     if let Some(client) = version_json.get("downloads").and_then(|d| d.get("client")) {
         if let Some(url) = client.get("url").and_then(|u| u.as_str()) {
             let size = client.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-            let hash = client.get("sha1").and_then(|h| h.as_str()).unwrap_or("").to_string();
+            let hash = client.get("sha1").and_then(|h| h.as_str()).map(|h| h.to_string());
             let path = version_dir.join(format!("{}.jar", version_id));
             jobs.push(DownloadJob { 
                 url: url.to_string(), 
@@ -316,7 +313,7 @@ pub fn collect_download_jobs_from_json(
                     fallback_url: None,
                     path: index_path.clone(),
                     size: asset_idx.get("size").and_then(|s| s.as_u64()).unwrap_or(0),
-                    hash: asset_idx.get("sha1").and_then(|h| h.as_str()).unwrap_or("").to_string(),
+                    hash: asset_idx.get("sha1").and_then(|h| h.as_str()).map(|h| h.to_string()),
                 });
             }
         }
@@ -325,26 +322,7 @@ pub fn collect_download_jobs_from_json(
     // 3) 库文件 + 原生库
     if let Some(libs) = version_json.get("libraries").and_then(|v| v.as_array()) {
         for lib in libs {
-            // 规则评估
-            let mut should_download = true;
-            if let Some(rules) = lib.get("rules").and_then(|r| r.as_array()) {
-                should_download = false;
-                for rule in rules {
-                    let action = rule.get("action").and_then(|a| a.as_str()).unwrap_or("");
-                    if let Some(os) = rule.get("os") {
-                        if let Some(name) = os.get("name").and_then(|n| n.as_str()) {
-                            let current_os = std::env::consts::OS;
-                            if name == current_os {
-                                should_download = action == "allow";
-                            }
-                        }
-                    } else {
-                        should_download = action == "allow";
-                    }
-                }
-            }
-
-            if !should_download {
+            if !evaluate_rules(lib.get("rules")) {
                 continue;
             }
 
@@ -353,7 +331,7 @@ pub fn collect_download_jobs_from_json(
                 let path = artifact.get("path").and_then(|p| p.as_str()).map(|s| s.to_string());
                 let url = artifact.get("url").and_then(|u| u.as_str()).map(|s| s.to_string());
                 let size = artifact.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                let hash = artifact.get("sha1").and_then(|h| h.as_str()).unwrap_or("").to_string();
+                let hash = artifact.get("sha1").and_then(|h| h.as_str()).map(|h| h.to_string());
                 if let Some(path_str) = path {
                     let file_path = libraries_base_dir.join(path_str.clone());
                     let download_url = if let Some(u) = url { u } else { format!("https://libraries.minecraft.net/{}", path_str) };
@@ -370,7 +348,7 @@ pub fn collect_download_jobs_from_json(
             // 原生库/分类器
             if let Some(natives) = lib.get("natives") {
                 if let Some(natives_map) = natives.as_object() {
-                    let current_os = std::env::consts::OS;
+                    let current_os = get_mc_os_name();
                     for (os_name, classifier_val) in natives_map.iter() {
                         let classifier = classifier_val.as_str().unwrap_or("");
                         if os_name == current_os || lib.get("name").and_then(|n| n.as_str()).map_or(false, |s| s.contains("lwjgl")) {
@@ -379,7 +357,7 @@ pub fn collect_download_jobs_from_json(
                                 if let Some(artifact) = classifiers.get(classifier) {
                                     if let (Some(path), Some(url)) = (artifact.get("path").and_then(|p| p.as_str()), artifact.get("url").and_then(|u| u.as_str())) {
                                         let size = artifact.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                                        let hash = artifact.get("sha1").and_then(|h| h.as_str()).unwrap_or("").to_string();
+                                        let hash = artifact.get("sha1").and_then(|h| h.as_str()).map(|h| h.to_string());
                                         let file_path = libraries_base_dir.join(path);
                                         jobs.push(DownloadJob { 
                                             url: url.to_string(), 
@@ -393,12 +371,11 @@ pub fn collect_download_jobs_from_json(
                                 }
                             }
 
-                            // 回退：尝试顶层的 "classifiers"
                             if let Some(classifiers) = lib.get("classifiers") {
                                 if let Some(artifact) = classifiers.get(classifier) {
                                     if let (Some(path), Some(url)) = (artifact.get("path").and_then(|p| p.as_str()), artifact.get("url").and_then(|u| u.as_str())) {
                                         let size = artifact.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                                        let hash = artifact.get("sha1").and_then(|h| h.as_str()).unwrap_or("").to_string();
+                                        let hash = artifact.get("sha1").and_then(|h| h.as_str()).map(|h| h.to_string());
                                         let file_path = libraries_base_dir.join(path);
                                         jobs.push(DownloadJob { 
                                             url: url.to_string(), 
@@ -428,7 +405,7 @@ pub fn collect_download_jobs_from_json(
                                         fallback_url: None, 
                                         path: file_path, 
                                         size: 0, 
-                                        hash: "".to_string() 
+                                        hash: None
                                     });
                                 }
                             }
@@ -612,24 +589,21 @@ mod tests {
 
     #[test]
     fn test_verify_file_nonexistent() {
-        let result = verify_file(Path::new("/nonexistent/path"), "abc123", 100);
+        let result = verify_file(Path::new("/nonexistent/path"), Some("abc123"), 100);
         assert!(result.is_ok());
         assert!(!result.unwrap());
     }
 
     #[test]
-    fn test_verify_file_empty_hash() {
+    fn test_verify_file_no_hash() {
         let dir = std::env::temp_dir().join("ar1s_test_verify");
         let _ = fs::create_dir_all(&dir);
-        let file_path = dir.join("test_empty_hash.bin");
+        let file_path = dir.join("test_no_hash.bin");
         fs::write(&file_path, b"hello").unwrap();
 
-        // 无 hash 无 size → 只检查存在性
-        assert!(verify_file(&file_path, "", 0).unwrap());
-        // 无 hash 但 size 匹配
-        assert!(verify_file(&file_path, "", 5).unwrap());
-        // 无 hash 但 size 不匹配
-        assert!(!verify_file(&file_path, "", 999).unwrap());
+        assert!(verify_file(&file_path, None, 0).unwrap());
+        assert!(verify_file(&file_path, None, 5).unwrap());
+        assert!(!verify_file(&file_path, None, 999).unwrap());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -641,11 +615,9 @@ mod tests {
         let file_path = dir.join("test_sha1.bin");
         fs::write(&file_path, b"hello").unwrap();
 
-        // "hello" 的 SHA1 = aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
         let correct_hash = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
-        assert!(verify_file(&file_path, correct_hash, 5).unwrap());
-        // 错误 hash
-        assert!(!verify_file(&file_path, "0000000000000000000000000000000000000000", 5).unwrap());
+        assert!(verify_file(&file_path, Some(correct_hash), 5).unwrap());
+        assert!(!verify_file(&file_path, Some("0000000000000000000000000000000000000000"), 5).unwrap());
 
         let _ = fs::remove_dir_all(&dir);
     }

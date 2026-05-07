@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
 
 use crate::errors::LauncherError;
@@ -12,87 +12,89 @@ use crate::services::memory::{
     MemoryStats, DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB, DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
 };
 
-// 配置缓存
-static CONFIG_CACHE: std::sync::LazyLock<RwLock<Option<GameConfig>>> = 
+static CONFIG_CACHE: std::sync::LazyLock<RwLock<Option<Arc<GameConfig>>>> =
     std::sync::LazyLock::new(|| RwLock::new(None));
 
-// 标记配置是否已预加载
-static CONFIG_PRELOADED: AtomicBool = AtomicBool::new(false);
+fn with_read_lock<F, R>(f: F) -> R
+where
+    F: FnOnce(&Option<Arc<GameConfig>>) -> R,
+{
+    let guard = match CONFIG_CACHE.read().ok() {
+        Some(g) => g,
+        None => {
+            log::warn!("配置缓存读取锁被破坏，使用空缓存");
+            return f(&None);
+        }
+    };
+    f(&guard)
+}
 
-/// 预加载配置（应在应用启动时调用）
-/// 这会立即加载配置到缓存，避免后续的锁竞争
+fn with_write_lock<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut Option<Arc<GameConfig>>) -> R,
+{
+    let mut guard = match CONFIG_CACHE.write() {
+        Ok(g) => g,
+        Err(poisoned) => {
+            log::warn!("配置缓存写入锁被破坏，正在恢复");
+            poisoned.into_inner()
+        }
+    };
+    f(&mut guard)
+}
+
 pub fn preload_config() -> Result<(), LauncherError> {
-    if CONFIG_PRELOADED.load(Ordering::Relaxed) {
+    if with_read_lock(|cache| cache.is_some()) {
         return Ok(());
     }
-    
+
     log::info!("预加载配置文件...");
     let config = load_config_internal()?;
-    
-    if let Ok(mut cache) = CONFIG_CACHE.write() {
-        *cache = Some(config);
-    }
-    
-    CONFIG_PRELOADED.store(true, Ordering::Relaxed);
+    with_write_lock(|c| {
+        *c = Some(Arc::new(config));
+    });
     log::info!("配置文件预加载完成");
     Ok(())
 }
 
-/// 清除配置缓存（供外部模块在需要时调用）
 pub fn invalidate_config_cache() {
-    if let Ok(mut cache) = CONFIG_CACHE.write() {
+    with_write_lock(|cache| {
         *cache = None;
-    }
-    CONFIG_PRELOADED.store(false, Ordering::Relaxed);
+    });
     log::debug!("配置缓存已清除");
 }
 
 // 获取保存的用户名
 pub fn get_saved_username() -> Result<Option<String>, LauncherError> {
     let config = load_config()?;
-    Ok(config.username)
+    Ok(config.username.clone())
 }
 
-// 设置保存的用户名
 pub fn set_saved_username(username: String) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
-    config.username = Some(username);
-    save_config(&config)?;
-    Ok(())
+    set_config_value(|config| config.username = Some(username))
 }
 
 // 获取保存的UUID
 pub fn get_saved_uuid() -> Result<Option<String>, LauncherError> {
     let config = load_config()?;
-    Ok(config.uuid)
+    Ok(config.uuid.clone())
 }
 
-// 设置保存的UUID
 pub fn set_saved_uuid(uuid: String) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
-    config.uuid = Some(uuid);
-    save_config(&config)?;
-    Ok(())
+    set_config_value(|config| config.uuid = Some(uuid))
 }
 
-/// 加载配置文件（带缓存，优化版本）
-pub fn load_config() -> Result<GameConfig, LauncherError> {
-    // 快速路径：先尝试读取缓存（使用读锁，允许并发读取）
-    if let Ok(cache) = CONFIG_CACHE.read() {
-        if let Some(ref config) = *cache {
-            return Ok(config.clone());
-        }
+pub fn load_config() -> Result<Arc<GameConfig>, LauncherError> {
+    if let Some(config) = with_read_lock(|cache| cache.clone()) {
+        return Ok(config);
     }
 
-    // 缓存未命中，加载配置
     let config = load_config_internal()?;
-    
-    // 更新缓存
-    if let Ok(mut cache) = CONFIG_CACHE.write() {
-        *cache = Some(config.clone());
-    }
-    
-    Ok(config)
+    let arc = Arc::new(config);
+    with_write_lock(|cache| {
+        *cache = Some(arc.clone());
+    });
+    Ok(arc)
 }
 
 /// 内部配置加载函数（不使用缓存）
@@ -148,6 +150,8 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         game_dir: mc_dir_str,
         version_isolation: true,
         java_path: None,
+        custom_java_paths: Vec::new(),
+        auto_match_java: false,
         download_threads: 8,
         language: Some("zh_cn".to_string()),
         isolate_saves: true,
@@ -172,9 +176,18 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
     // 首次运行时自动检测Java
     if is_first_run {
         if let Ok(java_paths) = auto_detect_java() {
-            if let Some(java_path) = java_paths.first() {
-                config.java_path = Some(java_path.clone());
-                log::info!("首次启动自动检测到Java路径: {}", java_path);
+            if !java_paths.is_empty() {
+                let best = java_paths
+                    .iter()
+                    .filter_map(|p| {
+                        crate::services::launcher::java::detect_java_version(p)
+                            .map(|v| (p.clone(), v))
+                    })
+                    .max_by_key(|(_, v)| *v)
+                    .map(|(p, _)| p)
+                    .unwrap_or_else(|| java_paths[0].clone());
+                config.java_path = Some(best.clone());
+                log::info!("首次启动自动检测到Java路径: {}", best);
             }
         }
     }
@@ -185,15 +198,11 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
 
 use crate::services::java::auto_detect_java;
 
-/// 保存配置文件（同时更新缓存）
 pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
     save_config_internal(config)?;
-    
-    // 更新缓存
-    if let Ok(mut cache) = CONFIG_CACHE.write() {
-        *cache = Some(config.clone());
-    }
-    
+    with_write_lock(|cache| {
+        *cache = Some(Arc::new(config.clone()));
+    });
     Ok(())
 }
 
@@ -236,6 +245,13 @@ enum ConfigKey {
     Uuid,
     MaxMemory,
     DownloadMirror,
+    AutoMatchJava,
+    AutoMemoryEnabled,
+    WindowWidth,
+    WindowHeight,
+    Fullscreen,
+    AuthType,
+    LastSelectedVersion,
 }
 
 impl ConfigKey {
@@ -253,6 +269,13 @@ impl ConfigKey {
             "uuid" => Some(Self::Uuid),
             "maxMemory" => Some(Self::MaxMemory),
             "downloadMirror" => Some(Self::DownloadMirror),
+            "autoMatchJava" => Some(Self::AutoMatchJava),
+            "autoMemoryEnabled" => Some(Self::AutoMemoryEnabled),
+            "windowWidth" => Some(Self::WindowWidth),
+            "windowHeight" => Some(Self::WindowHeight),
+            "fullscreen" => Some(Self::Fullscreen),
+            "authType" => Some(Self::AuthType),
+            "lastSelectedVersion" => Some(Self::LastSelectedVersion),
             _ => None,
         }
     }
@@ -271,6 +294,16 @@ impl ConfigKey {
             Self::Uuid => config.uuid.clone(),
             Self::MaxMemory => Some(config.max_memory.to_string()),
             Self::DownloadMirror => config.download_mirror.clone(),
+            Self::AutoMatchJava => Some(config.auto_match_java.to_string()),
+            Self::AutoMemoryEnabled => Some(config.auto_memory_enabled.to_string()),
+            Self::WindowWidth => config.window_width.map(|v| v.to_string()),
+            Self::WindowHeight => config.window_height.map(|v| v.to_string()),
+            Self::Fullscreen => Some(config.fullscreen.to_string()),
+            Self::AuthType => Some(match config.auth_type {
+                crate::models::AuthType::Offline => "offline".to_string(),
+                crate::models::AuthType::Microsoft => "microsoft".to_string(),
+            }),
+            Self::LastSelectedVersion => config.last_selected_version.clone(),
         }
     }
 
@@ -312,6 +345,39 @@ impl ConfigKey {
                 })?
             }
             Self::DownloadMirror => config.download_mirror = Some(value),
+            Self::AutoMatchJava => {
+                config.auto_match_java = value.parse().map_err(|_| {
+                    LauncherError::Custom("自动匹配Java设置值无效".to_string())
+                })?
+            }
+            Self::AutoMemoryEnabled => {
+                config.auto_memory_enabled = value.parse().map_err(|_| {
+                    LauncherError::Custom("自动内存设置值无效".to_string())
+                })?
+            }
+            Self::WindowWidth => {
+                config.window_width = Some(value.parse().map_err(|_| {
+                    LauncherError::Custom("窗口宽度设置值无效".to_string())
+                })?)
+            }
+            Self::WindowHeight => {
+                config.window_height = Some(value.parse().map_err(|_| {
+                    LauncherError::Custom("窗口高度设置值无效".to_string())
+                })?)
+            }
+            Self::Fullscreen => {
+                config.fullscreen = value.parse().map_err(|_| {
+                    LauncherError::Custom("全屏设置值无效".to_string())
+                })?
+            }
+            Self::AuthType => {
+                config.auth_type = match value.to_lowercase().as_str() {
+                    "offline" => crate::models::AuthType::Offline,
+                    "microsoft" => crate::models::AuthType::Microsoft,
+                    _ => return Err(LauncherError::Custom("认证类型无效，仅支持 offline 或 microsoft".to_string())),
+                }
+            }
+            Self::LastSelectedVersion => config.last_selected_version = Some(value),
         }
         Ok(())
     }
@@ -329,7 +395,7 @@ pub fn load_config_key(key: String) -> Result<Option<String>, LauncherError> {
 }
 
 pub fn save_config_key(key: String, value: String) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
+    let mut config = (*load_config()?).clone();
     match ConfigKey::from_str(&key) {
         Some(config_key) => {
             config_key.set_value(&mut config, value)?;
@@ -356,7 +422,7 @@ fn set_config_value<T, F>(setter: F) -> Result<(), LauncherError>
 where
     F: FnOnce(&mut GameConfig) -> T,
 {
-    let mut config = load_config()?;
+    let mut config = (*load_config()?).clone();
     setter(&mut config);
     save_config(&config)
 }
@@ -450,11 +516,8 @@ pub fn get_auto_memory_config() -> Result<AutoMemoryConfig, LauncherError> {
     Ok(auto_config)
 }
 
-/// 设置自动内存启用状态
 pub fn set_auto_memory_enabled(enabled: bool) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
-    config.auto_memory_enabled = enabled;
-    save_config(&config)
+    set_config_value(|config| config.auto_memory_enabled = enabled)
 }
 
 /// 自动设置内存（如果启用自动设置）
@@ -481,15 +544,13 @@ pub fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError
     ))
 }
 
-/// 更新实例的上次启动时间
 pub fn update_instance_last_played(instance_name: &str) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
-    config.instance_last_played.insert(instance_name.to_string(), now);
-    save_config(&config)
+    let key = instance_name.to_string();
+    set_config_value(|config| config.instance_last_played.insert(key, now))
 }
 
 /// 获取实例的上次启动时间
@@ -498,31 +559,47 @@ pub fn get_instance_last_played(instance_name: &str) -> Option<i64> {
         .and_then(|config| config.instance_last_played.get(instance_name).copied())
 }
 
-/// 删除实例的上次启动时间记录
 pub fn remove_instance_last_played(instance_name: &str) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
-    config.instance_last_played.remove(instance_name);
-    save_config(&config)
+    let key = instance_name.to_string();
+    set_config_value(|config| config.instance_last_played.remove(&key))
 }
 
-/// 重命名实例的上次启动时间记录
 pub fn rename_instance_last_played(old_name: &str, new_name: &str) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
-    if let Some(time) = config.instance_last_played.remove(old_name) {
-        config.instance_last_played.insert(new_name.to_string(), time);
-        save_config(&config)?;
-    }
-    Ok(())
+    let old_key = old_name.to_string();
+    let new_key = new_name.to_string();
+    set_config_value(|config| {
+        if let Some(time) = config.instance_last_played.remove(&old_key) {
+            config.instance_last_played.insert(new_key, time);
+        }
+    })
 }
 
 /// 获取上次选择的游戏版本
 pub fn get_last_selected_version() -> Option<String> {
-    load_config().ok().and_then(|c| c.last_selected_version)
+    load_config().ok().and_then(|c| c.last_selected_version.clone())
 }
 
-/// 设置上次选择的游戏版本
 pub fn set_last_selected_version(version: &str) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
-    config.last_selected_version = Some(version.to_string());
-    save_config(&config)
+    let v = version.to_string();
+    set_config_value(|config| config.last_selected_version = Some(v))
+}
+
+pub fn get_custom_java_paths() -> Vec<String> {
+    load_config().map(|c| c.custom_java_paths.clone()).unwrap_or_default()
+}
+
+pub fn add_custom_java_path(path: &str) -> Result<(), LauncherError> {
+    let p = path.to_string();
+    set_config_value(|config| {
+        if !config.custom_java_paths.iter().any(|x| x.eq_ignore_ascii_case(&p)) {
+            config.custom_java_paths.push(p);
+        }
+    })
+}
+
+pub fn remove_custom_java_path(path: &str) -> Result<(), LauncherError> {
+    let p = path.to_string();
+    set_config_value(|config| {
+        config.custom_java_paths.retain(|x| !x.eq_ignore_ascii_case(&p));
+    })
 }

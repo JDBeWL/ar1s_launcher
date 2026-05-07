@@ -5,7 +5,7 @@ import { useVersionManager } from "../composables/useVersionManager";
 import { useGameLaunch } from "../composables/useGameLaunch";
 import { useAuthStore } from "../stores/authStore";
 import { instanceApi } from "../services";
-import { formatTimeAgo, formatLastPlayed } from "../utils/format";
+import { formatLastPlayed } from "../utils/format";
 import { useDebounceFn } from "../composables/useDebounce";
 import { logError } from "../utils/logger";
 import type { GameInstance } from "../types/events";
@@ -34,41 +34,13 @@ const isReady = computed(() => {
   return authStore.isLoggedIn
 })
 
-const RECENT_PLAY_KEY = 'minecraft_recent_plays'
-const MAX_RECENT = 3
-
-interface RecentPlay {
-  version: string
-  timestamp: number
-}
-
-const recentPlays = ref<RecentPlay[]>([])
-
 const instances = ref<GameInstance[]>([])
-const recentInstances = computed(() => {
+const recentPlays = computed(() => {
   return [...instances.value]
+    .filter(i => i.lastPlayed != null)
     .sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))
     .slice(0, 3)
 })
-
-function loadRecentPlays() {
-  try {
-    const saved = localStorage.getItem(RECENT_PLAY_KEY)
-    if (saved) {
-      recentPlays.value = JSON.parse(saved)
-    }
-  } catch (e) {
-    logError('Failed to load recent plays', e, 'HomeView')
-  }
-}
-
-function saveRecentPlay(version: string) {
-  const now = Date.now()
-  const filtered = recentPlays.value.filter(p => p.version !== version)
-  filtered.unshift({ version, timestamp: now })
-  recentPlays.value = filtered.slice(0, MAX_RECENT)
-  localStorage.setItem(RECENT_PLAY_KEY, JSON.stringify(recentPlays.value))
-}
 
 function quickLaunch(version: string) {
   selectedVersion.value = version
@@ -100,10 +72,6 @@ watch(() => authStore.username, (newName) => {
 });
 
 async function handleLaunch() {
-  if (selectedVersion.value) {
-    saveRecentPlay(selectedVersion.value)
-  }
-
   if (authStore.authType === 'microsoft' && authStore.msLoggedIn) {
     if (authStore.isTokenExpired) {
       await authStore.tryRefreshMicrosoftToken()
@@ -115,16 +83,21 @@ async function handleLaunch() {
   } else {
     await launchGame(selectedVersion.value, authStore.username)
   }
+
+  try {
+    const list = await instanceApi.getInstances()
+    instances.value = list || []
+  } catch (e) {
+    logError('Failed to reload instances after launch', e, 'HomeView')
+  }
 }
 
 onMounted(async () => {
-  loadRecentPlays();
-  const isRevisit = instances.value.length > 0;
   await Promise.all([
     loadGameDir(),
     authStore.init(),
     initListeners(),
-    isRevisit ? Promise.resolve() : loadInstanceCount()
+    loadInstanceCount()
   ]);
   pageLoading.value = false;
 });
@@ -319,17 +292,17 @@ onMounted(async () => {
                   <div class="d-flex flex-wrap ga-2 mb-4">
                     <v-chip
                       v-for="play in recentPlays"
-                      :key="play.version"
+                      :key="play.name"
                       size="small"
                       variant="tonal"
                       color="primary"
                       class="recent-chip"
-                      @click="quickLaunch(play.version)"
+                      @click="quickLaunch(play.name)"
                     >
                       <v-icon start size="14">mdi-minecraft</v-icon>
-                      {{ play.version }}
+                      {{ play.name }}
                       <v-tooltip activator="parent" location="top">
-                        {{ formatTimeAgo(play.timestamp) }}
+                        {{ formatLastPlayed(play.lastPlayed) }}
                       </v-tooltip>
                     </v-chip>
                   </div>
@@ -370,12 +343,12 @@ onMounted(async () => {
               </v-card-text>
               <v-divider />
               <v-card-text class="pa-3">
-                <div v-if="recentInstances.length === 0" class="text-caption text-on-surface-variant">
+                <div v-if="recentPlays.length === 0" class="text-caption text-on-surface-variant">
                   暂无实例，创建后会在这里显示
                 </div>
                 <v-list v-else density="compact" bg-color="transparent">
                   <v-list-item
-                    v-for="instance in recentInstances"
+                    v-for="instance in recentPlays"
                     :key="instance.id"
                     class="px-0"
                   >
@@ -388,7 +361,7 @@ onMounted(async () => {
                       {{ instance.name }}
                     </v-list-item-title>
                     <v-list-item-subtitle class="text-caption">
-                      {{ instance.gameVersion || instance.version }} · {{ formatLastPlayed(instance.lastPlayed) }}
+                      {{ instance.gameVersion || instance.version }}<template v-if="instance.loaderType && instance.loaderType !== 'None' && instance.loaderType !== 'Modded'"> - {{ instance.loaderType }}<template v-if="instance.loaderVersion"> {{ instance.loaderVersion }}</template></template> · {{ formatLastPlayed(instance.lastPlayed) }}
                     </v-list-item-subtitle>
                     <template #append>
                       <v-btn 

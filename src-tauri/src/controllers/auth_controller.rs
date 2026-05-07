@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use tauri::Emitter;
 
 static PENDING_DEVICE_CODE: Mutex<Option<String>> = Mutex::new(None);
+static PENDING_CODE_VERIFIER: Mutex<Option<String>> = Mutex::new(None);
 
 #[tauri::command]
 pub fn get_saved_username() -> Result<Option<String>, LauncherError> {
@@ -68,8 +69,8 @@ pub fn get_auth_status() -> Result<AuthStatus, LauncherError> {
     Ok(AuthStatus {
         auth_type: auth_type.to_string(),
         logged_in,
-        username: config.username,
-        uuid: config.uuid,
+        username: config.username.clone(),
+        uuid: config.uuid.clone(),
         expires_at: config.ms_expires_at,
     })
 }
@@ -136,7 +137,7 @@ pub async fn complete_microsoft_login() -> Result<MicrosoftLoginResult, Launcher
                 )
                 .await?;
 
-                let mut config = load_config()?;
+                let mut config = (*load_config()?).clone();
                 config.auth_type = AuthType::Microsoft;
                 config.username = Some(auth_result.username.clone());
                 config.uuid = Some(auth_result.uuid.clone());
@@ -173,13 +174,13 @@ pub async fn complete_microsoft_login() -> Result<MicrosoftLoginResult, Launcher
 pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherError> {
     let refresh_token = {
         let config = load_config()?;
-        config.ms_refresh_token
+        config.ms_refresh_token.clone()
             .ok_or_else(|| LauncherError::Custom("未找到 refresh_token，请重新登录".to_string()))?
     };
 
     let auth_result = microsoft_auth::refresh_and_authenticate(&refresh_token).await?;
 
-    let mut config = load_config()?;
+    let mut config = (*load_config()?).clone();
     config.auth_type = AuthType::Microsoft;
     config.username = Some(auth_result.username.clone());
     config.uuid = Some(auth_result.uuid.clone());
@@ -199,7 +200,7 @@ pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherEr
 pub async fn logout_microsoft() -> Result<(), LauncherError> {
     let _ = microsoft_auth::revoke_microsoft_token().await;
 
-    let mut config = load_config()?;
+    let mut config = (*load_config()?).clone();
     config.auth_type = AuthType::Offline;
     config.ms_access_token = None;
     config.ms_refresh_token = None;
@@ -208,8 +209,51 @@ pub async fn logout_microsoft() -> Result<(), LauncherError> {
 }
 
 #[tauri::command]
+pub fn start_microsoft_auth_code_login() -> Result<String, LauncherError> {
+    let flow_info = microsoft_auth::start_auth_code_flow()?;
+
+    {
+        let mut pending = PENDING_CODE_VERIFIER
+            .lock()
+            .map_err(|e| LauncherError::Custom(format!("内部锁错误: {}", e)))?;
+        *pending = Some(flow_info.code_verifier);
+    }
+
+    Ok(flow_info.auth_url)
+}
+
+#[tauri::command]
+pub async fn complete_microsoft_auth_code_login() -> Result<MicrosoftLoginResult, LauncherError> {
+    let code_verifier = {
+        let mut pending = PENDING_CODE_VERIFIER
+            .lock()
+            .map_err(|e| LauncherError::Custom(format!("内部锁错误: {}", e)))?;
+        pending
+            .take()
+            .ok_or_else(|| LauncherError::Custom("没有进行中的登录流程，请重新开始".to_string()))?
+    };
+
+    let auth_result = microsoft_auth::complete_auth_code_flow(&code_verifier).await?;
+
+    let mut config = (*load_config()?).clone();
+    config.auth_type = AuthType::Microsoft;
+    config.username = Some(auth_result.username.clone());
+    config.uuid = Some(auth_result.uuid.clone());
+    config.ms_access_token = Some(auth_result.access_token);
+    config.ms_refresh_token = Some(auth_result.refresh_token);
+    config.ms_expires_at = Some(auth_result.expires_at);
+    save_config(&config)?;
+
+    Ok(MicrosoftLoginResult {
+        username: auth_result.username,
+        uuid: auth_result.uuid,
+        expires_at: auth_result.expires_at,
+    })
+}
+
+#[tauri::command]
 pub fn set_auth_type(auth_type: String) -> Result<(), LauncherError> {
-    let mut config = load_config()?;
+    let mut config = (*load_config()?).clone();
     config.auth_type = match auth_type.as_str() {
         "microsoft" => AuthType::Microsoft,
         _ => AuthType::Offline,

@@ -7,8 +7,8 @@
 use reqwest::Client;
 use std::time::Duration;
 
-/// 统一的 User-Agent 标识（供所有模块共享）
-pub const USER_AGENT: &str = "Ar1s-Launcher/1.0";
+/// 统一的 User-Agent 标识（使用浏览器 UA 以获得更好的 API 兼容性）
+pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Ar1sLauncher/1.0";
 
 /// 全局通用 HTTP 客户端（懒加载单例，连接池复用）
 static HTTP_CLIENT: std::sync::LazyLock<Client> = std::sync::LazyLock::new(|| {

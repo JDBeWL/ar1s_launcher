@@ -2,6 +2,7 @@ import { ref, computed, watch } from 'vue';
 import { api } from '../services';
 import { useDebounceFn } from './useDebounce';
 import { logError } from '../utils/logger';
+import { compareVersionDesc } from '../utils/format';
 import type { ModrinthModpack } from '../types/events';
 
 export function useModrinth() {
@@ -40,16 +41,7 @@ export function useModrinth() {
             gameVersions.value = manifest.versions
                 .filter((v) => v.type === "release")
                 .map((v) => v.id)
-                .sort((a: string, b: string) => {
-                    const aParts = a.split('.').map(Number);
-                    const bParts = b.split('.').map(Number);
-                    for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
-                        const aPart = aParts[i] || 0;
-                        const bPart = bParts[i] || 0;
-                        if (aPart !== bPart) return bPart - aPart;
-                    }
-                    return 0;
-                });
+                .sort(compareVersionDesc);
         } catch (error) {
             logError("Failed to fetch game versions for filter", error, 'useModrinth');
         }

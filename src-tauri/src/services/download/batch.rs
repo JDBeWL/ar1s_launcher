@@ -27,13 +27,13 @@ fn get_cancel_flag() -> Arc<AtomicBool> {
 /// 重置取消标志（在开始新下载时调用）
 pub fn reset_cancel_flag() {
     if let Some(flag) = CANCEL_FLAG.get() {
-        flag.store(false, Ordering::SeqCst);
+        flag.store(false, Ordering::Release);
     }
 }
 
 /// 设置取消标志（在取消下载时调用）
 pub fn set_cancel_flag() {
-    get_cancel_flag().store(true, Ordering::SeqCst);
+    get_cancel_flag().store(true, Ordering::Release);
 }
 
 /// 批量下载所有文件（支持断点续传）
@@ -44,8 +44,7 @@ pub async fn download_all_files(
     let config = load_config()?;
     let threads = config.download_threads as usize;
 
-    // 使用全局 HTTP 客户端
-    let http = get_http_client()?;
+    let http = get_http_client();
 
     // 获取版本 ID
     let version_id = jobs
@@ -143,8 +142,8 @@ pub async fn download_all_files(
     let state_file_clone = state_file.clone();
     let listener_id = window.listen("cancel-download", move |_| {
         // 检查是否已经取消，避免重复处理
-        if state_clone.swap(false, Ordering::SeqCst) {
-            was_cancelled_clone.store(true, Ordering::SeqCst);
+        if state_clone.swap(false, Ordering::AcqRel) {
+            was_cancelled_clone.store(true, Ordering::Release);
             // 取消时异步保存状态以便下次续传
             let download_state = download_state_clone.clone();
             let state_file = state_file_clone.clone();
@@ -160,7 +159,6 @@ pub async fn download_all_files(
 
     // 创建进度报告器
     let reporter_handle = spawn_progress_reporter(
-        files_downloaded.clone(),
         bytes_downloaded.clone(),
         bytes_since_last.clone(),
         state.clone(),
@@ -181,7 +179,7 @@ pub async fn download_all_files(
 
     for job in filtered_jobs {
         // 检查本地状态和全局取消标志
-        if !state.load(Ordering::SeqCst) || global_cancel.load(Ordering::SeqCst) {
+        if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
             break;
         }
 
@@ -189,7 +187,7 @@ pub async fn download_all_files(
         let global_cancel_clone = global_cancel.clone();
         let handle = spawn_download_task(
             job,
-            http.clone(),
+            http,
             state.clone(),
             global_cancel_clone,
             files_downloaded.clone(),
@@ -208,7 +206,7 @@ pub async fn download_all_files(
     }
 
     // 停止进度报告器和状态保存器
-    state.store(false, Ordering::SeqCst);
+    state.store(false, Ordering::Release);
     reporter_handle.await?;
     state_saver_handle.await?;
 
@@ -226,8 +224,8 @@ pub async fn download_all_files(
     }
 
     // 处理取消
-    if was_cancelled.load(Ordering::SeqCst) {
-        emit_cancelled_progress(window, bytes_downloaded.load(Ordering::SeqCst), total_size);
+    if was_cancelled.load(Ordering::Acquire) {
+        emit_cancelled_progress(window, bytes_downloaded.load(Ordering::Relaxed), total_size);
         return Err(LauncherError::Custom("下载已取消".to_string()));
     }
 
@@ -240,7 +238,7 @@ pub async fn download_all_files(
     if let Some(error_msg) = error_message {
         emit_error_progress(
             window,
-            bytes_downloaded.load(Ordering::SeqCst),
+            bytes_downloaded.load(Ordering::Relaxed),
             total_size,
             &error_msg,
         );
@@ -275,14 +273,12 @@ pub async fn download_all_files(
     }
 
     // 发送完成事件
-    emit_completed_progress(window, bytes_downloaded.load(Ordering::SeqCst), total_size);
+    emit_completed_progress(window, bytes_downloaded.load(Ordering::Relaxed), total_size);
 
     Ok(())
 }
 
-/// 启动进度报告器
 fn spawn_progress_reporter(
-    files_downloaded: Arc<AtomicU64>,
     bytes_downloaded: Arc<AtomicU64>,
     bytes_since_last: Arc<AtomicU64>,
     state: Arc<AtomicBool>,
@@ -292,15 +288,19 @@ fn spawn_progress_reporter(
     let report_interval = Duration::from_millis(200);
 
     async_runtime::spawn(async move {
-        while state.load(Ordering::SeqCst) {
+        while state.load(Ordering::Acquire) {
             tokio::time::sleep(report_interval).await;
-            if !state.load(Ordering::SeqCst) {
+            if !state.load(Ordering::Acquire) {
                 break;
             }
 
-            let _downloaded_count = files_downloaded.load(Ordering::SeqCst);
-            let current_bytes = bytes_downloaded.load(Ordering::SeqCst);
-            let bytes_since = bytes_since_last.swap(0, Ordering::SeqCst);
+            let current_bytes = bytes_downloaded.load(Ordering::Relaxed);
+            let bytes_since = bytes_since_last.swap(0, Ordering::Relaxed);
+
+            if bytes_since == 0 {
+                continue;
+            }
+
             let speed = (bytes_since as f64 / 1024.0) / report_interval.as_secs_f64();
             let progress_percent = if total_size > 0 {
                 (current_bytes as f64 / total_size as f64 * 100.0).round() as u8
@@ -330,9 +330,9 @@ fn spawn_state_saver(
     let save_interval = Duration::from_secs(30);
 
     async_runtime::spawn(async move {
-        while running.load(Ordering::SeqCst) {
+        while running.load(Ordering::Acquire) {
             tokio::time::sleep(save_interval).await;
-            if !running.load(Ordering::SeqCst) {
+            if !running.load(Ordering::Acquire) {
                 break;
             }
 
@@ -351,7 +351,7 @@ fn spawn_state_saver(
 /// 启动单个下载任务
 fn spawn_download_task(
     job: DownloadJob,
-    http: Arc<reqwest::Client>,
+    http: &'static reqwest::Client,
     state: Arc<AtomicBool>,
     global_cancel: Arc<AtomicBool>,
     files_downloaded: Arc<AtomicU64>,
@@ -363,7 +363,7 @@ fn spawn_download_task(
 ) -> tauri::async_runtime::JoinHandle<Result<(), LauncherError>> {
     async_runtime::spawn(async move {
         // 在开始前再次检查取消状态
-        if !state.load(Ordering::SeqCst) || global_cancel.load(Ordering::SeqCst) {
+        if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
             drop(permit);
             return Ok::<(), LauncherError>(());
         }
@@ -380,7 +380,7 @@ fn spawn_download_task(
         const MAX_JOB_RETRIES: usize = 5;
         for retry in 0..MAX_JOB_RETRIES {
             // 在每次重试前检查取消状态
-            if !state.load(Ordering::SeqCst) || global_cancel.load(Ordering::SeqCst) {
+            if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
                 break;
             }
 
@@ -399,7 +399,7 @@ fn spawn_download_task(
             debug!("Downloading file: {} ({})", current_url, attempt_str);
 
             match download_file(
-                http.clone(),
+                http,
                 &job,
                 current_url,
                 &state,
@@ -410,7 +410,7 @@ fn spawn_download_task(
             .await
             {
                 Ok(_) => {
-                    files_downloaded.fetch_add(1, Ordering::SeqCst);
+                    files_downloaded.fetch_add(1, Ordering::Relaxed);
                     current_job_error = None;
                     job_succeeded = true;
                     break;

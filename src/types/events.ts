@@ -47,6 +47,7 @@ export interface GameInstance {
   path: string;
   createdTime?: string;
   loaderType?: string;
+  loaderVersion?: string;
   gameVersion?: string;
   lastPlayed?: number;
   modCount?: number;
@@ -198,4 +199,38 @@ export interface MicrosoftLoginResult {
   username: string;
   uuid: string;
   expiresAt: number;
+}
+
+// Java 兼容性检查结果
+export interface JavaCompatibilityResult {
+  compatible: boolean;
+  currentJavaVersion: number | null;
+  requiredJavaVersion: number;
+  currentJavaPath: string | null;
+  recommendedJavaPath: string | null;
+  recommendedJavaVersion: number | null;
+  autoMatchEnabled: boolean;
+}
+
+export interface GameConfig {
+  game_dir: string;
+  version_isolation: boolean;
+  java_path: string | null;
+  custom_java_paths: string[];
+  auto_match_java: boolean;
+  download_threads: number;
+  language: string | null;
+  isolate_saves: boolean;
+  isolate_resourcepacks: boolean;
+  isolate_logs: boolean;
+  username: string | null;
+  uuid: string | null;
+  max_memory: number;
+  download_mirror: string | null;
+  auto_memory_enabled: boolean;
+  window_width: number | null;
+  window_height: number | null;
+  fullscreen: boolean;
+  last_selected_version: string | null;
+  auth_type: 'offline' | 'microsoft';
 }

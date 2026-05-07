@@ -3,8 +3,9 @@ import { Window } from '@tauri-apps/api/window'
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
-import { useDownloadStore } from './stores/downloadStore'
 import { useLauncherStore } from './stores/launcherStore'
+import { useDownloadStore } from './stores/downloadStore'
+import { getThemePalette, getTheme } from './utils/storage'
 import GlobalDownloadStatus from './components/GlobalDownloadStatus.vue'
 import GlobalNotification from './components/GlobalNotification.vue'
 
@@ -25,7 +26,7 @@ const rail = ref(true)
 // 主题控制
 const theme = useTheme()
 const isDarkMode = ref(true)
-const themePalette = ref(localStorage.getItem('themePalette') || 'indigo')
+const themePalette = ref(getThemePalette())
 
 const router = useRouter()
 
@@ -82,8 +83,8 @@ function handlePaletteChange(event: Event) {
   }
 }
 
-const downloadStore = useDownloadStore()
 const launcherStore = useLauncherStore()
+const downloadStore = useDownloadStore()
 
 const shortcutHelpVisible = ref(false)
 const shortcuts = [
@@ -96,15 +97,11 @@ const shortcuts = [
 
 // 初始化下载监听器和主题
 onMounted(async () => {
-  // 初始化监听器
-  await downloadStore.subscribe()
   await launcherStore.subscribe()
+  downloadStore.init()
   
   // 初始化主题
-  const savedTheme = localStorage.getItem('theme')
-  if (savedTheme) {
-    isDarkMode.value = savedTheme === 'dark'
-  }
+  isDarkMode.value = getTheme() === 'dark'
   applyTheme()
 
   window.addEventListener('keydown', handleGlobalShortcut)
@@ -113,8 +110,8 @@ onMounted(async () => {
 
 // 清理监听器防止内存泄漏
 onUnmounted(() => {
-  downloadStore.unsubscribe()
   launcherStore.unsubscribe()
+  downloadStore.cleanup()
   window.removeEventListener('keydown', handleGlobalShortcut)
   window.removeEventListener('theme-palette-changed', handlePaletteChange)
 })
@@ -254,13 +251,6 @@ onUnmounted(() => {
 <style>
 :root {
   color-scheme: light dark;
-}
-
-html, body {
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  background-color: rgb(var(--v-theme-background));
 }
 
 .v-application {

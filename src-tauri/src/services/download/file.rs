@@ -8,9 +8,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
-/// 下载单个文件（带重试、回退和断点续传）
 pub async fn download_file(
-    http: Arc<reqwest::Client>,
+    http: &'static reqwest::Client,
     job: &DownloadJob,
     url: &str,
     state: &Arc<AtomicBool>,
@@ -19,7 +18,7 @@ pub async fn download_file(
     bytes_since_last: &Arc<AtomicU64>,
 ) -> Result<(), LauncherError> {
     // 先检查取消状态
-    if !state.load(Ordering::SeqCst) || global_cancel.load(Ordering::SeqCst) {
+    if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
         return Err(LauncherError::Custom("Download cancelled".to_string()));
     }
 
@@ -31,7 +30,7 @@ pub async fn download_file(
                     "File already exists and is valid, skipping: {}",
                     job.path.display()
                 );
-                bytes_downloaded.fetch_add(job.size, Ordering::SeqCst);
+                bytes_downloaded.fetch_add(job.size, Ordering::Relaxed);
                 return Ok(());
             }
             Ok(false) => {
@@ -51,14 +50,12 @@ pub async fn download_file(
     }
 
     // 2. 尝试从指定 URL 下载（支持断点续传）
-    match download_with_resume(http.clone(), url, job, state, global_cancel, bytes_downloaded, bytes_since_last).await {
+    match download_with_resume(http, url, job, state, global_cancel, bytes_downloaded, bytes_since_last).await {
         Ok(_) => Ok(()),
         Err(e) => {
-            // 如果是取消导致的错误，直接返回
             if e.to_string().contains("cancelled") {
                 return Err(e);
             }
-            // 3. 如果主 URL 失败，尝试备用 URL
             if let Some(fallback_url) = &job.fallback_url {
                 if should_try_fallback(&e) {
                     warn!(
@@ -66,7 +63,7 @@ pub async fn download_file(
                         job.url, e, fallback_url
                     );
                     return download_with_resume(
-                        http.clone(),
+                        http,
                         fallback_url,
                         job,
                         state,
@@ -98,9 +95,8 @@ fn should_try_fallback(e: &LauncherError) -> bool {
         || err_str.contains("Unexpected Content-Type")
 }
 
-/// 带断点续传的下载
 async fn download_with_resume(
-    client: Arc<reqwest::Client>,
+    client: &'static reqwest::Client,
     url: &str,
     job: &DownloadJob,
     state: &Arc<AtomicBool>,
@@ -120,10 +116,10 @@ async fn download_with_resume(
             existing_size,
             tmp_path.display()
         );
-        if file_utils::verify_file(&tmp_path, &job.hash, job.size)? {
+        if file_utils::verify_file(&tmp_path, job.hash.as_deref(), job.size)? {
             // 文件完整，直接移动
             finalize_download(&tmp_path, &job.path).await?;
-            bytes_downloaded.fetch_add(job.size, Ordering::SeqCst);
+            bytes_downloaded.fetch_add(job.size, Ordering::Relaxed);
             return Ok(());
         } else {
             // 文件损坏，删除重新下载
@@ -166,9 +162,8 @@ async fn get_existing_file_size(path: &std::path::Path) -> u64 {
         .unwrap_or(0)
 }
 
-/// 下载文件块（支持断点续传）
 async fn download_chunk_with_resume(
-    client: Arc<reqwest::Client>,
+    client: &'static reqwest::Client,
     url: &str,
     job: &DownloadJob,
     state: &Arc<AtomicBool>,
@@ -252,7 +247,7 @@ async fn download_chunk_with_resume(
         let mut response = response;
         while let Some(chunk) = response.chunk().await? {
             // 检查本地状态和全局取消标志
-            if !state.load(Ordering::SeqCst) || global_cancel.load(Ordering::SeqCst) {
+            if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
                 return Err(LauncherError::Custom("Download cancelled".to_string()));
             }
             file.write_all(&chunk).await?;
@@ -267,7 +262,7 @@ async fn download_chunk_with_resume(
         drop(file);
 
         // 验证文件
-        if !file_utils::verify_file(&tmp_path, &job.hash, job.size)? {
+        if !file_utils::verify_file(&tmp_path, job.hash.as_deref(), job.size)? {
             // 删除损坏的临时文件
             let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err(LauncherError::Custom(format!(

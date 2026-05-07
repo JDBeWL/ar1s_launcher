@@ -1,12 +1,13 @@
 use crate::errors::LauncherError;
 use crate::models::modpack::*;
 use crate::services::http_client;
-use log::debug;
+use log::{debug, warn};
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 
 const MODRINTH_API_BASE: &str = "https://api.modrinth.com/v2";
+const MAX_API_RETRIES: u32 = 3;
 
 pub struct ModrinthService {
     client: &'static Client,
@@ -17,6 +18,31 @@ impl ModrinthService {
         Self {
             client: http_client::get_client(),
         }
+    }
+
+    async fn retry_request(
+        &self,
+        request_fn: impl Fn(&Client) -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, LauncherError> {
+        let mut last_err = None;
+        for attempt in 0..=MAX_API_RETRIES {
+            let builder = request_fn(self.client);
+            match builder.send().await {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    if attempt < MAX_API_RETRIES {
+                        let backoff = std::time::Duration::from_millis(500 * (1 << attempt));
+                        warn!("Modrinth API 请求失败 (尝试 {}/{}): {}, {}ms 后重试", attempt + 1, MAX_API_RETRIES + 1, e, backoff.as_millis());
+                        tokio::time::sleep(backoff).await;
+                    }
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(LauncherError::Custom(format!(
+            "Modrinth API 请求失败 (已重试 {} 次): {}",
+            MAX_API_RETRIES, last_err.unwrap()
+        )))
     }
 
     /// 搜索整合包
@@ -78,11 +104,7 @@ impl ModrinthService {
         
         let url = format!("{}/search", MODRINTH_API_BASE);
         let response = self
-            .client
-            .get(&url)
-            .header("User-Agent", http_client::USER_AGENT)
-            .query(&params)
-            .send()
+            .retry_request(|client| client.get(&url).query(&params))
             .await
             .map_err(|e| LauncherError::Custom(format!("搜索整合包失败: {}", e)))?;
         
@@ -176,10 +198,7 @@ impl ModrinthService {
     pub async fn get_modpack(&self, slug_or_id: &str) -> Result<ModrinthModpack, LauncherError> {
         let url = format!("{}/project/{}", MODRINTH_API_BASE, slug_or_id);
         let response = self
-            .client
-            .get(&url)
-            .header("User-Agent", http_client::USER_AGENT)
-            .send()
+            .retry_request(|client| client.get(&url))
             .await
             .map_err(|e| LauncherError::Custom(format!("获取整合包信息失败: {}", e)))?;
         
@@ -261,11 +280,7 @@ impl ModrinthService {
         
         let url = format!("{}/project/{}/version", MODRINTH_API_BASE, project_id);
         let response = self
-            .client
-            .get(&url)
-            .header("User-Agent", http_client::USER_AGENT)
-            .query(&params)
-            .send()
+            .retry_request(|client| client.get(&url).query(&params))
             .await
             .map_err(|e| LauncherError::Custom(format!("获取整合包版本失败: {}", e)))?;
         
@@ -348,10 +363,7 @@ impl ModrinthService {
         destination: &std::path::Path,
     ) -> Result<(), LauncherError> {
         let response = self
-            .client
-            .get(file_url)
-            .header("User-Agent", http_client::USER_AGENT)
-            .send()
+            .retry_request(|client| client.get(file_url))
             .await
             .map_err(|e| LauncherError::Custom(format!("下载文件失败: {}", e)))?;
         

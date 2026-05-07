@@ -12,6 +12,14 @@ export interface Notification {
   showDetail?: boolean
 }
 
+export interface ChoiceOption {
+  id: string
+  label: string
+  description?: string
+  color?: string
+  variant?: 'elevated' | 'outlined' | 'text' | 'flat' | 'tonal' | 'plain'
+}
+
 let notificationId = 0
 const MAX_NOTIFICATIONS = 5
 
@@ -28,6 +36,13 @@ export const useNotificationStore = defineStore('notification', () => {
   const confirmContent = ref('')
   const confirmType = ref<NotificationType>('warning')
   let confirmResolve: ((value: boolean) => void) | null = null
+
+  const choiceVisible = ref(false)
+  const choiceTitle = ref('')
+  const choiceContent = ref('')
+  const choiceType = ref<NotificationType>('warning')
+  const choiceOptions = ref<ChoiceOption[]>([])
+  let choiceResolve: ((value: string | null) => void) | null = null
 
   function notify(type: NotificationType, title: string, message?: string, timeout = 4000) {
     const id = ++notificationId
@@ -112,6 +127,31 @@ export const useNotificationStore = defineStore('notification', () => {
     }
   }
 
+  function choice(
+    title: string,
+    content: string,
+    options: ChoiceOption[],
+    type: NotificationType = 'warning'
+  ): Promise<string | null> {
+    choiceTitle.value = title
+    choiceContent.value = content
+    choiceType.value = type
+    choiceOptions.value = options
+    choiceVisible.value = true
+
+    return new Promise((resolve) => {
+      choiceResolve = resolve
+    })
+  }
+
+  function handleChoice(result: string | null) {
+    choiceVisible.value = false
+    if (choiceResolve) {
+      choiceResolve(result)
+      choiceResolve = null
+    }
+  }
+
   return {
     notifications,
     dialogVisible,
@@ -132,6 +172,13 @@ export const useNotificationStore = defineStore('notification', () => {
     showInfoDialog,
     closeDialog,
     confirm,
-    handleConfirm
+    handleConfirm,
+    choiceVisible,
+    choiceTitle,
+    choiceContent,
+    choiceType,
+    choiceOptions,
+    choice,
+    handleChoice
   }
 })

@@ -1,11 +1,11 @@
-import { ref, computed, onScopeDispose, watch } from 'vue';
-import { listen } from '@tauri-apps/api/event';
-import type { UnlistenFn } from '@tauri-apps/api/event';
+import { ref, computed, watch } from 'vue';
 import { api } from '../services';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useDebounceFn } from './useDebounce';
+import { useEventSubscription } from './useEventSubscription';
 import { getErrorMessage } from '../utils/format';
 import { logError } from '../utils/logger';
+import { sortVersionsByReleaseTime } from '../utils/format';
 import type { 
     MinecraftVersion, 
     InstallProgressPayload, 
@@ -67,16 +67,10 @@ export function useInstanceCreation() {
 
     // 再排序（只依赖 filteredVersionsUnsorted 和 sortOrder）
     const filteredVersions = computed(() => {
-        const filtered = filteredVersionsUnsorted.value;
-        
         if (sortOrder.value === "newest" || sortOrder.value === "oldest") {
-            const withTimestamp = filtered.map(v => ({ v, t: new Date(v.releaseTime).getTime() }));
-            withTimestamp.sort((a, b) => sortOrder.value === "newest" ? b.t - a.t : a.t - b.t);
-            return withTimestamp.map(item => item.v);
+            return sortVersionsByReleaseTime(filteredVersionsUnsorted.value, sortOrder.value);
         }
-
-        return filtered;
-
+        return filteredVersionsUnsorted.value;
     });
 
     const defaultInstanceName = computed(() => {
@@ -222,18 +216,16 @@ export function useInstanceCreation() {
         debouncedValidate.call(newName);
     });
 
-    let unlistenProgress: UnlistenFn | null = null;
-
-    function cleanup() {
-        // 清理事件监听器
-        if (unlistenProgress) {
-            unlistenProgress();
-            unlistenProgress = null;
+    // 使用统一的事件订阅管理
+    const installProgressSub = useEventSubscription<InstallProgressPayload>(
+        "instance-install-progress",
+        (event) => {
+            const progressData = event.payload;
+            progressValue.value = progressData.progress;
+            progressText.value = progressData.message;
+            progressIndeterminate.value = progressData.indeterminate;
         }
-    }
-
-    // 作用域销毁时自动清理（useDebounceFn 会自行清理）
-    onScopeDispose(cleanup);
+    );
 
     async function createInstance() {
         const notificationStore = useNotificationStore();
@@ -262,17 +254,9 @@ export function useInstanceCreation() {
         progressIndeterminate.value = true;
         progressText.value = "准备安装...";
 
-        try {
-            unlistenProgress = await listen<InstallProgressPayload>(
-                "instance-install-progress",
-                (event) => {
-                    const progressData = event.payload;
-                    progressValue.value = progressData.progress;
-                    progressText.value = progressData.message;
-                    progressIndeterminate.value = progressData.indeterminate;
-                }
-            );
+        await installProgressSub.subscribe();
 
+        try {
             const payload: {
                 newInstanceName: string;
                 baseVersionId: string;
@@ -343,7 +327,7 @@ export function useInstanceCreation() {
 
             notificationStore.error('创建实例失败', getErrorMessage(error), true);
         } finally {
-            cleanup();
+            installProgressSub.unsubscribe();
         }
     }
 

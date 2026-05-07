@@ -7,6 +7,9 @@ use reqwest::Client;
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+const MAX_VERIFY_CONCURRENCY: usize = 64;
 
 #[derive(Debug, Serialize)]
 pub struct FileVerificationResult {
@@ -35,7 +38,7 @@ pub async fn verify_single_file(
         0
     };
 
-    let is_valid = file_utils::verify_file(&job.path, &job.hash, job.size)?;
+    let is_valid = file_utils::verify_file(&job.path, job.hash.as_deref(), job.size)?;
 
     Ok(FileVerificationResult {
         file_name,
@@ -51,15 +54,19 @@ pub async fn batch_verify_files(
     jobs: &[DownloadJob],
     client: &Client,
 ) -> Result<Vec<FileVerificationResult>, LauncherError> {
+    use tokio::sync::Semaphore;
     use tokio::task;
 
+    let semaphore = Arc::new(Semaphore::new(MAX_VERIFY_CONCURRENCY));
     let mut tasks = vec![];
 
     for job in jobs {
         let job_clone = job.clone();
         let client_clone = client.clone();
+        let permit = semaphore.clone();
 
         tasks.push(task::spawn(async move {
+            let _permit = permit.acquire().await.unwrap();
             verify_single_file(&job_clone, &client_clone).await
         }));
     }
@@ -93,15 +100,19 @@ pub async fn batch_repair_files(
     jobs: &[DownloadJob],
     client: &Client,
 ) -> Result<Vec<(String, bool)>, LauncherError> {
+    use tokio::sync::Semaphore;
     use tokio::task;
 
+    let semaphore = Arc::new(Semaphore::new(MAX_VERIFY_CONCURRENCY));
     let mut tasks = vec![];
 
     for job in jobs {
         let job_clone = job.clone();
         let client_clone = client.clone();
+        let permit = semaphore.clone();
 
         tasks.push(task::spawn(async move {
+            let _permit = permit.acquire().await.unwrap();
             let file_name = job_clone
                 .path
                 .file_name()
@@ -221,7 +232,7 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
     Ok(missing_files)
 }
 
-use crate::utils::minecraft::{evaluate_rules, get_mc_os_name, maven_name_to_path};
+use crate::utils::minecraft::{evaluate_rules, find_jar_version, get_mc_os_name, maven_name_to_path};
 
 /// 检查单个库文件是否存在
 fn check_library(lib: &serde_json::Value, libraries_base_dir: &PathBuf, missing_files: &mut Vec<String>) {
@@ -273,7 +284,7 @@ fn check_library(lib: &serde_json::Value, libraries_base_dir: &PathBuf, missing_
         } else {
             // 没有 downloads.artifact.path，尝试从 name 构建路径
             if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
-                if let Some(path) = maven_name_to_path(name) {
+                if let Some(path) = maven_name_to_path(name, None, "jar") {
                     let lib_path = libraries_base_dir.join(&path);
                     if !lib_path.exists() {
                         debug!("库文件缺失 (从name构建): {} -> {}", name, lib_path.display());
@@ -283,47 +294,4 @@ fn check_library(lib: &serde_json::Value, libraries_base_dir: &PathBuf, missing_
             }
         }
     }
-}
-
-/// 递归查找最终的 JAR 版本（处理多层继承链）
-fn find_jar_version(version_json: &serde_json::Value, game_dir: &PathBuf) -> Result<String, LauncherError> {
-    let current_id = version_json["id"].as_str().unwrap_or("unknown");
-    debug!("查找 JAR 版本, 当前 JSON id: {}, jar: {:?}, inheritsFrom: {:?}",
-        current_id,
-        version_json["jar"].as_str(),
-        version_json["inheritsFrom"].as_str()
-    );
-    
-    // 优先使用 jar 字段
-    if let Some(jar) = version_json["jar"].as_str() {
-        debug!("使用 jar 字段: {}", jar);
-        return Ok(jar.to_string());
-    }
-    
-    // 如果有 inheritsFrom，递归查找
-    if let Some(inherits_from) = version_json["inheritsFrom"].as_str() {
-        debug!("递归查找 inheritsFrom: {}", inherits_from);
-        let parent_json_path = game_dir
-            .join("versions")
-            .join(inherits_from)
-            .join(format!("{}.json", inherits_from));
-        
-        if parent_json_path.exists() {
-            let parent_str = fs::read_to_string(&parent_json_path)?;
-            let parent_json: serde_json::Value = serde_json::from_str(&parent_str)?;
-            return find_jar_version(&parent_json, game_dir);
-        } else {
-            info!("父版本 JSON 不存在: {} (从 {} 继承)", parent_json_path.display(), current_id);
-            // 如果父版本 JSON 不存在，假设 inheritsFrom 就是最终版本（原版 MC）
-            return Ok(inherits_from.to_string());
-        }
-    }
-    
-    // 没有 jar 也没有 inheritsFrom，使用版本 ID（这是原版 MC）
-    if let Some(id) = version_json["id"].as_str() {
-        debug!("使用版本 ID 作为 JAR 版本: {}", id);
-        return Ok(id.to_string());
-    }
-    
-    Err(LauncherError::Custom("无法确定 JAR 版本".to_string()))
 }

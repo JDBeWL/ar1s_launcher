@@ -20,6 +20,8 @@ import type {
   DeviceCodeDisplay,
   MicrosoftLoginResult,
   VersionSizeInfo,
+  JavaCompatibilityResult,
+  GameConfig,
 } from '../types/events';
 
 // ============ 请求去重机制 ============
@@ -108,43 +110,36 @@ export const versionApi = {
 // ============ 实例相关 API ============
 
 export const instanceApi = {
-  /** 获取实例列表（缓存 2 分钟） */
   async getInstances(): Promise<GameInstance[]> {
-    return withCache(CacheKeys.INSTANCES, () =>
-      dedupedInvoke<GameInstance[]>('get_instances'), 2 * 60 * 1000
-    );
+    return dedupedInvoke<GameInstance[]>('get_instances');
   },
 
-  /** 创建实例 */
   async createInstance(
     newInstanceName: string,
     baseVersionId: string,
     loader?: { type: string; mc_version: string; loader_version: string }
   ): Promise<void> {
+    await invoke('create_instance', { newInstanceName, baseVersionId, loader });
     cache.deleteByPrefix(CacheKeys.INSTANCES);
-    return invoke('create_instance', { newInstanceName, baseVersionId, loader });
   },
 
-  /** 删除实例 */
   async deleteInstance(instanceName: string): Promise<void> {
+    await invoke('delete_instance', { instanceName });
     cache.deleteByPrefix(CacheKeys.INSTANCES);
-    return invoke('delete_instance', { instanceName });
   },
 
-  /** 重命名实例 */
   async renameInstance(oldName: string, newName: string): Promise<void> {
+    await invoke('rename_instance', { oldName, newName });
     cache.deleteByPrefix(CacheKeys.INSTANCES);
-    return invoke('rename_instance', { oldName, newName });
   },
 
-  /** 打开实例文件夹 */
   async openInstanceFolder(instanceName: string): Promise<void> {
     return invoke('open_instance_folder', { instanceName });
   },
 
-  /** 启动实例 */
-  async launchInstance(instanceName: string): Promise<void> {
-    return invoke('launch_instance', { instanceName });
+  async launchInstance(instanceName: string, overrideJavaPath?: string): Promise<void> {
+    await invoke('launch_instance', { instanceName, overrideJavaPath });
+    cache.deleteByPrefix(CacheKeys.INSTANCES);
   },
 
   /** 验证实例名称 */
@@ -227,11 +222,35 @@ export const javaApi = {
   async getJavaVersion(path: string): Promise<string> {
     return dedupedInvoke<string>('get_java_version', { path });
   },
+
+  /** 获取自定义 Java 路径列表 */
+  async getCustomJavaPaths(): Promise<string[]> {
+    return dedupedInvoke<string[]>('get_custom_java_paths');
+  },
+
+  /** 添加自定义 Java 路径 */
+  async addCustomJavaPath(path: string): Promise<void> {
+    return invoke('add_custom_java_path', { path });
+  },
+
+  /** 移除自定义 Java 路径 */
+  async removeCustomJavaPath(path: string): Promise<void> {
+    return invoke('remove_custom_java_path', { path });
+  },
+
+  /** 检查 Java 版本兼容性 */
+  async checkJavaCompatibility(mcVersion: string): Promise<JavaCompatibilityResult> {
+    return invoke<JavaCompatibilityResult>('check_java_compatibility', { mcVersion });
+  },
 };
 
 // ============ 配置相关 API ============
 
 export const configApi = {
+  async getConfig(): Promise<GameConfig> {
+    return dedupedInvoke<GameConfig>('get_config');
+  },
+
   /** 获取游戏目录 */
   async getGameDir(): Promise<string> {
     return dedupedInvoke<string>('get_game_dir');
@@ -267,7 +286,8 @@ export const configApi = {
 
   /** 保存配置项 */
   async saveConfigKey(key: string, value: string): Promise<void> {
-    return invoke('save_config_key', { key, value });
+    await invoke('save_config_key', { key, value });
+    cache.deleteByPrefix(CacheKeys.CONFIG);
   },
 
   /** 获取上次选择的版本 */
@@ -311,7 +331,8 @@ export const configApi = {
 
   /** 设置自动内存开关 */
   async setAutoMemoryEnabled(enabled: boolean): Promise<void> {
-    return invoke('set_auto_memory_enabled', { enabled });
+    await invoke('set_auto_memory_enabled', { enabled });
+    cache.deleteByPrefix(CacheKeys.CONFIG);
   },
 
   /** 自动设置内存 */
@@ -363,6 +384,16 @@ export const userApi = {
     return invoke<MicrosoftLoginResult>('complete_microsoft_login');
   },
 
+  /** 开始 Microsoft Authorization Code + PKCE 登录流程，返回浏览器授权 URL */
+  async startMicrosoftAuthCodeLogin(): Promise<string> {
+    return invoke<string>('start_microsoft_auth_code_login');
+  },
+
+  /** 完成 Authorization Code 登录（等待浏览器回调） */
+  async completeMicrosoftAuthCodeLogin(): Promise<MicrosoftLoginResult> {
+    return invoke<MicrosoftLoginResult>('complete_microsoft_auth_code_login');
+  },
+
   /** 刷新 Microsoft 认证 token */
   async refreshMicrosoftAuth(): Promise<MicrosoftLoginResult> {
     return invoke<MicrosoftLoginResult>('refresh_microsoft_auth');
@@ -392,6 +423,7 @@ export const launcherApi = {
     fullscreen?: boolean;
     auth_type?: string;
     uuid?: string;
+    override_java_path?: string;
   }): Promise<void> {
     return invoke('launch_minecraft', { options });
   },

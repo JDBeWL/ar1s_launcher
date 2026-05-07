@@ -85,7 +85,7 @@ watch(autoMemoryEnabled, async () => {
 
 onMounted(async () => {
   await settingsStore.loadSystemMemory();
-  await settingsStore.loadMaxMemory();
+  await settingsStore.loadSettings();
   await loadAutoMemoryConfig();
   await analyzeMemoryEfficiency();
   isInitialized.value = true;

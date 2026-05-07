@@ -1,3 +1,12 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
 :root {
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -85,49 +94,49 @@
   animation-duration: 1.4s !important;
 }
 
-/* 修复 v-select 下拉菜单样式 - 实现真正的“一体化融合”效果 */
-
-/* 当下拉菜单打开或输入框激活时，消除输入框底部的圆角 */
-:where(.v-select--active-menu) .v-field__outline,
-:where(.v-select.v-field--focused) .v-field__outline {
-  border-bottom-left-radius: 0 !important;
-  border-bottom-right-radius: 0 !important;
-  transition: border-radius 0s !important;
+/* 按钮 loading 动画例外 - v-btn 内的 v-progress-circular 旋转动画 */
+.v-btn .v-progress-circular--indeterminate > svg {
+  animation: progress-circular-rotate 1.4s linear infinite !important;
+  animation-duration: 1.4s !important;
+  transform-origin: center center !important;
 }
 
-/* 移除激活/聚焦时加粗的主色框（保持 1px 细线并使用中性色） */
+.v-btn .v-progress-circular--indeterminate .v-progress-circular__overlay {
+  animation: progress-circular-dash 1.4s ease-in-out infinite, progress-circular-rotate 1.4s linear infinite !important;
+  animation-duration: 1.4s !important;
+  stroke-dasharray: 25, 200 !important;
+  stroke-dashoffset: 0 !important;
+  stroke-linecap: round !important;
+  transform-origin: center center !important;
+  transform: rotate(-90deg) !important;
+}
+
+/* v-select 下拉菜单样式 - MD3 浮层菜单风格，向上/向下均美观 */
+
+.v-select--active-menu .v-field__outline,
+.v-select.v-field--focused .v-field__outline {
+  border-radius: inherit !important;
+}
+
 .v-field--focused .v-field__outline {
   --v-field-border-width: 1px !important;
-  /* --v-field-border-opacity: 0.15 !important; */
 }
 
 .v-overlay .v-select-menu-content {
-  /* 边框颜色跟随系统边框色，不再使用主题色 */
   border: 1px solid rgba(var(--v-theme-on-surface), 0.15) !important;
-  border-top: none !important; /* 移除顶部边框，实现物理连接感 */
-
-  /* 形状：顶部直角，底部圆角 */
-  border-top-left-radius: 0 !important;
-  border-top-right-radius: 0 !important;
-  border-bottom-left-radius: 12px !important;
-  border-bottom-right-radius: 12px !important;
-
+  border-radius: 12px !important;
   overflow: hidden;
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2) !important;
-
-  /* 确保位置精确对接 */
-  margin-top: 0 !important;
 }
 
-/* 菜单内部列表样式微调 */
 .v-overlay .v-select-menu-content .v-list {
-  padding: 0;
+  padding: 4px;
   border-radius: 0;
   background: rgb(var(--v-theme-surface-container));
 }
 
 .v-overlay .v-select-menu-content .v-list-item {
-  border-radius: 0;
+  border-radius: 8px;
   margin: 0;
 }
 

@@ -1,27 +1,32 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
-import { useRouter, useRoute } from "vue-router";
+import { useRoute } from "vue-router";
 import InstanceCard from "../components/instance/InstanceCard.vue";
 import { useNotificationStore } from "../stores/notificationStore";
-import { instanceApi } from "../services";
-import type { GameInstance } from "../types/events";
+import { useAuthStore } from "../stores/authStore";
+import { useSettingsStore } from "../stores/settings";
+import { instanceApi, javaApi } from "../services";
+import type { GameInstance, JavaCompatibilityResult } from "../types/events";
 import { formatLastPlayed, getLoaderIcon, getLoaderColor, getErrorMessage } from "../utils/format";
 import { logError } from "../utils/logger";
+import { getInstanceViewMode, getInstanceSortBy } from "../utils/storage";
 
-const router = useRouter();
 const route = useRoute();
 const notificationStore = useNotificationStore();
+const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
 const instances = ref<GameInstance[]>([]);
 const loading = ref(false);
+const launchingInstanceId = ref<string | null>(null);
 const searchQuery = ref('');
-const viewMode = ref<'grid' | 'list'>((localStorage.getItem('instanceViewMode') as 'grid' | 'list') || 'grid');
+const viewMode = ref<'grid' | 'list'>(getInstanceViewMode());
 
 const renameDialog = ref(false);
 const renameInstanceName = ref("");
 const currentInstance = ref<GameInstance | null>(null);
 const deleteDialog = ref(false);
 const deleteConfirmName = ref('');
-const sortBy = ref(localStorage.getItem('instanceSortBy') || 'lastPlayed');
+const sortBy = ref(getInstanceSortBy());
 
 const sortOptions = [
   { title: '最近游玩', value: 'lastPlayed' },
@@ -66,8 +71,115 @@ async function loadInstances() {
   }
 }
 
-function launchInstance(instance: GameInstance) {
-  router.push({ path: "/", query: { instance: instance.name } });
+async function checkAndResolveJava(version: string): Promise<{ shouldLaunch: boolean; overrideJavaPath?: string }> {
+  let result: JavaCompatibilityResult;
+  try {
+    result = await javaApi.checkJavaCompatibility(version);
+  } catch {
+    return { shouldLaunch: true };
+  }
+
+  if (result.compatible || result.autoMatchEnabled) {
+    return { shouldLaunch: true };
+  }
+
+  const currentVer = result.currentJavaVersion != null ? `Java ${result.currentJavaVersion}` : '未知';
+  const requiredVer = `Java ${result.requiredJavaVersion}`;
+
+  let content = `当前 Java 版本 (${currentVer}) 不满足 Minecraft ${version} 的要求 (需要 ${requiredVer})。\n\n请选择如何处理：`;
+
+  const options: Array<{ id: string; label: string; color?: string; variant?: 'elevated' | 'outlined' | 'text' | 'flat' | 'tonal' | 'plain' }> = [];
+
+  if (result.recommendedJavaPath) {
+    options.push({
+      id: 'temp',
+      label: `临时使用 Java ${result.recommendedJavaVersion}`,
+      color: 'primary',
+      variant: 'elevated',
+    });
+  }
+
+  options.push({
+    id: 'auto',
+    label: '开启自动匹配',
+    color: 'success',
+    variant: 'tonal',
+  });
+
+  options.push({
+    id: 'manual',
+    label: '手动选择 Java',
+    color: 'warning',
+    variant: 'outlined',
+  });
+
+  options.push({
+    id: 'continue',
+    label: '继续启动',
+    color: 'info',
+    variant: 'text',
+  });
+
+  const selected = await notificationStore.choice(
+    'Java 版本提示',
+    content,
+    options,
+    'warning'
+  );
+
+  if (selected === null) {
+    return { shouldLaunch: false };
+  }
+
+  if (selected === 'continue') {
+    return { shouldLaunch: true };
+  }
+
+  if (selected === 'temp' && result.recommendedJavaPath) {
+    return { shouldLaunch: true, overrideJavaPath: result.recommendedJavaPath };
+  }
+
+  if (selected === 'auto') {
+    settingsStore.autoMatchJava = true;
+    await settingsStore.saveAutoMatchJava();
+    return { shouldLaunch: false };
+  }
+
+  if (selected === 'manual') {
+    notificationStore.warning('请在设置中手动选择兼容的 Java 路径');
+    return { shouldLaunch: false };
+  }
+
+  return { shouldLaunch: false };
+}
+
+async function launchInstance(instance: GameInstance) {
+  if (!authStore.isLoggedIn) {
+    notificationStore.warning('请先设置玩家名称或登录 Microsoft 账户');
+    return;
+  }
+
+  launchingInstanceId.value = instance.id;
+  try {
+    if (authStore.authType === 'microsoft' && authStore.msLoggedIn && authStore.isTokenExpired) {
+      await authStore.tryRefreshMicrosoftToken();
+    }
+
+    const javaResolve = await checkAndResolveJava(instance.name);
+
+    if (!javaResolve.shouldLaunch) {
+      return;
+    }
+
+    await instanceApi.launchInstance(instance.name, javaResolve.overrideJavaPath);
+    notificationStore.success('启动成功', `${instance.name} 正在启动`);
+    await loadInstances();
+  } catch (error) {
+    logError("Failed to launch instance", error, 'InstanceManagerView');
+    notificationStore.error('启动失败', getErrorMessage(error), true);
+  } finally {
+    launchingInstanceId.value = null;
+  }
 }
 
 async function openInstanceFolder(instance: GameInstance) {
@@ -279,6 +391,7 @@ onMounted(() => {
       >
         <InstanceCard
           :instance="instance"
+          :launching="launchingInstanceId === instance.id"
           @launch="launchInstance"
           @open-folder="openInstanceFolder"
           @rename="openRenameDialog"
@@ -319,6 +432,7 @@ onMounted(() => {
               color="primary"
               size="small"
               class="mr-2"
+              :loading="launchingInstanceId === instance.id"
               @click="launchInstance(instance)"
             >
               <v-icon start size="16">mdi-play</v-icon>

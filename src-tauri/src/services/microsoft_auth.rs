@@ -1,27 +1,27 @@
 //! Microsoft / Minecraft 正版登录模块
 //!
 //! 实现完整的 Microsoft OAuth → Xbox Live → XSTS → Minecraft 认证链：
-//! 1. Microsoft OAuth 2.0 授权（设备代码流）
+//! 1. Microsoft OAuth 2.0 授权（Authorization Code Flow + PKCE 或设备代码流）
 //! 2. Xbox Live 认证
 //! 3. XSTS 认证
 //! 4. Minecraft 认证
 //! 5. Minecraft Profile 获取
 
 use crate::errors::LauncherError;
-use reqwest::Client;
+use crate::services::http_client;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 
-const MICROSOFT_CLIENT_ID: &str = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb";
+const MICROSOFT_CLIENT_ID: &str = "907a248d-3eb5-4d01-99d2-ff72d79c5eb1";
 
-fn get_auth_client() -> Result<Client, LauncherError> {
-    Client::builder()
-        .timeout(Duration::from_secs(60))
-        .connect_timeout(Duration::from_secs(30))
-        .user_agent("Ar1s-Launcher/1.0")
-        .build()
-        .map_err(|e| LauncherError::Custom(format!("HTTP 客户端构建失败: {}", e)))
-}
+const AUTH_TIMEOUT: Duration = Duration::from_secs(60);
+
+const REDIRECT_URI: &str = "http://localhost:26669/relogin";
+
+const AUTH_SCOPES: &str = "XboxLive.signin offline_access";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,9 +94,10 @@ pub struct DeviceCodeInfo {
 }
 
 pub async fn start_device_code_flow() -> Result<DeviceCodeInfo, LauncherError> {
-    let client = get_auth_client()?;
+    let client = http_client::get_client();
     let resp = client
         .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode")
+        .timeout(AUTH_TIMEOUT)
         .form(&[
             ("client_id", MICROSOFT_CLIENT_ID),
             ("scope", "XboxLive.signin offline_access"),
@@ -129,9 +130,10 @@ pub async fn start_device_code_flow() -> Result<DeviceCodeInfo, LauncherError> {
 }
 
 pub async fn poll_device_token(device_code: &str) -> Result<TokenResponse, LauncherError> {
-    let client = get_auth_client()?;
+    let client = http_client::get_client();
     let resp = client
         .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+        .timeout(AUTH_TIMEOUT)
         .form(&[
             ("client_id", MICROSOFT_CLIENT_ID),
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
@@ -171,9 +173,10 @@ pub async fn poll_device_token(device_code: &str) -> Result<TokenResponse, Launc
 }
 
 pub async fn refresh_microsoft_token(refresh_token: &str) -> Result<TokenResponse, LauncherError> {
-    let client = get_auth_client()?;
+    let client = http_client::get_client();
     let resp = client
         .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+        .timeout(AUTH_TIMEOUT)
         .form(&[
             ("client_id", MICROSOFT_CLIENT_ID),
             ("grant_type", "refresh_token"),
@@ -199,7 +202,7 @@ pub async fn refresh_microsoft_token(refresh_token: &str) -> Result<TokenRespons
 }
 
 async fn authenticate_xbox_live(microsoft_access_token: &str) -> Result<String, LauncherError> {
-    let client = get_auth_client()?;
+    let client = http_client::get_client();
     let body = serde_json::json!({
         "Properties": {
             "AuthMethod": "RPS",
@@ -212,6 +215,7 @@ async fn authenticate_xbox_live(microsoft_access_token: &str) -> Result<String, 
 
     let resp = client
         .post("https://user.auth.xboxlive.com/user/authenticate")
+        .timeout(AUTH_TIMEOUT)
         .json(&body)
         .send()
         .await
@@ -233,7 +237,7 @@ async fn authenticate_xbox_live(microsoft_access_token: &str) -> Result<String, 
 }
 
 async fn authenticate_xsts(xbox_live_token: &str) -> Result<(String, String), LauncherError> {
-    let client = get_auth_client()?;
+    let client = http_client::get_client();
     let body = serde_json::json!({
         "Properties": {
             "SandboxId": "RETAIL",
@@ -245,6 +249,7 @@ async fn authenticate_xsts(xbox_live_token: &str) -> Result<(String, String), La
 
     let resp = client
         .post("https://xsts.auth.xboxlive.com/xsts/authorize")
+        .timeout(AUTH_TIMEOUT)
         .json(&body)
         .send()
         .await
@@ -282,13 +287,14 @@ async fn authenticate_minecraft(
     xsts_token: &str,
     uhs: &str,
 ) -> Result<String, LauncherError> {
-    let client = get_auth_client()?;
+    let client = http_client::get_client();
     let body = serde_json::json!({
         "identityToken": format!("XBL3.0 x={};{}", uhs, xsts_token)
     });
 
     let resp = client
         .post("https://api.minecraftservices.com/authentication/login_with_xbox")
+        .timeout(AUTH_TIMEOUT)
         .json(&body)
         .send()
         .await
@@ -312,9 +318,10 @@ async fn authenticate_minecraft(
 async fn get_minecraft_profile(
     minecraft_access_token: &str,
 ) -> Result<(String, String), LauncherError> {
-    let client = get_auth_client()?;
+    let client = http_client::get_client();
     let resp = client
         .get("https://api.minecraftservices.com/minecraft/profile")
+        .timeout(AUTH_TIMEOUT)
         .header("Authorization", format!("Bearer {}", minecraft_access_token))
         .send()
         .await
@@ -367,9 +374,10 @@ pub async fn complete_microsoft_auth(
 }
 
 pub async fn revoke_microsoft_token() -> Result<(), LauncherError> {
-    let client = get_auth_client()?;
+    let client = http_client::get_client();
     let _ = client
         .get("https://login.microsoftonline.com/consumers/oauth2/v2.0/logout")
+        .timeout(AUTH_TIMEOUT)
         .send()
         .await;
     Ok(())
@@ -386,4 +394,146 @@ pub async fn refresh_and_authenticate(
     let expires_in = token_resp.expires_in.unwrap_or(3600);
 
     complete_microsoft_auth(&token_resp.access_token, new_refresh, expires_in).await
+}
+
+// ============ Authorization Code Flow + PKCE ============
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthCodeFlowInfo {
+    pub auth_url: String,
+    pub code_verifier: String,
+}
+
+fn generate_code_verifier() -> String {
+    let bytes: [u8; 32] = rand::random();
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn compute_code_challenge(code_verifier: &str) -> String {
+    let digest = Sha256::digest(code_verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
+pub fn start_auth_code_flow() -> Result<AuthCodeFlowInfo, LauncherError> {
+    let code_verifier = generate_code_verifier();
+    let code_challenge = compute_code_challenge(&code_verifier);
+
+    let auth_url = format!(
+        "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?{}",
+        serde_urlencoded::to_string([
+            ("client_id", MICROSOFT_CLIENT_ID.to_string()),
+            ("response_type", "code".to_string()),
+            ("redirect_uri", REDIRECT_URI.to_string()),
+            ("scope", AUTH_SCOPES.to_string()),
+            ("code_challenge", code_challenge),
+            ("code_challenge_method", "S256".to_string()),
+            ("prompt", "select_account".to_string()),
+        ])
+        .map_err(|e| LauncherError::Custom(format!("URL 编码失败: {}", e)))?
+    );
+
+    Ok(AuthCodeFlowInfo {
+        auth_url,
+        code_verifier,
+    })
+}
+
+pub async fn exchange_auth_code(
+    code: &str,
+    code_verifier: &str,
+) -> Result<TokenResponse, LauncherError> {
+    let client = http_client::get_client();
+    let resp = client
+        .post("https://login.microsoftonline.com/consumers/oauth2/v2.0/token")
+        .timeout(AUTH_TIMEOUT)
+        .form(&[
+            ("client_id", MICROSOFT_CLIENT_ID),
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", REDIRECT_URI),
+            ("code_verifier", code_verifier),
+            ("scope", AUTH_SCOPES),
+        ])
+        .send()
+        .await
+        .map_err(|e| LauncherError::Custom(format!("授权码交换请求失败: {}", e)))?;
+
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+
+    if !status.is_success() {
+        return Err(LauncherError::Custom(format!(
+            "授权码交换失败 ({}): {}",
+            status, body
+        )));
+    }
+
+    serde_json::from_str(&body)
+        .map_err(|e| LauncherError::Custom(format!("解析 Token 响应失败: {}", e)))
+}
+
+pub async fn wait_for_auth_callback() -> Result<String, LauncherError> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:26669")
+        .await
+        .map_err(|e| LauncherError::Custom(format!("无法启动本地回调服务器: {}", e)))?;
+
+    let (stream, _) = listener
+        .accept()
+        .await
+        .map_err(|e| LauncherError::Custom(format!("等待回调连接失败: {}", e)))?;
+
+    let mut reader = tokio::io::BufReader::new(stream);
+    let mut request_line = String::new();
+    tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut request_line)
+        .await
+        .map_err(|e| LauncherError::Custom(format!("读取回调请求失败: {}", e)))?;
+
+    let url_part = request_line.split_whitespace().nth(1).unwrap_or("");
+    let query_str = url_part.split('?').nth(1).unwrap_or("");
+
+    let params: std::collections::HashMap<String, String> = serde_urlencoded::from_str(query_str)
+        .unwrap_or_default();
+
+    let response_html = if params.contains_key("code") {
+        r#"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!DOCTYPE html><html><head><meta charset="utf-8"><title>登录成功</title><style>*{margin:0;padding:0;box-sizing:border-box}body{display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#FEF7FF;color:#1D1B20}.card{background:#F3EDF7;border-radius:28px;padding:48px 40px;text-align:center;max-width:400px;width:90%;box-shadow:0 1px 3px rgba(0,0,0,.08),0 4px 8px rgba(0,0,0,.04)}h1{font-size:1.5rem;font-weight:500;color:#1D1B20;margin-bottom:8px;letter-spacing:.01em}p{font-size:.875rem;color:#49454F;line-height:1.4}.brand{position:fixed;left:24px;bottom:24px;font-size:40px;font-weight:300;color:#79747E;opacity:.35;letter-spacing:.05em;user-select:none}</style></head><body><div class="card"><h1>登录成功</h1><p>可以关闭此页面并返回启动器</p></div><div class="brand">AR1S LAUNCHER</div></body></html>"#
+    } else {
+        r#"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!DOCTYPE html><html><head><meta charset="utf-8"><title>登录失败</title><style>*{margin:0;padding:0;box-sizing:border-box}body{display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#FEF7FF;color:#1D1B20}.card{background:#F3EDF7;border-radius:28px;padding:48px 40px;text-align:center;max-width:400px;width:90%;box-shadow:0 1px 3px rgba(0,0,0,.08),0 4px 8px rgba(0,0,0,.04)}h1{font-size:1.5rem;font-weight:500;color:#B3261E;margin-bottom:8px;letter-spacing:.01em}p{font-size:.875rem;color:#49454F;line-height:1.4}.brand{position:fixed;left:24px;bottom:24px;font-size:40px;font-weight:300;color:#79747E;opacity:.35;letter-spacing:.05em;user-select:none}</style></head><body><div class="card"><h1>登录失败</h1><p>请返回启动器重试</p></div><div class="brand">AR1S LAUNCHER</div></body></html>"#
+    };
+
+    let response = response_html.replace("\\r\\n", "\r\n");
+    {
+        use tokio::io::AsyncWriteExt;
+        let mut stream = reader.into_inner();
+        let _ = stream.write_all(response.as_bytes()).await;
+        let _ = stream.flush().await;
+    }
+
+    if let Some(error) = params.get("error") {
+        let error_desc = params.get("error_description").cloned().unwrap_or_default();
+        return Err(LauncherError::Custom(format!(
+            "登录被拒绝: {} - {}",
+            error, error_desc
+        )));
+    }
+
+    params
+        .get("code")
+        .cloned()
+        .ok_or_else(|| LauncherError::Custom("未收到授权码".to_string()))
+}
+
+pub async fn complete_auth_code_flow(
+    code_verifier: &str,
+) -> Result<MicrosoftAuthResult, LauncherError> {
+    let code = wait_for_auth_callback().await?;
+    let token_resp = exchange_auth_code(&code, code_verifier).await?;
+
+    let refresh = token_resp
+        .refresh_token
+        .clone()
+        .unwrap_or_default();
+    let expires_in = token_resp.expires_in.unwrap_or(3600);
+
+    complete_microsoft_auth(&token_resp.access_token, &refresh, expires_in).await
 }

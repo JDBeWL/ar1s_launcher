@@ -35,10 +35,11 @@ class Logger {
           break;
       }
     } else {
-      // 生产环境：只输出错误和警告
-      if (level === 'error' || level === 'warn') {
-        console.error(formattedMessage, error || '');
-      }
+      // 生产环境：禁用控制台输出，避免泄露敏感信息
+      // 未来可以添加：通过 Tauri invoke 将错误发送到后端日志系统
+      // if (level === 'error') {
+      //   invoke('log_to_file', { level: 'error', message: formattedMessage });
+      // }
     }
 
     // 未来可以在这里添加：发送到后端、写入日志文件等

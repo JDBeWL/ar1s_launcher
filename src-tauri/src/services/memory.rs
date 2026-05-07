@@ -61,18 +61,11 @@ pub fn recommend_memory_for_game(version: &str, modded: bool) -> MemoryRecommend
     let total_memory_mb = memory_stats.total_memory_mb as u32;
     
     // 基础内存需求
-    let base_memory = if version.starts_with("1.17") || version.starts_with("1.18") || 
-                         version.starts_with("1.19") || version.starts_with("1.20") ||
-                         version.starts_with("1.21") {
-        // 新版本需要更多内存
+    let base_memory = if crate::utils::minecraft::is_new_version(version) {
         2048
-    } else if version.starts_with("1.12") || version.starts_with("1.13") || 
-               version.starts_with("1.14") || version.starts_with("1.15") || 
-               version.starts_with("1.16") {
-        // 中等版本
+    } else if crate::utils::minecraft::is_mid_version(version) {
         1536
     } else {
-        // 旧版本
         1024
     };
     
@@ -200,16 +193,25 @@ pub fn optimize_jvm_memory_args(memory_mb: u32, version: &str, java_version: Opt
     // 基础内存参数：Xms = Xmx，避免堆动态扩展/收缩的开销
     args.push(format!("-Xmx{}M", memory_mb));
     args.push(format!("-Xms{}M", memory_mb));
-    
+
     // 判断是否为新版本（1.17+，需要 Java 17+）
-    let is_new_version = version.starts_with("1.17") || version.starts_with("1.18") || 
-       version.starts_with("1.19") || version.starts_with("1.20") ||
-       version.starts_with("1.21") || version.starts_with("1.22");
+    let is_new_version = crate::utils::minecraft::is_new_version(version);
     
-    // ZGC 需要 Java 15+，分代 ZGC 需要 Java 21+
+    // ZGC 需要 Java 15+，分代 ZGC 需要 Java 21+（Java 24 起分代 ZGC 成为默认，标志被移除）
     let java_major = java_version.unwrap_or(17);
+
+    // Java 17+ 需要显式允许原生访问，否则 JNA/LWJGL 等库会发出警告甚至被阻止
+    if java_major >= 17 {
+        args.push("--enable-native-access=ALL-UNNAMED".to_string());
+    }
+
+    // Java 23+ 中 sun.misc.Unsafe 的内存访问被限制，Minecraft 使用的 JOML 等库依赖它
+    if java_major >= 23 {
+        args.push("--sun-misc-unsafe-memory-access=allow".to_string());
+    }
+
     let supports_zgc = java_major >= 15;
-    let supports_generational_zgc = java_major >= 21;
+    let supports_generational_zgc = java_major >= 21 && java_major < 24;
     // 大内存（≥4GB）+ 新版本 + Java 15+ 更适合用 ZGC
     let use_zgc = memory_mb >= 4096 && is_new_version && supports_zgc;
 
@@ -218,17 +220,16 @@ pub fn optimize_jvm_memory_args(memory_mb: u32, version: &str, java_version: Opt
         args.push("-XX:+UseZGC".to_string());
         args.push(format!("-XX:ConcGCThreads={}", gc_threads));
         args.push(format!("-XX:ParallelGCThreads={}", parallel_gc_threads));
-        // ZGC 分代模式（Java 21+ 支持），显著降低分配停顿
+        // ZGC 分代模式（Java 21~23 需要显式开启且需要 UnlockExperimentalVMOptions，Java 24+ 默认分代且标志已移除）
         if supports_generational_zgc {
-            args.push("-XX:+ZGenerational".to_string());
             args.push("-XX:+UnlockExperimentalVMOptions".to_string());
+            args.push("-XX:+ZGenerational".to_string());
         }
     } else if is_new_version {
         // G1GC：中等内存的通用选择
         args.push("-XX:+UseG1GC".to_string());
         args.push(format!("-XX:ParallelGCThreads={}", parallel_gc_threads));
         args.push(format!("-XX:ConcGCThreads={}", gc_threads));
-        args.push("-XX:+UnlockExperimentalVMOptions".to_string());
         args.push("-XX:G1NewSizePercent=20".to_string());
         args.push("-XX:G1ReservePercent=20".to_string());
         args.push("-XX:MaxGCPauseMillis=50".to_string());
@@ -420,10 +421,45 @@ mod tests {
 
     #[test]
     fn test_jvm_args_large_memory_uses_zgc() {
-        // 4GB+ 内存 + 新版本 + Java 21 使用 ZGC（含分代模式）
+        // 4GB+ 内存 + 新版本 + Java 21 使用 ZGC（含分代模式，需要 UnlockExperimentalVMOptions）
         let args = optimize_jvm_memory_args(4096, "1.20.1", Some(21));
         assert!(args.iter().any(|arg| arg == "-XX:+UseZGC"));
         assert!(args.iter().any(|arg| arg == "-XX:+ZGenerational"));
+        assert!(args.iter().any(|arg| arg == "-XX:+UnlockExperimentalVMOptions"));
+    }
+
+    #[test]
+    fn test_jvm_args_zgc_java24_no_generational_flag() {
+        // Java 24+ 分代 ZGC 为默认，ZGenerational 标志已移除
+        let args = optimize_jvm_memory_args(4096, "1.20.1", Some(24));
+        assert!(args.iter().any(|arg| arg == "-XX:+UseZGC"));
+        assert!(!args.iter().any(|arg| arg == "-XX:+ZGenerational"));
+    }
+
+    #[test]
+    fn test_jvm_args_enable_native_access_java17() {
+        let args = optimize_jvm_memory_args(2048, "1.20.1", Some(17));
+        assert!(args.iter().any(|arg| arg == "--enable-native-access=ALL-UNNAMED"));
+    }
+
+    #[test]
+    fn test_jvm_args_no_native_access_java8() {
+        let args = optimize_jvm_memory_args(2048, "1.12.2", Some(8));
+        assert!(!args.iter().any(|arg| arg == "--enable-native-access=ALL-UNNAMED"));
+    }
+
+    #[test]
+    fn test_jvm_args_unsafe_memory_access_java25() {
+        // Java 23+ 需要允许 sun.misc.Unsafe 内存访问
+        let args = optimize_jvm_memory_args(2048, "1.20.1", Some(25));
+        assert!(args.iter().any(|arg| arg == "--sun-misc-unsafe-memory-access=allow"));
+    }
+
+    #[test]
+    fn test_jvm_args_no_unsafe_memory_access_java21() {
+        // Java 21 不需要 sun.misc.Unsafe 内存访问参数
+        let args = optimize_jvm_memory_args(2048, "1.20.1", Some(21));
+        assert!(!args.iter().any(|arg| arg == "--sun-misc-unsafe-memory-access=allow"));
     }
 
     #[test]

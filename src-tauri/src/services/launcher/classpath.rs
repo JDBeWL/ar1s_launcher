@@ -1,37 +1,9 @@
 //! Classpath 构建和库预检逻辑
 
 use crate::errors::LauncherError;
+use crate::utils::minecraft::{evaluate_rules, find_jar_version};
 use std::fs;
 use std::path::{Path, PathBuf};
-
-/// 递归查找最终的 JAR 版本（处理多层继承链）
-fn find_jar_version_recursive(version_json: &serde_json::Value, versions_dir: &Path, default_version: &str) -> String {
-    // 优先使用 jar 字段
-    if let Some(jar) = version_json["jar"].as_str() {
-        return jar.to_string();
-    }
-    
-    // 如果有 inheritsFrom，递归查找
-    if let Some(inherits_from) = version_json["inheritsFrom"].as_str() {
-        let parent_json_path = versions_dir
-            .join(inherits_from)
-            .join(format!("{}.json", inherits_from));
-        
-        if parent_json_path.exists() {
-            if let Ok(parent_str) = fs::read_to_string(&parent_json_path) {
-                if let Ok(parent_json) = serde_json::from_str::<serde_json::Value>(&parent_str) {
-                    return find_jar_version_recursive(&parent_json, versions_dir, inherits_from);
-                }
-            }
-        }
-        
-        // 如果父版本 JSON 不存在，假设 inheritsFrom 就是最终版本
-        return inherits_from.to_string();
-    }
-    
-    // 没有 jar 也没有 inheritsFrom，使用默认版本
-    default_version.to_string()
-}
 
 /// 通用库文件查找函数
 /// 递归扫描指定目录，查找匹配指定模式的JAR文件
@@ -112,7 +84,6 @@ pub fn build_classpath(
     libraries_base_dir: &Path,
     version_dir: &Path,
     version: &str,
-    current_os: &str,
     emit: &impl Fn(&str, String),
 ) -> Result<Vec<PathBuf>, LauncherError> {
     let mut classpath = vec![];
@@ -124,7 +95,7 @@ pub fn build_classpath(
                 continue;
             }
 
-            if !should_include_library(lib, current_os) {
+            if !evaluate_rules(lib.get("rules")) {
                 continue;
             }
 
@@ -135,13 +106,17 @@ pub fn build_classpath(
     }
 
     // 确定主游戏 JAR 的版本（递归查找继承链）
-    let jar_version = find_jar_version_recursive(version_json, version_dir.parent().unwrap(), version);
+    let versions_dir = version_dir.parent().ok_or_else(|| {
+        LauncherError::Custom("无法获取 versions 目录".to_string())
+    })?;
+    let game_dir = versions_dir.parent().ok_or_else(|| {
+        LauncherError::Custom("无法获取游戏根目录".to_string())
+    })?;
+    let jar_version = find_jar_version(version_json, game_dir)?;
     
     // 主游戏 JAR 路径
     let main_game_jar_path = if jar_version != version {
-        // 如果 JAR 版本与当前版本不同，需要从基础版本目录获取
-        let game_dir = version_dir.parent().unwrap(); // versions 目录
-        game_dir.join(&jar_version).join(format!("{}.jar", jar_version))
+        versions_dir.join(&jar_version).join(format!("{}.jar", jar_version))
     } else {
         version_dir.join(format!("{}.jar", version))
     };
@@ -164,52 +139,6 @@ pub fn build_classpath(
 
     classpath.push(main_game_jar_path);
     Ok(classpath)
-}
-
-/// 检查库是否应该包含在当前操作系统
-fn should_include_library(lib: &serde_json::Value, current_os: &str) -> bool {
-    let Some(rules) = lib.get("rules").and_then(|r| r.as_array()) else {
-        return true;
-    };
-
-    let mut allowed = true;
-
-    for rule in rules {
-        let action = rule["action"].as_str().unwrap_or("");
-        if let Some(os) = rule.get("os") {
-            if let Some(name) = os["name"].as_str() {
-                match action {
-                    "allow" => {
-                        if name == current_os {
-                            allowed = true;
-                        } else if !allowed {
-                            // 已被其他 allow 规则排除了，保持排除
-                        } else {
-                            allowed = false;
-                        }
-                    }
-                    "disallow" => {
-                        if name == current_os {
-                            allowed = false;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        } else {
-            match action {
-                "allow" => {
-                    allowed = true;
-                }
-                "disallow" => {
-                    allowed = false;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    allowed
 }
 
 /// 解析库文件路径

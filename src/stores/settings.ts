@@ -9,6 +9,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const downloadMirror = ref('bmcl')
   const javaInstallations = ref<string[]>([])
   const hasFoundJavaInstallations = ref(false)
+  const autoMatchJava = ref(false)
 
   async function loadSystemMemory() {
     try {
@@ -18,14 +19,18 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  async function loadMaxMemory() {
+  async function loadSettings() {
     try {
-      const memory = await configApi.loadConfigKey('maxMemory')
-      if (memory) {
-        maxMemory.value = parseInt(memory, 10)
+      const config = await configApi.getConfig()
+      if (config.max_memory) {
+        maxMemory.value = config.max_memory
       }
+      if (config.download_mirror) {
+        downloadMirror.value = config.download_mirror
+      }
+      autoMatchJava.value = config.auto_match_java
     } catch (err) {
-      logError('Failed to get max memory', err, 'SettingsStore')
+      logError('Failed to load settings', err, 'SettingsStore')
     }
   }
 
@@ -34,17 +39,6 @@ export const useSettingsStore = defineStore('settings', () => {
       await configApi.saveConfigKey('maxMemory', maxMemory.value.toString())
     } catch (err) {
       logError('Failed to set max memory', err, 'SettingsStore')
-    }
-  }
-
-  async function loadDownloadMirror() {
-    try {
-      const mirror = await configApi.loadConfigKey('downloadMirror')
-      if (mirror) {
-        downloadMirror.value = mirror
-      }
-    } catch (err) {
-      logError('Failed to get download mirror', err, 'SettingsStore')
     }
   }
 
@@ -68,17 +62,26 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  async function saveAutoMatchJava() {
+    try {
+      await configApi.saveConfigKey('autoMatchJava', autoMatchJava.value.toString())
+    } catch (err) {
+      logError('Failed to save auto match java', err, 'SettingsStore')
+    }
+  }
+
   return {
     maxMemory,
     totalMemoryMB,
     downloadMirror,
     javaInstallations,
     hasFoundJavaInstallations,
+    autoMatchJava,
     loadSystemMemory,
-    loadMaxMemory,
+    loadSettings,
     saveMaxMemory,
-    loadDownloadMirror,
     saveDownloadMirror,
-    findJavaInstallations
+    findJavaInstallations,
+    saveAutoMatchJava
   }
 })

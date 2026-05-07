@@ -252,7 +252,7 @@ const vuetify = createVuetify({
       density: 'comfortable',
       menuProps: {
         contentClass: 'v-select-menu-content',
-        offset: 0,
+        offset: 4,
       },
     },
     VAutocomplete: {
@@ -261,7 +261,7 @@ const vuetify = createVuetify({
       density: 'comfortable',
       menuProps: {
         contentClass: 'v-select-menu-content',
-        offset: 0,
+        offset: 4,
       },
     },
     VCombobox: {
@@ -270,13 +270,14 @@ const vuetify = createVuetify({
       density: 'comfortable',
       menuProps: {
         contentClass: 'v-select-menu-content',
-        offset: 0,
+        offset: 4,
       },
     },
     VMenu: {
       rounded: 'lg',
-      offset: 0,
+      offset: 4,
       transition: false,
+      location: 'bottom end',
     },
     VAlert: {
       rounded: 'xl',
