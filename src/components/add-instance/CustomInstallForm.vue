@@ -127,10 +127,10 @@ onMounted(() => {
                   <template #append>
                     <v-chip 
                       size="x-small" 
-                      :color="item.raw.type === 'release' ? 'success' : 'warning'"
+                      :color="item.type === 'release' ? 'success' : 'warning'"
                       variant="tonal"
                     >
-                      {{ item.raw.type === 'release' ? '正式版' : '快照' }}
+                      {{ item.type === 'release' ? '正式版' : '快照' }}
                     </v-chip>
                   </template>
                 </v-list-item>
@@ -230,7 +230,7 @@ onMounted(() => {
                 <v-list-item v-bind="props">
                   <template #append>
                     <v-chip 
-                      v-if="hasStableProperty(item.raw) && item.raw.stable === true" 
+                      v-if="hasStableProperty(item) && item.stable === true" 
                       size="x-small" 
                       color="success" 
                       variant="tonal"
@@ -238,7 +238,7 @@ onMounted(() => {
                       稳定
                     </v-chip>
                     <v-chip 
-                      v-else-if="hasStableProperty(item.raw) && item.raw.stable === false" 
+                      v-else-if="hasStableProperty(item) && item.stable === false" 
                       size="x-small" 
                       color="warning" 
                       variant="tonal"

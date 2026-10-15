@@ -159,8 +159,8 @@
                       <v-list-item v-bind="props">
                         <template #subtitle>
                           <span class="text-caption">
-                            {{ item.raw.game_versions?.slice(0, 3).join(', ') }}
-                            {{ item.raw.game_versions?.length > 3 ? '...' : '' }}
+                            {{ item.game_versions?.slice(0, 3).join(', ') }}
+                            {{ item.game_versions?.length > 3 ? '...' : '' }}
                           </span>
                         </template>
                       </v-list-item>

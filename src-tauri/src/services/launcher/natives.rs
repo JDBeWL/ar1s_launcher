@@ -110,7 +110,7 @@ fn extract_native_jar(
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let entry_name = file.name().to_string();
+        let entry_name = file.name()?.to_string();
 
         // 检查是否需要排除
         if should_exclude_entry(&entry_name, lib) {

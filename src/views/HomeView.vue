@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from "vue";
-import { VStepperVertical, VStepperVerticalItem } from "vuetify/labs/components";
+import { VStepperVertical, VStepperVerticalItem } from "vuetify/components";
 import { useVersionManager } from "../composables/useVersionManager";
 import { useGameLaunch } from "../composables/useGameLaunch";
 import { useAuthStore } from "../stores/authStore";

@@ -14,6 +14,10 @@
     "noEmit": true,
     "jsx": "preserve",
 
+    /* 缓存放在 node_modules 内，避免 tsbuildinfo 落到仓库根目录 */
+    "incremental": true,
+    "tsBuildInfoFile": "node_modules/.tmp/tsconfig.tsbuildinfo",
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,

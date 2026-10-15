@@ -613,7 +613,7 @@ async fn manual_install_old_forge(
             Ok(f) => f,
             Err(_) => continue,
         };
-        let name = file.name().to_string();
+        let name = file.name()?.to_string();
 
         // 安全检查：防止路径遍历攻击
         if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
@@ -715,7 +715,7 @@ async fn manual_install_new_forge(
             Ok(f) => f,
             Err(_) => continue,
         };
-        let name = file.name().to_string();
+        let name = file.name()?.to_string();
 
         // 安全检查：防止路径遍历攻击
         if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {

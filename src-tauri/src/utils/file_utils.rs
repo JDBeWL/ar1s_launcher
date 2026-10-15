@@ -5,6 +5,7 @@ use log::{debug, info, warn};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// 实例名称验证结果
@@ -158,13 +159,19 @@ pub fn verify_file(
     if let Some(hash) = expected_hash {
         let mut file = std::fs::File::open(path)?;
         let mut hasher = Sha1::new();
-        std::io::copy(&mut file, &mut hasher)?;
-        let actual_hash = hasher.finalize();
-        let actual_hash_str = format!("{:x}", actual_hash);
-        let is_valid = actual_hash_str.to_lowercase() == hash.to_lowercase();
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            let read = file.read(&mut buf)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buf[..read]);
+        }
+        let actual_hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        let is_valid = actual_hash.to_lowercase() == hash.to_lowercase();
         
         if !is_valid {
-            warn!("文件哈希不匹配: 期望 {}, 实际 {}", hash, actual_hash_str);
+            warn!("文件哈希不匹配: 期望 {}, 实际 {}", hash, actual_hash);
         }
         
         Ok(is_valid)

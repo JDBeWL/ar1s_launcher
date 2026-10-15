@@ -7,7 +7,7 @@ import { readFileSync } from "fs";
 const host = process.env.TAURI_DEV_HOST;
 
 const pkgVersion = JSON.parse(
-  readFileSync(path.resolve(__dirname, "package.json"), "utf-8")
+  readFileSync(path.resolve(import.meta.dirname, "package.json"), "utf-8")
 ).version;
 
 // https://vite.dev/config/
@@ -21,7 +21,7 @@ export default defineConfig(async () => ({
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
 

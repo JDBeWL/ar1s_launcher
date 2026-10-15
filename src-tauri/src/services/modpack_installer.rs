@@ -611,7 +611,7 @@ impl ModpackInstaller {
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let file_name = file.name().to_string();
+            let file_name = file.name()?.to_string();
             
             // 安全检查：防止路径遍历攻击
             // 检查是否包含 ".." 或绝对路径
