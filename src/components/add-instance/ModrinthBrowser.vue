@@ -56,7 +56,7 @@ onMounted(async () => {
           <v-col cols="12" sm="6">
             <v-text-field
               v-model="modpackSearchQuery"
-              placeholder="搜索整合包..."
+              label="搜索整合包"
               hide-details
               clearable
             >
@@ -69,7 +69,7 @@ onMounted(async () => {
             <v-select
               v-model="selectedGameVersion"
               :items="gameVersions"
-              placeholder="游戏版本"
+              label="游戏版本"
               clearable
               hide-details
             >
@@ -82,7 +82,7 @@ onMounted(async () => {
             <v-select
               v-model="selectedLoader"
               :items="loaders"
-              placeholder="加载器"
+              label="加载器"
               clearable
               hide-details
             >
@@ -98,7 +98,7 @@ onMounted(async () => {
             <v-select
               v-model="selectedCategory"
               :items="categories"
-              placeholder="分类"
+              label="分类"
               clearable
               hide-details
             >
@@ -111,7 +111,7 @@ onMounted(async () => {
             <v-select
               v-model="sortBy"
               :items="modpackSortOptions"
-              placeholder="排序"
+              label="排序"
               hide-details
             >
               <template #prepend-inner>

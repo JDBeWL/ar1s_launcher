@@ -81,7 +81,7 @@ const chipLabel = computed(() => {
         
         <v-menu>
           <template v-slot:activator="{ props }">
-            <v-btn icon variant="text" size="x-small" v-bind="props" class="mt-1">
+            <v-btn icon variant="text" size="x-small" aria-label="实例操作菜单" v-bind="props" class="mt-1">
               <v-icon size="20">mdi-dots-vertical</v-icon>
             </v-btn>
           </template>

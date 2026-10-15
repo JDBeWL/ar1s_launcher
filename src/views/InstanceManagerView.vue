@@ -267,6 +267,7 @@ onMounted(() => {
           variant="tonal"
           color="secondary"
           size="small"
+          aria-label="刷新列表"
           :loading="loading"
           @click="loadInstances"
         >
@@ -285,7 +286,7 @@ onMounted(() => {
       <div class="d-flex align-center flex-grow-1 mr-4">
         <v-text-field
           v-model="searchQuery"
-          placeholder="搜索实例..."
+          label="搜索实例"
           density="comfortable"
           variant="outlined"
           hide-details
@@ -300,6 +301,7 @@ onMounted(() => {
 
         <v-select
           v-model="sortBy"
+          aria-label="排序方式"
           :items="sortOptions"
           hide-details
           density="comfortable"
@@ -319,10 +321,10 @@ onMounted(() => {
           class="ml-3"
           variant="outlined"
         >
-          <v-btn value="grid" size="small">
+          <v-btn value="grid" size="small" aria-label="网格视图">
             <v-icon size="18">mdi-view-grid</v-icon>
           </v-btn>
-          <v-btn value="list" size="small">
+          <v-btn value="list" size="small" aria-label="列表视图">
             <v-icon size="18">mdi-view-list</v-icon>
           </v-btn>
         </v-btn-toggle>
@@ -440,7 +442,7 @@ onMounted(() => {
             </v-btn>
             <v-menu>
               <template v-slot:activator="{ props }">
-                <v-btn icon variant="text" size="small" v-bind="props">
+                <v-btn icon variant="text" size="small" aria-label="实例操作菜单" v-bind="props">
                   <v-icon size="18">mdi-dots-vertical</v-icon>
                 </v-btn>
               </template>
@@ -511,6 +513,7 @@ onMounted(() => {
           </div>
           <v-text-field
             v-model="deleteConfirmName"
+            label="实例名称"
             placeholder="请输入实例名称以确认删除"
             density="comfortable"
             variant="outlined"

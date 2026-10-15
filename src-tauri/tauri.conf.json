@@ -20,7 +20,8 @@
         "userAgent": "Ar1s Launcher",
         "label": "main",
         "center": true,
-        "decorations": false
+        "decorations": false,
+        "backgroundColor": "#141218"
       }
     ],
     "security": {

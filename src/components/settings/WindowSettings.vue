@@ -98,6 +98,7 @@ onMounted(() => {
           </div>
           <v-switch
             v-model="fullscreen"
+            aria-label="全屏模式"
             hide-details
             density="compact"
             color="primary"

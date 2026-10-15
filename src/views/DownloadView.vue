@@ -175,6 +175,7 @@ onUnmounted(() => {
         variant="tonal"
         color="secondary"
         size="small"
+        aria-label="重新获取版本列表"
         :loading="loading"
         :disabled="isDownloading"
         @click="fetchVersions"
@@ -190,7 +191,7 @@ onUnmounted(() => {
           <v-col cols="12" sm="5">
             <v-text-field
               v-model="searchQuery"
-              placeholder="搜索版本号..."
+              label="搜索版本号"
               hide-details
               clearable
               :disabled="isDownloading"
@@ -217,6 +218,7 @@ onUnmounted(() => {
           <v-col cols="6" sm="3">
             <v-select
               v-model="sortOrder"
+              aria-label="排序方式"
               :items="[
                 { title: '最新优先', value: 'newest' },
                 { title: '最旧优先', value: 'oldest' }
@@ -307,29 +309,27 @@ onUnmounted(() => {
                   >
                     {{ getVersionTypeName(item.type) }}
                   </v-chip>
-                  <v-chip
-                    v-if="isInstalled(item.id)"
-                    size="small"
-                    color="success"
-                    variant="tonal"
-                  >
-                    已安装
-                  </v-chip>
                 </div>
               </div>
 
+              <div
+                v-if="isInstalled(item.id)"
+                class="install-state text-body-2 font-weight-medium"
+              >
+                <v-icon size="18" class="mr-2">mdi-check</v-icon>
+                已安装
+              </div>
               <v-btn
+                v-else
                 variant="tonal"
                 color="primary"
                 block
                 size="small"
-                :disabled="isDownloading || isInstalled(item.id)"
+                :disabled="isDownloading"
                 @click="startDownload(item.id)"
               >
-                <v-icon start size="18">
-                  {{ isInstalled(item.id) ? 'mdi-check' : 'mdi-download' }}
-                </v-icon>
-                {{ isInstalled(item.id) ? '已安装' : '下载' }}
+                <v-icon start size="18">mdi-download</v-icon>
+                下载
               </v-btn>
             </v-card-text>
           </v-card>

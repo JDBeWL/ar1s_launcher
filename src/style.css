@@ -7,6 +7,88 @@ body {
   overflow: hidden;
 }
 
+/* 首屏底色：Vuetify 挂载前 .v-application 还没有背景，透明会闪出系统白色 */
+html {
+  background-color: #141218;
+  color-scheme: dark;
+}
+
+/* 页头标题与说明的间距：Vuetify 的 text-* 工具类只改字号行高，不清 UA margin，
+   裸 <h1> 的下边距和 <p> 的上边距会叠成约 45px */
+h1, h2, h3, h4, h5, h6 {
+  margin-block-end: 0;
+}
+
+h1 + p,
+h2 + p,
+h3 + p,
+h4 + p {
+  margin-block-start: 0.25rem;
+}
+
+/* WebView2 默认滚动条与 MD3 圆角卡片不搭 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--v-theme-on-surface), 0.28);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--v-theme-on-surface), 0.45);
+  background-clip: content-box;
+}
+
+/* 已安装是状态不是操作：用静态药丸代替 disabled 按钮，避免被禁用态压到读不出来 */
+.install-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(var(--v-theme-success), 0.16);
+  color: rgb(var(--v-theme-success));
+}
+
+/* 键盘焦点指示器：Vuetify 默认只给 12% 状态层，达不到 WCAG 2.4.13 的可辨识度 */
+:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
+}
+
+/* 焦点环统一交给控件外框表达。Vuetify 复合控件内部聚焦的元素不一定是 .v-field__input
+   （v-select 就不是），所以这里按后代匹配，否则会在药丸里画出方框 */
+.v-field :focus-visible,
+.v-selection-control :focus-visible {
+  outline: none;
+}
+
+/* 用 Vuetify 自己的 outline 元素加粗，它会正确处理圆角和标签缺口，
+   不会像额外 outline 那样压到浮起的标签上 */
+.v-field:has(:focus-visible) .v-field__outline {
+  --v-field-border-width: 2px !important;
+}
+
+.v-selection-control__wrapper:has(input:focus-visible) {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.v-btn:focus-visible .v-btn__overlay,
+.v-list-item:focus-visible .v-list-item__overlay {
+  opacity: 0.18;
+}
+
 :root {
   font-synthesis: none;
   text-rendering: optimizeLegibility;

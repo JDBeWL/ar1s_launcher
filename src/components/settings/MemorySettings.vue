@@ -148,6 +148,7 @@ onMounted(async () => {
           </div>
           <v-switch
             v-model="autoMemoryEnabled"
+            aria-label="自动内存管理"
             hide-details
             density="compact"
             color="primary"
@@ -210,6 +211,7 @@ onMounted(async () => {
               v-model.number="settingsStore.maxMemory"
               type="number"
               density="compact"
+              aria-label="自定义内存大小（MB）"
               suffix="MB"
               hide-details
               hide-spin-buttons

@@ -198,6 +198,7 @@ onMounted(async () => {
                       icon
                       variant="text"
                       size="x-small"
+                      aria-label="重新加载已安装版本"
                       :loading="versionLoading"
                       @click.stop="loadInstalledVersions"
                     >
@@ -361,7 +362,7 @@ onMounted(async () => {
                       {{ instance.name }}
                     </v-list-item-title>
                     <v-list-item-subtitle class="text-caption">
-                      {{ instance.gameVersion || instance.version }}<template v-if="instance.loaderType && instance.loaderType !== 'None' && instance.loaderType !== 'Modded'"> - {{ instance.loaderType }}<template v-if="instance.loaderVersion"> {{ instance.loaderVersion }}</template></template> · {{ formatLastPlayed(instance.lastPlayed) }}
+                      {{ instance.gameVersion || instance.version }}<template v-if="instance.loaderType && instance.loaderType !== 'None' && instance.loaderType !== 'Modded'"> - {{ instance.loaderType }}<template v-if="instance.loaderVersion">{{ ' ' + instance.loaderVersion }}</template></template> · {{ formatLastPlayed(instance.lastPlayed) }}
                     </v-list-item-subtitle>
                     <template #append>
                       <v-btn 

@@ -185,7 +185,7 @@ onUnmounted(() => {
 
     <v-app-bar class="titlebar" data-tauri-drag-region elevation="0" color="surface">
       <template v-slot:prepend>
-        <v-app-bar-nav-icon @click="rail = !rail" data-tauri-no-drag />
+        <v-app-bar-nav-icon aria-label="切换侧边栏" @click="rail = !rail" data-tauri-no-drag />
       </template>
       <v-app-bar-title class="font-weight-bold">Ar1s Launcher</v-app-bar-title>
       <v-spacer />
@@ -194,6 +194,7 @@ onUnmounted(() => {
       <v-btn 
         icon 
         data-tauri-no-drag 
+        :aria-label="isDarkMode ? '切换到浅色模式' : '切换到深色模式'"
         @click="toggleTheme" 
         class="theme-toggle-btn mr-1"
         variant="text"
@@ -205,13 +206,13 @@ onUnmounted(() => {
       </v-btn>
       
       <!-- 窗口控制按钮 -->
-      <v-btn icon data-tauri-no-drag @click="windowControls.minimize()" variant="text" class="window-control-btn">
+      <v-btn icon aria-label="最小化窗口" data-tauri-no-drag @click="windowControls.minimize()" variant="text" class="window-control-btn">
         <v-icon size="20">mdi-minus</v-icon>
       </v-btn>
-      <v-btn icon data-tauri-no-drag @click="windowControls.toggleMaximize()" variant="text" class="window-control-btn">
+      <v-btn icon aria-label="最大化或还原窗口" data-tauri-no-drag @click="windowControls.toggleMaximize()" variant="text" class="window-control-btn">
         <v-icon size="18">mdi-square-outline</v-icon>
       </v-btn>
-      <v-btn icon data-tauri-no-drag @click="windowControls.close()" variant="text" class="close-btn">
+      <v-btn icon aria-label="关闭窗口" data-tauri-no-drag @click="windowControls.close()" variant="text" class="close-btn">
         <v-icon size="20">mdi-close</v-icon>
       </v-btn>
     </v-app-bar>

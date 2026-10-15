@@ -247,6 +247,7 @@ onMounted(async () => {
           v-model="inputJavaPath"
           density="compact"
           variant="outlined"
+          label="Java 路径"
           placeholder="输入 Java 路径或选择下方已检测的安装"
           hide-details
           class="mb-4 font-mono-input"
@@ -397,6 +398,7 @@ onMounted(async () => {
           </div>
           <v-switch
             v-model="autoMatchJava"
+            aria-label="自动匹配 Java 版本"
             color="primary"
             hide-details
             @change="toggleAutoMatchJava"

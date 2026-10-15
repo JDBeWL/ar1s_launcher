@@ -186,7 +186,7 @@ onUnmounted(() => {
         </div>
         <v-text-field
           v-model="gameDir"
-          placeholder="选择游戏安装目录"
+          label="游戏安装目录"
           readonly
           hide-details
         >
@@ -195,6 +195,7 @@ onUnmounted(() => {
               icon
               variant="text"
               size="small"
+              aria-label="选择游戏目录"
               @click="selectGameDir"
             >
               <v-icon>mdi-folder-open-outline</v-icon>
@@ -214,6 +215,7 @@ onUnmounted(() => {
           </div>
           <v-switch
             v-model="versionIsolation"
+            aria-label="版本隔离"
             hide-details
             density="compact"
             color="primary"
@@ -227,35 +229,29 @@ onUnmounted(() => {
         <v-expand-transition>
           <div v-if="versionIsolation" class="mt-4 pt-4 isolation-options">
             <div class="text-body-2 text-on-surface-variant mb-3">选择需要隔离的内容：</div>
-            <v-row dense>
-              <v-col cols="12" sm="4">
-                <v-checkbox
-                  v-model="isolateSaves"
-                  label="存档"
-                  density="compact"
-                  hide-details
-                  color="primary"
-                />
-              </v-col>
-              <v-col cols="12" sm="4">
-                <v-checkbox
-                  v-model="isolateResourcepacks"
-                  label="资源包"
-                  density="compact"
-                  hide-details
-                  color="primary"
-                />
-              </v-col>
-              <v-col cols="12" sm="4">
-                <v-checkbox
-                  v-model="isolateLogs"
-                  label="日志"
-                  density="compact"
-                  hide-details
-                  color="primary"
-                />
-              </v-col>
-            </v-row>
+            <div class="d-flex flex-wrap ga-6 isolation-checks">
+              <v-checkbox
+                v-model="isolateSaves"
+                label="存档"
+                density="compact"
+                hide-details
+                color="primary"
+              />
+              <v-checkbox
+                v-model="isolateResourcepacks"
+                label="资源包"
+                density="compact"
+                hide-details
+                color="primary"
+              />
+              <v-checkbox
+                v-model="isolateLogs"
+                label="日志"
+                density="compact"
+                hide-details
+                color="primary"
+              />
+            </div>
           </div>
         </v-expand-transition>
       </v-card-text>

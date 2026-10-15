@@ -113,7 +113,7 @@ onMounted(() => {
               :items="filteredVersions"
               item-title="id"
               item-value="id"
-              placeholder="选择 Minecraft 版本"
+              label="Minecraft 版本"
               density="comfortable"
               variant="outlined"
               hide-details
@@ -147,7 +147,7 @@ onMounted(() => {
           <v-col cols="12" sm="4">
             <v-text-field
               v-model="searchVersion"
-              placeholder="搜索版本..."
+              label="搜索版本"
               density="comfortable"
               variant="outlined"
               hide-details
@@ -208,6 +208,7 @@ onMounted(() => {
               :items="modLoaderVersions"
               :item-title="getLoaderVersionText"
               item-value="version"
+              label="加载器版本"
               :placeholder="`选择 ${selectedModLoaderType} 版本`"
               density="comfortable"
               variant="outlined"
@@ -282,7 +283,8 @@ onMounted(() => {
         
         <v-text-field
           v-model="instanceName"
-          :placeholder="defaultInstanceName || '输入实例名称'"
+          label="实例名称"
+          :placeholder="defaultInstanceName || undefined"
           :error-messages="instanceNameError || undefined"
           density="comfortable"
           variant="outlined"
