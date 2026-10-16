@@ -6,16 +6,13 @@ import type { UnlistenFn, EventCallback } from '@tauri-apps/api/event';
  * 通用的 Tauri 事件订阅 composable
  * 自动处理订阅/取消订阅和作用域销毁时的清理
  */
-export function useEventSubscription<T>(
-  eventName: string,
-  handler: EventCallback<T>
-) {
+export function useEventSubscription<T>(eventName: string, handler: EventCallback<T>) {
   let unlisten: UnlistenFn | null = null;
   let isSubscribed = false;
 
   async function subscribe() {
     if (isSubscribed) return;
-    
+
     unlisten = await listen<T>(eventName, handler);
     isSubscribed = true;
   }
@@ -36,7 +33,7 @@ export function useEventSubscription<T>(
     unsubscribe,
     get isSubscribed() {
       return isSubscribed;
-    }
+    },
   };
 }
 
@@ -60,11 +57,11 @@ export function useMultiEventSubscription() {
   }
 
   async function subscribeAll() {
-    await Promise.all(subscriptions.map(s => s.subscribe()));
+    await Promise.all(subscriptions.map((s) => s.subscribe()));
   }
 
   function unsubscribeAll() {
-    subscriptions.forEach(s => s.unsubscribe());
+    subscriptions.forEach((s) => s.unsubscribe());
   }
 
   onScopeDispose(unsubscribeAll);
@@ -72,6 +69,6 @@ export function useMultiEventSubscription() {
   return {
     add,
     subscribeAll,
-    unsubscribeAll
+    unsubscribeAll,
   };
 }

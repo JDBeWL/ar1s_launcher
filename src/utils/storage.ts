@@ -1,9 +1,12 @@
-const VALID_THEME_PALETTES = new Set([
-  'indigo', 'blue', 'purple', 'teal', 'orange', 'red', 'green', 'pink'
-]);
+// 必须是 plugins/vuetify.ts 里真实注册过的配色，否则会被回退成默认值
+const VALID_THEME_PALETTES = new Set(['indigo', 'emerald', 'rose']);
 
 const VALID_VIEW_MODES = new Set(['grid', 'list']);
 const VALID_SORT_BY = new Set(['lastPlayed', 'name', 'created']);
+
+export function isValidThemePalette(value: string): boolean {
+  return VALID_THEME_PALETTES.has(value);
+}
 
 export function getThemePalette(defaultValue: string = 'indigo'): string {
   const stored = localStorage.getItem('themePalette');

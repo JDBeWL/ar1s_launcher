@@ -1,7 +1,12 @@
 use crate::errors::LauncherError;
 use crate::models::{DownloadJob, InstanceInfo, LaunchOptions};
-use crate::services::{config, download, launcher, loaders::{self, LoaderType}};
-use crate::utils::file_utils::{self, validate_instance_name_or_error, validate_instance_name, InstanceNameValidation};
+use crate::services::{
+    config, download, launcher,
+    loaders::{self, LoaderType},
+};
+use crate::utils::file_utils::{
+    self, InstanceNameValidation, validate_instance_name, validate_instance_name_or_error,
+};
 use log::{info, warn};
 use serde::Serialize;
 use serde_json::Value;
@@ -32,7 +37,7 @@ pub fn check_instance_name_available(name: &str) -> InstanceNameValidation {
     if !validation.is_valid {
         return validation;
     }
-    
+
     // 然后检查实例是否已存在
     if let Ok((_, versions_dir)) = get_dirs() {
         let instance_dir = versions_dir.join(name);
@@ -43,7 +48,7 @@ pub fn check_instance_name_available(name: &str) -> InstanceNameValidation {
             };
         }
     }
-    
+
     InstanceNameValidation {
         is_valid: true,
         error_message: None,
@@ -59,7 +64,7 @@ pub async fn create_instance(
 ) -> Result<(), LauncherError> {
     // 验证实例名称
     validate_instance_name_or_error(&new_instance_name)?;
-    
+
     let (game_dir, versions_dir) = get_dirs()?;
     let source_dir = versions_dir.join(&base_version_id);
     let dest_dir = versions_dir.join(&new_instance_name);
@@ -76,7 +81,10 @@ pub async fn create_instance(
     };
 
     if dest_dir.exists() {
-        return Err(LauncherError::Custom(format!("实例 '{}' 已存在", new_instance_name)));
+        return Err(LauncherError::Custom(format!(
+            "实例 '{}' 已存在",
+            new_instance_name
+        )));
     }
 
     send_progress(5, "检查基础版本...", false);
@@ -88,10 +96,14 @@ pub async fn create_instance(
             base_version_id.clone(),
             config.download_mirror.clone(),
             window,
-        ).await?;
+        )
+        .await?;
 
         if !source_dir.exists() {
-            return Err(LauncherError::Custom(format!("基础版本 '{}' 下载后仍未找到", base_version_id)));
+            return Err(LauncherError::Custom(format!(
+                "基础版本 '{}' 下载后仍未找到",
+                base_version_id
+            )));
         }
     }
 
@@ -142,40 +154,47 @@ pub async fn create_instance(
 
     if let Some(ref loader_type) = loader {
         send_progress(60, &format!("安装 {} 加载器...", loader_type.name()), true);
-        
+
         if let Err(e) = loaders::install_loader(loader_type, &new_instance_name, &game_dir).await {
             cleanup();
             return Err(e);
         }
 
         // 对于 Forge，需要合并配置
-        if let LoaderType::Forge { mc_version, loader_version } = loader_type {
+        if let LoaderType::Forge {
+            mc_version,
+            loader_version,
+        } = loader_type
+        {
             let forge_id_prefix = format!("{}-forge", mc_version);
             let forge_id_exact = format!("{}-forge-{}", mc_version, loader_version);
-            
-            let found_forge_id = fs::read_dir(&versions_dir)
-                .ok()
-                .and_then(|entries| {
-                    entries.flatten()
-                        .filter_map(|e| e.file_name().to_str().map(String::from))
-                        .find(|name| name == &forge_id_exact || name.starts_with(&forge_id_prefix))
-                });
+
+            let found_forge_id = fs::read_dir(&versions_dir).ok().and_then(|entries| {
+                entries
+                    .flatten()
+                    .filter_map(|e| e.file_name().to_str().map(String::from))
+                    .find(|name| name == &forge_id_exact || name.starts_with(&forge_id_prefix))
+            });
 
             if let Some(fid) = found_forge_id {
                 let forge_json_path = versions_dir.join(&fid).join(format!("{}.json", fid));
-                let base_json_path = versions_dir.join(&base_version_id).join(format!("{}.json", base_version_id));
+                let base_json_path = versions_dir
+                    .join(&base_version_id)
+                    .join(format!("{}.json", base_version_id));
 
                 if forge_json_path.exists() && base_json_path.exists() {
                     send_progress(70, "合并配置并补全依赖...", true);
-                    
+
                     if let Err(e) = merge_and_complete_instance(
                         &new_instance_name,
                         &new_json_path,
                         &base_json_path,
                         &forge_json_path,
                         &game_dir,
-                        window
-                    ).await {
+                        window,
+                    )
+                    .await
+                    {
                         cleanup();
                         return Err(e);
                     }
@@ -206,12 +225,12 @@ pub async fn create_instance(
 /// 获取实例列表（使用 spawn_blocking 避免阻塞异步运行时）
 pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
     let (_, versions_dir) = get_dirs()?;
-    
+
     // 将 CPU 密集型的文件系统操作和 JSON 解析移到阻塞线程池
-    let instances = tokio::task::spawn_blocking(move || {
-        get_instances_sync(&versions_dir)
-    }).await.map_err(|e| LauncherError::Custom(format!("获取实例列表失败: {}", e)))??;
-    
+    let instances = tokio::task::spawn_blocking(move || get_instances_sync(&versions_dir))
+        .await
+        .map_err(|e| LauncherError::Custom(format!("获取实例列表失败: {}", e)))??;
+
     Ok(instances)
 }
 
@@ -225,7 +244,11 @@ pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
 ///
 /// 也支持 NeoForge 的 "--fml.neoForgeVersion" 格式
 fn parse_fml_arguments(json_value: &Value) -> (Option<String>, Option<String>, Option<String>) {
-    let args = match json_value.get("arguments").and_then(|a| a.get("game")).and_then(|g| g.as_array()) {
+    let args = match json_value
+        .get("arguments")
+        .and_then(|a| a.get("game"))
+        .and_then(|g| g.as_array())
+    {
         Some(arr) => arr,
         None => {
             let raw_args = match json_value["minecraftArguments"].as_str() {
@@ -418,7 +441,14 @@ fn parse_loader_from_libraries(json_value: &Value) -> (Option<String>, Option<St
 }
 
 /// 读取 instance.json 获取整合包元数据
-fn read_instance_metadata(instance_dir: &Path) -> Option<(String, Option<String>)> {
+/// instance.json 里记录的整合包元数据
+struct InstanceMetadata {
+    minecraft: String,
+    loader: Option<String>,
+    icon_url: Option<String>,
+}
+
+fn read_instance_metadata(instance_dir: &Path) -> Option<InstanceMetadata> {
     let meta_path = instance_dir.join("instance.json");
     if !meta_path.exists() {
         return None;
@@ -427,9 +457,12 @@ fn read_instance_metadata(instance_dir: &Path) -> Option<(String, Option<String>
     let json: Value = serde_json::from_str(&content).ok()?;
 
     let mc_version = json["minecraft"].as_str().map(String::from)?;
-    let loader = json["loader"].as_str().map(String::from);
 
-    Some((mc_version, loader))
+    Some(InstanceMetadata {
+        minecraft: mc_version,
+        loader: json["loader"].as_str().map(String::from),
+        icon_url: json["icon_url"].as_str().map(String::from),
+    })
 }
 
 /// 通过继承链查找真实的 Minecraft 版本
@@ -441,13 +474,15 @@ fn read_instance_metadata(instance_dir: &Path) -> Option<(String, Option<String>
 fn find_real_minecraft_version(
     version_id: &str,
     json_value: &Value,
-    versions_dir: &Path
+    versions_dir: &Path,
 ) -> Option<String> {
     if let Some(inherits) = json_value["inheritsFrom"].as_str() {
         if crate::utils::minecraft::parse_mc_version(inherits).is_some() {
             return Some(inherits.to_string());
         }
-        let parent_json_path = versions_dir.join(inherits).join(format!("{}.json", inherits));
+        let parent_json_path = versions_dir
+            .join(inherits)
+            .join(format!("{}.json", inherits));
         if parent_json_path.exists() {
             if let Ok(parent_content) = fs::read_to_string(&parent_json_path) {
                 if let Ok(parent_json) = serde_json::from_str::<Value>(&parent_content) {
@@ -498,6 +533,7 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
                         let mut loader_type: Option<String> = None;
                         let mut loader_version: Option<String> = None;
                         let mut game_version: Option<String> = None;
+                        let mut icon_url: Option<String> = None;
 
                         if let Some(ref json) = json_value {
                             if let (Some(lt), fv, mv) = parse_fml_arguments(json) {
@@ -522,12 +558,15 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
                             }
                         }
 
-                        if let Some((meta_mc, meta_loader)) = read_instance_metadata(&path) {
+                        if let Some(meta) = read_instance_metadata(&path) {
                             if game_version.is_none() {
-                                game_version = Some(meta_mc);
+                                game_version = Some(meta.minecraft);
+                            }
+                            if icon_url.is_none() {
+                                icon_url = meta.icon_url;
                             }
                             if loader_type.is_none() {
-                                if let Some(lt) = meta_loader {
+                                if let Some(lt) = meta.loader {
                                     loader_type = Some(match lt.as_str() {
                                         "forge" => "Forge".to_string(),
                                         "fabric" => "Fabric".to_string(),
@@ -536,7 +575,10 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
                                         other => {
                                             let mut c = other.chars();
                                             match c.next() {
-                                                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                                                Some(f) => {
+                                                    f.to_uppercase().collect::<String>()
+                                                        + c.as_str()
+                                                }
                                                 None => other.to_string(),
                                             }
                                         }
@@ -557,11 +599,20 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
                         }
 
                         if loader_type.is_none() {
-                            if main_class.contains("forge") || main_class.contains("LaunchWrapper") || main_class.contains("modlauncher") {
+                            if main_class.contains("forge")
+                                || main_class.contains("LaunchWrapper")
+                                || main_class.contains("modlauncher")
+                            {
                                 loader_type = Some("Forge".to_string());
-                            } else if main_class.contains("fabricmc") || (main_class.contains("knot") && main_class.to_lowercase().contains("fabric")) {
+                            } else if main_class.contains("fabricmc")
+                                || (main_class.contains("knot")
+                                    && main_class.to_lowercase().contains("fabric"))
+                            {
                                 loader_type = Some("Fabric".to_string());
-                            } else if main_class.contains("quiltmc") || (main_class.contains("knot") && main_class.to_lowercase().contains("quilt")) {
+                            } else if main_class.contains("quiltmc")
+                                || (main_class.contains("knot")
+                                    && main_class.to_lowercase().contains("quilt"))
+                            {
                                 loader_type = Some("Quilt".to_string());
                             } else if main_class.contains("neoforge") {
                                 loader_type = Some("NeoForge".to_string());
@@ -570,14 +621,19 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
 
                         if game_version.is_none() {
                             if let Some(json) = json_value.as_ref() {
-                                game_version = find_real_minecraft_version(&version_id, json, versions_dir);
+                                game_version =
+                                    find_real_minecraft_version(&version_id, json, versions_dir);
                             } else {
                                 game_version = Some(version_id.clone());
                             }
                         }
 
                         if loader_type.is_none() {
-                            if json_value.as_ref().and_then(|v| v["inheritsFrom"].as_str()).is_some() {
+                            if json_value
+                                .as_ref()
+                                .and_then(|v| v["inheritsFrom"].as_str())
+                                .is_some()
+                            {
                                 loader_type = Some("Unknown".to_string());
                             } else if mod_count.unwrap_or(0) > 0 {
                                 loader_type = Some("Modded".to_string());
@@ -586,16 +642,16 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
                             }
                         }
 
-                        let created = entry.metadata()
+                        let created = entry
+                            .metadata()
                             .and_then(|m| m.created())
                             .ok()
                             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                             .map(|d| d.as_secs().to_string());
 
                         let config_last_played = config::get_instance_last_played(&name);
-                        let json_last_played = json_value
-                            .as_ref()
-                            .and_then(|v| v["lastPlayed"].as_i64());
+                        let json_last_played =
+                            json_value.as_ref().and_then(|v| v["lastPlayed"].as_i64());
                         let last_played = match (config_last_played, json_last_played) {
                             (Some(c), Some(j)) => Some(c.max(j)),
                             (Some(c), None) => Some(c),
@@ -614,6 +670,7 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
                             game_version,
                             last_played,
                             mod_count,
+                            icon_url,
                         });
                     }
                 }
@@ -641,21 +698,237 @@ fn count_mods(instance_path: &Path) -> Option<u32> {
     if count == 0 { None } else { Some(count) }
 }
 
+/// 实例 mods 目录里的一个模组文件
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModInfo {
+    /// 磁盘上的实际文件名，禁用时带 .disabled 后缀
+    pub file_name: String,
+    /// 展示名，读不到 jar 内元数据时回退成文件名
+    pub display_name: String,
+    pub version: Option<String>,
+    pub enabled: bool,
+    pub size: u64,
+}
+
+/// 定位 mods 目录下的某个文件，顺带挡住越界的文件名
+fn resolve_mod_path(
+    instance_name: &str,
+    file_name: &str,
+) -> Result<(PathBuf, PathBuf), LauncherError> {
+    let (_, versions_dir) = get_dirs()?;
+    let mods_dir = versions_dir.join(instance_name).join("mods");
+    if !mods_dir.is_dir() {
+        return Err(LauncherError::Custom(format!(
+            "实例 '{}' 没有 mods 目录",
+            instance_name
+        )));
+    }
+
+    // 前端只应该传文件名，带路径分隔符或 .. 就能跳出 mods 目录
+    if file_name.is_empty()
+        || file_name.contains('/')
+        || file_name.contains('\\')
+        || file_name.contains("..")
+        || file_name.contains(':')
+    {
+        return Err(LauncherError::Custom("模组文件名无效".to_string()));
+    }
+
+    let path = mods_dir.join(file_name);
+    if !path.is_file() {
+        return Err(LauncherError::Custom(format!(
+            "模组文件不存在: {}",
+            file_name
+        )));
+    }
+    Ok((mods_dir, path))
+}
+
+/// 从 jar 里读模组名和版本。Fabric / Quilt 走 JSON，Forge / NeoForge 走 mods.toml
+fn read_mod_metadata(path: &Path) -> (Option<String>, Option<String>) {
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return (None, None),
+    };
+    let mut archive = match zip::ZipArchive::new(file) {
+        Ok(a) => a,
+        Err(_) => return (None, None),
+    };
+
+    for i in 0..archive.len() {
+        let mut entry = match archive.by_index(i) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let name = match entry.name() {
+            Ok(n) => n.to_ascii_lowercase(),
+            Err(_) => continue,
+        };
+        if name != "fabric.mod.json" && name != "quilt.mod.json" && !name.ends_with("mods.toml") {
+            continue;
+        }
+
+        let mut text = String::new();
+        if std::io::Read::read_to_string(&mut entry, &mut text).is_err() {
+            continue;
+        }
+
+        if name.ends_with(".json") {
+            if let Ok(json) = serde_json::from_str::<Value>(&text) {
+                // quilt.mod.json 把字段嵌在 quilt_metadata.mod_metadata 下
+                let meta = json
+                    .get("quilt_metadata")
+                    .and_then(|m| m.get("mod_metadata"))
+                    .unwrap_or(&json);
+                let display_name = meta.get("name").and_then(Value::as_str).map(str::to_string);
+                let version = meta
+                    .get("version")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                if display_name.is_some() {
+                    return (display_name, version);
+                }
+            }
+        } else if let Some(display_name) = parse_mods_toml_name(&text) {
+            return (Some(display_name), None);
+        }
+    }
+
+    (None, None)
+}
+
+/// 只取 mods.toml 里第一条 displayName（退化到 modId），够展示用
+fn parse_mods_toml_name(text: &str) -> Option<String> {
+    let mut mod_id = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        let (key, value) = line.split_once('=')?;
+        let value = value.trim().trim_matches('"').trim();
+        if value.is_empty() {
+            continue;
+        }
+        match key.trim() {
+            "displayName" => return Some(value.to_string()),
+            "modId" if mod_id.is_none() => mod_id = Some(value.to_string()),
+            _ => {}
+        }
+    }
+    mod_id
+}
+
+/// 列出实例的模组，含被禁用的 *.jar.disabled
+pub fn get_instance_mods(instance_name: String) -> Result<Vec<ModInfo>, LauncherError> {
+    validate_instance_name_or_error(&instance_name)?;
+
+    let (_, versions_dir) = get_dirs()?;
+    let mods_dir = versions_dir.join(&instance_name).join("mods");
+    if !mods_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut mods = Vec::new();
+    for entry in fs::read_dir(&mods_dir)? {
+        let path = entry?.path();
+        if !path.is_file() {
+            continue;
+        }
+        let file_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let enabled = file_name.ends_with(".jar");
+        if !enabled && !file_name.ends_with(".jar.disabled") {
+            continue;
+        }
+
+        let stem = file_name
+            .strip_suffix(".disabled")
+            .unwrap_or(&file_name)
+            .strip_suffix(".jar")
+            .unwrap_or(&file_name);
+        let (meta_name, version) = read_mod_metadata(&path);
+        let display_name = meta_name.unwrap_or_else(|| stem.to_string());
+        mods.push(ModInfo {
+            file_name,
+            display_name,
+            version,
+            enabled,
+            size: path.metadata().map(|m| m.len()).unwrap_or(0),
+        });
+    }
+
+    mods.sort_by(|a, b| {
+        a.display_name
+            .to_lowercase()
+            .cmp(&b.display_name.to_lowercase())
+    });
+    Ok(mods)
+}
+
+/// 启用/禁用模组：改名 *.jar <-> *.jar.disabled，这是各加载器的通用约定
+pub fn set_mod_enabled(
+    instance_name: String,
+    file_name: String,
+    enabled: bool,
+) -> Result<(), LauncherError> {
+    validate_instance_name_or_error(&instance_name)?;
+    let (mods_dir, path) = resolve_mod_path(&instance_name, &file_name)?;
+
+    let target_name = if enabled {
+        match file_name.strip_suffix(".disabled") {
+            Some(stripped) => stripped.to_string(),
+            None => return Ok(()),
+        }
+    } else {
+        match file_name.strip_suffix(".jar") {
+            Some(_) => format!("{}.disabled", file_name),
+            None => return Ok(()),
+        }
+    };
+
+    let target = mods_dir.join(&target_name);
+    if target.exists() {
+        return Err(LauncherError::Custom(format!(
+            "目标文件已存在: {}",
+            target_name
+        )));
+    }
+    fs::rename(&path, &target)?;
+    info!("模组 {} -> {}", file_name, target_name);
+    Ok(())
+}
+
+/// 删除模组文件
+pub fn delete_instance_mod(instance_name: String, file_name: String) -> Result<(), LauncherError> {
+    validate_instance_name_or_error(&instance_name)?;
+    let (_, path) = resolve_mod_path(&instance_name, &file_name)?;
+    fs::remove_file(&path)?;
+    info!("已删除模组: {}", path.display());
+    Ok(())
+}
+
 /// 删除实例
 pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError> {
     let (_, versions_dir) = get_dirs()?;
     let instance_dir = versions_dir.join(&instance_name);
 
     if !instance_dir.exists() {
-        return Err(LauncherError::Custom(format!("实例 '{}' 不存在", instance_name)));
+        return Err(LauncherError::Custom(format!(
+            "实例 '{}' 不存在",
+            instance_name
+        )));
     }
 
     fs::remove_dir_all(&instance_dir)
         .map_err(|e| LauncherError::Custom(format!("删除实例失败: {}", e)))?;
-    
+
     // 删除上次启动时间记录
     let _ = config::remove_instance_last_played(&instance_name);
-    
+
     info!("实例 {} 已删除", instance_name);
     Ok(())
 }
@@ -664,17 +937,30 @@ pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError>
 pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), LauncherError> {
     // 验证新实例名称
     validate_instance_name_or_error(&new_name)?;
-    
+
     let (_, versions_dir) = get_dirs()?;
     let old_dir = versions_dir.join(&old_name);
     let new_dir = versions_dir.join(&new_name);
 
     if !old_dir.exists() {
-        return Err(LauncherError::Custom(format!("原实例 '{}' 不存在", old_name)));
+        return Err(LauncherError::Custom(format!(
+            "原实例 '{}' 不存在",
+            old_name
+        )));
     }
     if new_dir.exists() {
-        return Err(LauncherError::Custom(format!("目标实例名 '{}' 已存在", new_name)));
+        return Err(LauncherError::Custom(format!(
+            "目标实例名 '{}' 已存在",
+            new_name
+        )));
     }
+
+    // 原版实例没有 inheritsFrom，一旦下面的 id 被改写就再也取不回真实 MC 版本，
+    // 所以先固化下来
+    let real_mc_version = fs::read_to_string(old_dir.join(format!("{}.json", old_name)))
+        .ok()
+        .and_then(|c| serde_json::from_str::<Value>(&c).ok())
+        .and_then(|json| find_real_minecraft_version(&old_name, &json, &versions_dir));
 
     fs::rename(&old_dir, &new_dir)
         .map_err(|e| LauncherError::Custom(format!("重命名目录失败: {}", e)))?;
@@ -702,6 +988,15 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
     // 重命名上次启动时间记录
     let _ = config::rename_instance_last_played(&old_name, &new_name);
 
+    // 把固化下来的版本写进 instance.json，读取端会优先采用它
+    let meta_path = new_dir.join("instance.json");
+    if !meta_path.exists() {
+        if let Some(mc) = real_mc_version {
+            let meta = serde_json::json!({ "minecraft": mc });
+            fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -711,7 +1006,10 @@ pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherE
     let instance_dir = versions_dir.join(&instance_name);
 
     if !instance_dir.exists() {
-        return Err(LauncherError::Custom(format!("实例 '{}' 不存在", instance_name)));
+        return Err(LauncherError::Custom(format!(
+            "实例 '{}' 不存在",
+            instance_name
+        )));
     }
 
     opener::open(&instance_dir)
@@ -721,32 +1019,52 @@ pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherE
 }
 
 /// 启动实例
-pub async fn launch_instance(instance_name: String, override_java_path: Option<String>, window: Window) -> Result<(), LauncherError> {
+pub async fn launch_instance(
+    instance_name: String,
+    override_java_path: Option<String>,
+    window: Window,
+) -> Result<(), LauncherError> {
     let config = config::load_config()?;
     let (_, versions_dir) = get_dirs()?;
     let instance_dir = versions_dir.join(&instance_name);
 
     let json_path = instance_dir.join(format!("{}.json", instance_name));
     if !json_path.exists() {
-        return Err(LauncherError::Custom(format!("实例 '{}' 的配置文件不存在", instance_name)));
+        return Err(LauncherError::Custom(format!(
+            "实例 '{}' 的配置文件不存在",
+            instance_name
+        )));
     }
 
     let json_content = fs::read_to_string(&json_path)?;
-    let json: Value = serde_json::from_str(&json_content)
-        .map_err(|e| LauncherError::Custom(format!("实例 '{}' 的配置文件格式无效: {}", instance_name, e)))?;
+    let json: Value = serde_json::from_str(&json_content).map_err(|e| {
+        LauncherError::Custom(format!(
+            "实例 '{}' 的配置文件格式无效: {}",
+            instance_name, e
+        ))
+    })?;
 
     if !json.get("id").and_then(|v| v.as_str()).is_some() {
-        return Err(LauncherError::Custom(format!("实例 '{}' 的配置文件缺少 'id' 字段", instance_name)));
+        return Err(LauncherError::Custom(format!(
+            "实例 '{}' 的配置文件缺少 'id' 字段",
+            instance_name
+        )));
     }
     if !json.get("mainClass").and_then(|v| v.as_str()).is_some() {
-        return Err(LauncherError::Custom(format!("实例 '{}' 的配置文件缺少 'mainClass' 字段", instance_name)));
+        return Err(LauncherError::Custom(format!(
+            "实例 '{}' 的配置文件缺少 'mainClass' 字段",
+            instance_name
+        )));
     }
 
     let config_last_played = config.instance_last_played.get(&instance_name).copied();
     if let Some(ts) = config_last_played {
         if let Some(json_played) = json.get("lastPlayed").and_then(|v| v.as_i64()) {
             if json_played != ts {
-                warn!("实例 '{}' 的 lastPlayed 不一致 (config: {}, json: {}), 使用 config 值", instance_name, ts, json_played);
+                warn!(
+                    "实例 '{}' 的 lastPlayed 不一致 (config: {}, json: {}), 使用 config 值",
+                    instance_name, ts, json_played
+                );
             }
         }
     }
@@ -768,7 +1086,9 @@ pub async fn launch_instance(instance_name: String, override_java_path: Option<S
             if now >= expires_at - 60 {
                 info!("Microsoft token 已过期或即将过期，正在刷新...");
                 if let Some(refresh_token) = config.ms_refresh_token.clone() {
-                    match crate::services::microsoft_auth::refresh_and_authenticate(&refresh_token).await {
+                    match crate::services::microsoft_auth::refresh_and_authenticate(&refresh_token)
+                        .await
+                    {
                         Ok(auth_result) => {
                             let mut cfg = (*config::load_config()?).clone();
                             cfg.ms_access_token = Some(auth_result.access_token.clone());
@@ -797,7 +1117,10 @@ pub async fn launch_instance(instance_name: String, override_java_path: Option<S
 
     let launch_options = LaunchOptions {
         version: instance_name,
-        username: config.username.clone().unwrap_or_else(|| "Player".to_string()),
+        username: config
+            .username
+            .clone()
+            .unwrap_or_else(|| "Player".to_string()),
         memory: Some(config.max_memory),
         window_width: config.window_width,
         window_height: config.window_height,
@@ -823,9 +1146,11 @@ async fn merge_and_complete_instance(
 ) -> Result<(), LauncherError> {
     let base_content = fs::read_to_string(base_json_path)?;
     let forge_content = fs::read_to_string(forge_json_path)?;
-    
-    let base_json: Value = serde_json::from_str(&base_content).map_err(|e| LauncherError::Custom(e.to_string()))?;
-    let forge_json: Value = serde_json::from_str(&forge_content).map_err(|e| LauncherError::Custom(e.to_string()))?;
+
+    let base_json: Value =
+        serde_json::from_str(&base_content).map_err(|e| LauncherError::Custom(e.to_string()))?;
+    let forge_json: Value =
+        serde_json::from_str(&forge_content).map_err(|e| LauncherError::Custom(e.to_string()))?;
 
     let mut merged = forge_json.clone();
     merged["id"] = Value::String(instance_id.to_string());
@@ -836,12 +1161,18 @@ async fn merge_and_complete_instance(
 
     if merged["arguments"].is_null() {
         if let Some(forge_args) = forge_json["minecraftArguments"].as_str() {
-            let args_array: Vec<Value> = forge_args.split_whitespace().map(|s| Value::String(s.to_string())).collect();
+            let args_array: Vec<Value> = forge_args
+                .split_whitespace()
+                .map(|s| Value::String(s.to_string()))
+                .collect();
             merged["arguments"] = serde_json::json!({ "game": args_array });
         } else if !base_json["arguments"].is_null() {
             merged["arguments"] = base_json["arguments"].clone();
         } else if let Some(base_args) = base_json["minecraftArguments"].as_str() {
-            let args_array: Vec<Value> = base_args.split_whitespace().map(|s| Value::String(s.to_string())).collect();
+            let args_array: Vec<Value> = base_args
+                .split_whitespace()
+                .map(|s| Value::String(s.to_string()))
+                .collect();
             merged["arguments"] = serde_json::json!({ "game": args_array });
         }
     }
@@ -882,11 +1213,11 @@ async fn merge_and_complete_instance(
     fs::write(target_json_path, serde_json::to_string_pretty(&merged)?)?;
 
     let jobs = collect_download_jobs(&merged, game_dir, instance_id)?;
-    
+
     if !jobs.is_empty() {
-        let (index_jobs, other_jobs): (Vec<_>, Vec<_>) = jobs.into_iter().partition(|j| {
-            j.path.to_string_lossy().contains("indexes")
-        });
+        let (index_jobs, other_jobs): (Vec<_>, Vec<_>) = jobs
+            .into_iter()
+            .partition(|j| j.path.to_string_lossy().contains("indexes"));
 
         if !index_jobs.is_empty() {
             download::download_all_files(index_jobs.clone(), window).await?;
@@ -904,8 +1235,11 @@ async fn merge_and_complete_instance(
                                 let size = obj["size"].as_u64().unwrap_or(0);
                                 let prefix = &hash[..2];
                                 let path = assets_objects_dir.join(prefix).join(hash);
-                                let url = format!("https://resources.download.minecraft.net/{}/{}", prefix, hash);
-                                
+                                let url = format!(
+                                    "https://resources.download.minecraft.net/{}/{}",
+                                    prefix, hash
+                                );
+
                                 all_jobs.push(DownloadJob {
                                     url,
                                     fallback_url: None,
@@ -931,7 +1265,7 @@ async fn merge_and_complete_instance(
 fn collect_download_jobs(
     json: &Value,
     game_dir: &Path,
-    instance_id: &str
+    instance_id: &str,
 ) -> Result<Vec<DownloadJob>, LauncherError> {
     let mut jobs = Vec::new();
     let libraries_dir = game_dir.join("libraries");
@@ -942,9 +1276,11 @@ fn collect_download_jobs(
         if let (Some(url), Some(sha1), Some(size)) = (
             client["url"].as_str(),
             client["sha1"].as_str(),
-            client["size"].as_u64()
+            client["size"].as_u64(),
         ) {
-            let path = versions_dir.join(instance_id).join(format!("{}.jar", instance_id));
+            let path = versions_dir
+                .join(instance_id)
+                .join(format!("{}.jar", instance_id));
             jobs.push(DownloadJob {
                 url: url.to_string(),
                 fallback_url: None,
@@ -960,7 +1296,7 @@ fn collect_download_jobs(
             asset_idx["id"].as_str(),
             asset_idx["url"].as_str(),
             asset_idx["sha1"].as_str(),
-            asset_idx["size"].as_u64()
+            asset_idx["size"].as_u64(),
         ) {
             let path = assets_indexes_dir.join(format!("{}.json", id));
             jobs.push(DownloadJob {
@@ -977,24 +1313,32 @@ fn collect_download_jobs(
         for lib in libs {
             let allowed = lib["rules"].as_array().map_or(true, |rules| {
                 let current_os = std::env::consts::OS;
-                let target_os = if current_os == "macos" { "osx" } else { current_os };
+                let target_os = if current_os == "macos" {
+                    "osx"
+                } else {
+                    current_os
+                };
                 let mut allow = false;
                 for rule in rules {
                     let action = rule["action"].as_str().unwrap_or("allow");
                     let os_match = rule["os"]["name"].as_str().map_or(true, |o| o == target_os);
-                    if os_match { allow = action == "allow"; }
+                    if os_match {
+                        allow = action == "allow";
+                    }
                 }
                 allow
             });
 
-            if !allowed { continue; }
+            if !allowed {
+                continue;
+            }
 
             if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
                 if let (Some(url), Some(path), Some(sha1), Some(size)) = (
                     artifact["url"].as_str(),
                     artifact["path"].as_str(),
                     artifact["sha1"].as_str(),
-                    artifact["size"].as_u64()
+                    artifact["size"].as_u64(),
                 ) {
                     jobs.push(DownloadJob {
                         url: url.to_string(),
@@ -1010,12 +1354,14 @@ fn collect_download_jobs(
                 if let Some(obj) = classifiers.as_object() {
                     let current_os = std::env::consts::OS;
                     for (key, artifact) in obj {
-                        if key.contains(current_os) || (current_os == "macos" && key.contains("osx")) {
-                             if let (Some(url), Some(path), Some(sha1), Some(size)) = (
+                        if key.contains(current_os)
+                            || (current_os == "macos" && key.contains("osx"))
+                        {
+                            if let (Some(url), Some(path), Some(sha1), Some(size)) = (
                                 artifact["url"].as_str(),
                                 artifact["path"].as_str(),
                                 artifact["sha1"].as_str(),
-                                artifact["size"].as_u64()
+                                artifact["size"].as_u64(),
                             ) {
                                 jobs.push(DownloadJob {
                                     url: url.to_string(),

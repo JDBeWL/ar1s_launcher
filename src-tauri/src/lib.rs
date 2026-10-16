@@ -28,13 +28,10 @@ pub fn run() {
             controllers::download_controller::get_version_size,
             controllers::download_controller::download_version,
             controllers::download_controller::cancel_download,
-            controllers::launcher_controller::launch_minecraft,
             controllers::config_controller::get_config,
             controllers::config_controller::get_game_dir,
             controllers::config_controller::get_game_dir_info,
             controllers::config_controller::set_game_dir,
-            controllers::config_controller::select_game_dir,
-            controllers::config_controller::set_version_isolation,
             controllers::java_controller::find_java_installations_command,
             controllers::java_controller::refresh_java_installations,
             controllers::java_controller::set_java_path_command,
@@ -59,12 +56,10 @@ pub fn run() {
             controllers::auth_controller::start_microsoft_auth_code_login,
             controllers::auth_controller::complete_microsoft_auth_code_login,
             controllers::auth_controller::refresh_microsoft_auth,
+            controllers::auth_controller::refresh_skin_url,
             controllers::auth_controller::logout_microsoft,
             controllers::auth_controller::set_auth_type,
             controllers::config_controller::get_total_memory,
-            controllers::config_controller::get_memory_stats,
-            controllers::config_controller::recommend_memory,
-            controllers::config_controller::validate_memory_setting,
             controllers::config_controller::check_memory_warning,
             controllers::config_controller::get_auto_memory_config,
             controllers::config_controller::set_auto_memory_enabled,
@@ -82,6 +77,9 @@ pub fn run() {
             controllers::instance_controller::rename_instance,
             controllers::instance_controller::open_instance_folder,
             controllers::instance_controller::launch_instance,
+            controllers::instance_controller::get_instance_mods,
+            controllers::instance_controller::set_mod_enabled,
+            controllers::instance_controller::delete_instance_mod,
             controllers::loader_controller::get_forge_versions,
             controllers::loader_controller::get_fabric_versions,
             controllers::loader_controller::get_quilt_versions,
@@ -94,12 +92,12 @@ pub fn run() {
         ])
         .setup(|_| {
             log::info!("[DEBUG] Tauri应用初始化完成");
-            
+
             // 预加载配置文件
             if let Err(e) = services::config::preload_config() {
                 log::error!("配置预加载失败: {}", e);
             }
-            
+
             // 后台预热 Java 检测缓存（使用 Tauri 异步运行时，不阻塞启动）
             tauri::async_runtime::spawn(async {
                 log::info!("后台预热 Java 检测缓存...");
@@ -107,7 +105,7 @@ pub fn run() {
                     log::warn!("Java 缓存预热失败: {}", e);
                 }
             });
-            
+
             Ok(())
         })
         .run(tauri::generate_context!())

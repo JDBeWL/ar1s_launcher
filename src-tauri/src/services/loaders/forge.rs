@@ -170,9 +170,7 @@ fn get_forge_version_id(mc_version: &str, forge_version: &str) -> String {
 
 /// 比较 Forge 版本号
 fn compare_forge_versions(a: &str, b: &str) -> std::cmp::Ordering {
-    let parse = |s: &str| -> Vec<u32> {
-        s.split('.').filter_map(|p| p.parse().ok()).collect()
-    };
+    let parse = |s: &str| -> Vec<u32> { s.split('.').filter_map(|p| p.parse().ok()).collect() };
 
     let a_parts = parse(a);
     let b_parts = parse(b);
@@ -452,7 +450,6 @@ async fn download_lzma_library(
     .await
 }
 
-
 // ============ 手动安装逻辑 ============
 
 use crate::utils::minecraft::maven_name_to_path;
@@ -602,7 +599,10 @@ async fn manual_install_old_forge(
     }
 
     let version_json_path = version_dir.join(format!("{}.json", version_id));
-    fs::write(&version_json_path, serde_json::to_string_pretty(&version_info)?)?;
+    fs::write(
+        &version_json_path,
+        serde_json::to_string_pretty(&version_info)?,
+    )?;
 
     // 提取 maven 和 universal.jar
     let file = fs::File::open(installer_path)?;

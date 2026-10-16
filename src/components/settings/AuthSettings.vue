@@ -1,160 +1,155 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, onMounted, watch } from 'vue';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import PlayerHead from '../../components/PlayerHead.vue';
 import { useAuthStore } from '../../stores/authStore';
 import { useDebounceFn } from '../../composables/useDebounce';
 import { logError } from '../../utils/logger';
+import { getErrorMessage } from '../../utils/format';
 
-const authStore = useAuthStore()
-const loginLoading = ref(false)
-const refreshLoading = ref(false)
-const loginDialog = ref(false)
-const userCode = ref('')
-const verificationUri = ref('')
-const loginError = ref('')
-const authCodeWaiting = ref(false)
+const authStore = useAuthStore();
+const loginLoading = ref(false);
+const refreshLoading = ref(false);
+const loginDialog = ref(false);
+const userCode = ref('');
+const verificationUri = ref('');
+const loginError = ref('');
+const authCodeWaiting = ref(false);
 
 const debouncedSaveUsername = useDebounceFn((name: string) => {
-  authStore.saveUsername(name)
-}, 500)
+  authStore.saveUsername(name);
+}, 500);
 
-watch(() => authStore.username, (newName) => {
-  if (newName !== null && newName !== undefined) {
-    debouncedSaveUsername.call(newName)
-  }
-})
+watch(
+  () => authStore.username,
+  (newName) => {
+    if (newName !== null && newName !== undefined) {
+      debouncedSaveUsername.call(newName);
+    }
+  },
+);
 
 async function switchAuthType(type: 'offline' | 'microsoft') {
-  await authStore.switchAuthType(type)
+  await authStore.switchAuthType(type);
 }
 
 async function startMicrosoftLogin() {
-  loginLoading.value = true
-  loginError.value = ''
+  loginLoading.value = true;
+  loginError.value = '';
   try {
-    const authUrl = await authStore.startAuthCodeLogin()
-    authCodeWaiting.value = true
+    const authUrl = await authStore.startAuthCodeLogin();
+    authCodeWaiting.value = true;
 
     try {
-      await openUrl(authUrl)
+      await openUrl(authUrl);
     } catch {
-      logError('Failed to auto-open browser', undefined, 'AuthSettings')
+      logError('Failed to auto-open browser', undefined, 'AuthSettings');
     }
 
     try {
-      await authStore.completeAuthCodeLogin()
-      authCodeWaiting.value = false
+      await authStore.completeAuthCodeLogin();
+      authCodeWaiting.value = false;
     } catch (err) {
-      authCodeWaiting.value = false
-      const msg = err instanceof Error ? err.message : String(err)
+      authCodeWaiting.value = false;
+      const msg = getErrorMessage(err);
       if (!msg.includes('拒绝了授权') && !msg.includes('被拒绝')) {
-        loginError.value = msg
+        loginError.value = msg;
       }
-      logError('Microsoft auth code login failed', err, 'AuthSettings')
+      logError('Microsoft auth code login failed', err, 'AuthSettings');
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    loginError.value = msg
-    logError('Failed to start auth code flow', err, 'AuthSettings')
+    const msg = getErrorMessage(err);
+    loginError.value = msg;
+    logError('Failed to start auth code flow', err, 'AuthSettings');
   } finally {
-    loginLoading.value = false
+    loginLoading.value = false;
   }
 }
 
 async function startDeviceCodeLogin() {
-  loginLoading.value = true
-  loginError.value = ''
+  loginLoading.value = true;
+  loginError.value = '';
   try {
-    const display = await authStore.requestDeviceCode()
-    userCode.value = display.userCode
-    verificationUri.value = display.verificationUri
-    loginDialog.value = true
+    const display = await authStore.requestDeviceCode();
+    userCode.value = display.userCode;
+    verificationUri.value = display.verificationUri;
+    loginDialog.value = true;
 
     try {
-      await openUrl(display.verificationUri)
+      await openUrl(display.verificationUri);
     } catch {
-      logError('Failed to auto-open browser', undefined, 'AuthSettings')
+      logError('Failed to auto-open browser', undefined, 'AuthSettings');
     }
 
     try {
-      await authStore.completeMicrosoftLogin()
-      loginDialog.value = false
+      await authStore.completeMicrosoftLogin();
+      loginDialog.value = false;
     } catch (err) {
-      loginDialog.value = false
-      const msg = err instanceof Error ? err.message : String(err)
+      loginDialog.value = false;
+      const msg = getErrorMessage(err);
       if (!msg.includes('拒绝了授权') && !msg.includes('已过期')) {
-        loginError.value = msg
+        loginError.value = msg;
       }
-      logError('Microsoft login failed', err, 'AuthSettings')
+      logError('Microsoft login failed', err, 'AuthSettings');
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    loginError.value = msg
-    logError('Failed to request device code', err, 'AuthSettings')
+    const msg = getErrorMessage(err);
+    loginError.value = msg;
+    logError('Failed to request device code', err, 'AuthSettings');
   } finally {
-    loginLoading.value = false
+    loginLoading.value = false;
   }
 }
 
 async function logoutMicrosoft() {
-  await authStore.logoutMicrosoft()
+  await authStore.logoutMicrosoft();
 }
 
 async function refreshMicrosoftAuth() {
-  refreshLoading.value = true
+  refreshLoading.value = true;
   try {
-    await authStore.tryRefreshMicrosoftToken()
+    await authStore.tryRefreshMicrosoftToken();
   } finally {
-    refreshLoading.value = false
+    refreshLoading.value = false;
   }
 }
 
 function copyUserCode() {
   if (userCode.value) {
-    window.navigator.clipboard.writeText(userCode.value)
+    window.navigator.clipboard.writeText(userCode.value);
   }
 }
 
 function copyVerificationUri() {
   if (verificationUri.value) {
-    window.navigator.clipboard.writeText(verificationUri.value)
+    window.navigator.clipboard.writeText(verificationUri.value);
   }
 }
 
 onMounted(async () => {
-  await authStore.init()
-})
+  await authStore.init();
+});
 </script>
 
 <template>
   <div class="settings-group">
-    <div class="group-header mb-5">
-      <div class="d-flex align-center">
-        <v-avatar size="48" color="primary-container" class="mr-3">
-          <v-icon size="24" color="on-primary-container">mdi-account-circle-outline</v-icon>
-        </v-avatar>
-        <div>
-          <h2 class="text-h6 font-weight-bold">账户与认证</h2>
-          <p class="text-body-2 text-on-surface-variant mb-0">配置游戏登录方式</p>
-        </div>
-      </div>
-    </div>
-
     <!-- 认证模式选择 -->
-    <v-card color="surface-container" class="mb-4">
+    <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
-          <v-icon class="mr-2" color="on-surface-variant">mdi-shield-check-outline</v-icon>
-          <span class="text-subtitle-1 font-weight-medium">认证模式</span>
+          <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-shield-check-outline</v-icon>
+          <span class="text-title-medium">认证模式</span>
         </div>
 
         <v-btn-toggle
           :model-value="authStore.authType"
           mandatory
-          density="comfortable"
+          border
           divided
+          rounded="pill"
+          density="comfortable"
+          variant="text"
           color="primary"
-          variant="outlined"
           class="auth-toggle"
           @update:model-value="switchAuthType($event as 'offline' | 'microsoft')"
         >
@@ -168,18 +163,16 @@ onMounted(async () => {
           </v-btn>
         </v-btn-toggle>
 
-        <p class="text-caption text-on-surface-variant mt-2 mb-0">
-          离线模式无需验证，正版登录使用 Microsoft 账户
-        </p>
+        <p class="text-body-small text-on-surface-variant mt-2 mb-0">离线模式无需验证，正版登录使用 Microsoft 账户</p>
       </v-card-text>
     </v-card>
 
     <!-- 离线模式设置 -->
-    <v-card v-if="authStore.authType === 'offline'" color="surface-container" class="mb-4">
+    <v-card variant="flat" v-if="authStore.authType === 'offline'" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
-          <v-icon class="mr-2" color="on-surface-variant">mdi-account-outline</v-icon>
-          <span class="text-subtitle-1 font-weight-medium">玩家名称</span>
+          <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-account-outline</v-icon>
+          <span class="text-title-medium">玩家名称</span>
         </div>
         <v-text-field
           v-model="authStore.username"
@@ -194,37 +187,31 @@ onMounted(async () => {
             <v-icon size="18" color="on-surface-variant">mdi-account</v-icon>
           </template>
         </v-text-field>
-        <div class="text-caption text-on-surface-variant mt-2">
-          离线模式下此名称将作为游戏内的玩家名
-        </div>
+        <div class="text-body-small text-on-surface-variant mt-2">离线模式下此名称将作为游戏内的玩家名</div>
       </v-card-text>
     </v-card>
 
     <!-- Microsoft 账户设置 -->
-    <v-card v-if="authStore.authType === 'microsoft'" color="surface-container" class="mb-4">
+    <v-card variant="flat" v-if="authStore.authType === 'microsoft'" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
-          <v-icon class="mr-2" color="on-surface-variant">mdi-microsoft</v-icon>
-          <span class="text-subtitle-1 font-weight-medium">Microsoft 账户</span>
+          <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-microsoft</v-icon>
+          <span class="text-title-medium">Microsoft 账户</span>
         </div>
 
         <div v-if="authStore.msLoggedIn">
           <v-card color="surface-container-high" variant="flat" class="login-status-card">
             <v-card-text class="pa-3">
               <div class="d-flex align-center">
-                <v-avatar size="40" color="primary" class="mr-3">
+                <PlayerHead v-if="authStore.msSkinUrl" :skin-url="authStore.msSkinUrl" :size="40" class="mr-3" />
+                <v-avatar v-else size="40" color="primary" class="mr-3">
                   <v-icon size="20" color="on-primary">mdi-account-check</v-icon>
                 </v-avatar>
                 <div class="flex-grow-1">
-                  <div class="text-body-1 font-weight-medium">{{ authStore.msUsername }}</div>
-                  <div class="text-caption text-on-surface-variant">正版账户已登录</div>
+                  <div class="text-body-large font-weight-medium">{{ authStore.msUsername }}</div>
+                  <div class="text-body-small text-on-surface-variant">正版账户已登录</div>
                 </div>
-                <v-btn
-                  size="small"
-                  variant="outlined"
-                  color="error"
-                  @click="logoutMicrosoft"
-                >
+                <v-btn size="small" variant="outlined" color="error" @click="logoutMicrosoft">
                   <v-icon start size="16">mdi-logout</v-icon>
                   登出
                 </v-btn>
@@ -244,19 +231,13 @@ onMounted(async () => {
           </v-card>
         </div>
         <div v-else>
-          <v-btn
-            block
-            variant="outlined"
-            color="primary"
-            :loading="loginLoading"
-            @click="startMicrosoftLogin"
-          >
+          <v-btn block variant="outlined" color="primary" :loading="loginLoading" @click="startMicrosoftLogin">
             <v-icon start size="20">mdi-microsoft</v-icon>
             使用 Microsoft 账户登录
           </v-btn>
-          <div class="d-flex align-center my-2" style="white-space:nowrap">
+          <div class="d-flex align-center my-2" style="white-space: nowrap">
             <v-divider class="flex-grow-1" />
-            <span class="text-caption text-on-surface-variant px-3">或者</span>
+            <span class="text-body-small text-on-surface-variant px-3">或者</span>
             <v-divider class="flex-grow-1" />
           </div>
           <v-btn
@@ -270,12 +251,10 @@ onMounted(async () => {
             <v-icon start size="16">mdi-form-textbox</v-icon>
             使用安全代码登录
           </v-btn>
-          <div v-if="loginError" class="text-caption text-error mt-2">
+          <div v-if="loginError" class="text-body-small text-error mt-2">
             {{ loginError }}
           </div>
-          <div class="text-caption text-on-surface-variant mt-2">
-            登录后可使用正版皮肤和在线多人游戏
-          </div>
+          <div class="text-body-small text-on-surface-variant mt-2">登录后可使用正版皮肤和在线多人游戏</div>
         </div>
       </v-card-text>
     </v-card>
@@ -288,18 +267,20 @@ onMounted(async () => {
             <v-avatar size="56" color="primary" class="mb-3">
               <v-icon size="28" color="on-primary">mdi-microsoft</v-icon>
             </v-avatar>
-            <div class="text-h6 font-weight-bold">正在登录</div>
+            <div class="text-title-large font-weight-bold">正在登录</div>
           </div>
 
           <v-card color="surface-container" variant="flat" class="mb-4">
             <v-card-text class="pa-4">
-              <div class="text-body-2 text-on-surface-variant">请在浏览器中完成 Microsoft 账户登录，完成后将自动返回启动器</div>
+              <div class="text-body-medium text-on-surface-variant">
+                请在浏览器中完成 Microsoft 账户登录，完成后将自动返回启动器
+              </div>
             </v-card-text>
           </v-card>
 
           <div class="text-center">
             <v-progress-circular indeterminate size="32" color="primary" class="mr-2" />
-            <span class="text-body-2 text-on-surface-variant">等待浏览器登录中...</span>
+            <span class="text-body-medium text-on-surface-variant">等待浏览器登录中...</span>
           </div>
         </v-card-text>
       </v-card>
@@ -313,13 +294,13 @@ onMounted(async () => {
             <v-avatar size="56" color="primary" class="mb-3">
               <v-icon size="28" color="on-primary">mdi-microsoft</v-icon>
             </v-avatar>
-            <div class="text-h6 font-weight-bold">登录 Microsoft 账户</div>
+            <div class="text-title-large font-weight-bold">登录 Microsoft 账户</div>
           </div>
 
           <v-card color="surface-container" variant="flat" class="mb-4">
             <v-card-text class="pa-4">
-              <div class="text-body-2 text-on-surface-variant mb-2">请按以下步骤操作：</div>
-              <ol class="text-body-2 pl-4">
+              <div class="text-body-medium text-on-surface-variant mb-2">请按以下步骤操作：</div>
+              <ol class="text-body-medium pl-4">
                 <li class="mb-1">在浏览器中打开下方链接</li>
                 <li class="mb-1">输入下方安全代码</li>
                 <li>按照提示完成登录</li>
@@ -328,7 +309,7 @@ onMounted(async () => {
           </v-card>
 
           <div class="mb-3">
-            <div class="text-caption text-on-surface-variant mb-1">验证链接</div>
+            <div class="text-body-small text-on-surface-variant mb-1">验证链接</div>
             <div class="d-flex align-center">
               <v-chip
                 :text="verificationUri"
@@ -343,7 +324,7 @@ onMounted(async () => {
           </div>
 
           <div class="mb-4">
-            <div class="text-caption text-on-surface-variant mb-1">安全代码</div>
+            <div class="text-body-small text-on-surface-variant mb-1">安全代码</div>
             <div class="d-flex align-center">
               <v-chip
                 :text="userCode"
@@ -361,7 +342,7 @@ onMounted(async () => {
 
           <div class="text-center">
             <v-progress-circular indeterminate size="32" color="primary" class="mr-2" />
-            <span class="text-body-2 text-on-surface-variant">等待登录中...</span>
+            <span class="text-body-medium text-on-surface-variant">等待登录中...</span>
           </div>
         </v-card-text>
       </v-card>

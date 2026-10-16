@@ -4,8 +4,8 @@ use crate::errors::LauncherError;
 use crate::models::DownloadJob;
 use crate::utils::file_utils;
 use log::{debug, warn};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 pub async fn download_file(
@@ -50,7 +50,17 @@ pub async fn download_file(
     }
 
     // 2. 尝试从指定 URL 下载（支持断点续传）
-    match download_with_resume(http, url, job, state, global_cancel, bytes_downloaded, bytes_since_last).await {
+    match download_with_resume(
+        http,
+        url,
+        job,
+        state,
+        global_cancel,
+        bytes_downloaded,
+        bytes_since_last,
+    )
+    .await
+    {
         Ok(_) => Ok(()),
         Err(e) => {
             if e.to_string().contains("cancelled") {
@@ -105,10 +115,10 @@ async fn download_with_resume(
     bytes_since_last: &Arc<AtomicU64>,
 ) -> Result<(), LauncherError> {
     let tmp_path = job.path.with_extension("part");
-    
+
     // 检查是否有部分下载的文件
     let existing_size = get_existing_file_size(&tmp_path).await;
-    
+
     // 如果已下载的大小等于或超过预期大小，验证文件
     if existing_size > 0 && job.size > 0 && existing_size >= job.size {
         debug!(
@@ -131,11 +141,7 @@ async fn download_with_resume(
     // 尝试断点续传（直接发送 Range 请求，download_chunk_with_resume 会处理
     // 服务器不支持 Range 返回 200 的情况，无需额外 HEAD 预检请求）
     let resume_from = if existing_size > 0 && job.size > 0 && existing_size < job.size {
-        debug!(
-            "Resuming download from byte {}: {}",
-            existing_size,
-            url
-        );
+        debug!("Resuming download from byte {}: {}", existing_size, url);
         Some(existing_size)
     } else {
         None
@@ -209,7 +215,7 @@ async fn download_chunk_with_resume(
         }
 
         let response = request.send().await?;
-        
+
         // 检查响应状态
         let status = response.status();
         if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
@@ -294,10 +300,7 @@ fn validate_content_type(response: &reqwest::Response, url: &str) -> Result<(), 
         .and_then(|v| v.to_str().ok())
     {
         let ct_lower = ct.to_ascii_lowercase();
-        if ct_lower.starts_with("text/")
-            || ct_lower.contains("json")
-            || ct_lower.contains("html")
-        {
+        if ct_lower.starts_with("text/") || ct_lower.contains("json") || ct_lower.contains("html") {
             return Err(LauncherError::Custom(format!(
                 "Unexpected Content-Type {} for {}",
                 ct, url
@@ -323,7 +326,7 @@ fn validate_content_length(
                 } else {
                     expected_size
                 };
-                
+
                 if remote_len == 0 && expected_len > 0 {
                     return Err(LauncherError::Custom(format!(
                         "Unexpected Content-Length 0 for {}, expected {}",

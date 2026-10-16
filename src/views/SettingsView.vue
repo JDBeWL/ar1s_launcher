@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, computed, defineAsyncComponent } from 'vue';
+import { ref, onMounted, onUnmounted, computed, defineAsyncComponent } from 'vue';
 
 const GeneralSettings = defineAsyncComponent(() => import('../components/settings/GeneralSettings.vue'));
 const AuthSettings = defineAsyncComponent(() => import('../components/settings/AuthSettings.vue'));
@@ -8,8 +8,6 @@ const MemorySettings = defineAsyncComponent(() => import('../components/settings
 const WindowSettings = defineAsyncComponent(() => import('../components/settings/WindowSettings.vue'));
 
 const activeSection = ref('general');
-const contentRef = ref<HTMLElement | null>(null);
-const isScrollingByClick = ref(false);
 const isSmallScreen = ref(false);
 
 const sections = [
@@ -22,69 +20,22 @@ const sections = [
 
 const activeTab = computed({
   get: () => activeSection.value,
-  set: (val: string) => scrollToSection(val)
+  set: (val: string) => {
+    activeSection.value = val;
+  },
 });
 
 function checkScreenSize() {
   isSmallScreen.value = window.innerWidth < 768;
 }
 
-function scrollToSection(sectionId: string) {
-  isScrollingByClick.value = true;
-  activeSection.value = sectionId;
-
-  if (isSmallScreen.value) return;
-
-  const element = document.getElementById(`section-${sectionId}`);
-  if (element) {
-    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setTimeout(() => {
-      isScrollingByClick.value = false;
-    }, 600);
-  } else {
-    isScrollingByClick.value = false;
-  }
-}
-
-function handleScroll() {
-  if (isScrollingByClick.value || isSmallScreen.value) return;
-
-  const container = contentRef.value;
-  if (!container) return;
-
-  const scrollTop = container.scrollTop;
-  const containerHeight = container.clientHeight;
-
-  if (scrollTop + containerHeight >= container.scrollHeight - 10) {
-    activeSection.value = sections[sections.length - 1].id;
-    return;
-  }
-
-  for (let i = sections.length - 1; i >= 0; i--) {
-    const el = document.getElementById(`section-${sections[i].id}`);
-    if (el) {
-      const offsetTop = el.offsetTop - container.offsetTop;
-      if (scrollTop >= offsetTop - 60) {
-        activeSection.value = sections[i].id;
-        return;
-      }
-    }
-  }
-
-  activeSection.value = sections[0].id;
-}
-
 onMounted(() => {
   checkScreenSize();
   window.addEventListener('resize', checkScreenSize);
-  nextTick(() => {
-    contentRef.value?.addEventListener('scroll', handleScroll, { passive: true });
-  });
 });
 
 onUnmounted(() => {
   window.removeEventListener('resize', checkScreenSize);
-  contentRef.value?.removeEventListener('scroll', handleScroll);
 });
 </script>
 
@@ -94,16 +45,10 @@ onUnmounted(() => {
     <template v-if="isSmallScreen">
       <div class="settings-mobile">
         <div class="pa-4 pb-0">
-          <h1 class="text-h5 font-weight-bold">设置</h1>
-          <p class="text-body-2 text-on-surface-variant mt-1">管理启动器配置</p>
+          <h1 class="text-headline-small font-weight-bold">设置</h1>
+          <p class="text-body-medium text-on-surface-variant mt-1">管理启动器配置</p>
         </div>
-        <v-tabs
-          v-model="activeTab"
-          color="primary"
-          density="comfortable"
-          class="px-2"
-          show-arrows
-        >
+        <v-tabs v-model="activeTab" color="primary" density="comfortable" class="px-2" show-arrows>
           <v-tab
             v-for="section in sections"
             :key="section.id"
@@ -129,10 +74,10 @@ onUnmounted(() => {
     <template v-else>
       <div class="settings-nav">
         <div class="nav-header pa-4">
-          <h1 class="text-h5 font-weight-bold">设置</h1>
-          <p class="text-body-2 text-on-surface-variant mt-1">管理启动器配置</p>
+          <h1 class="text-headline-small font-weight-bold">设置</h1>
+          <p class="text-body-medium text-on-surface-variant mt-1">管理启动器配置</p>
         </div>
-        
+
         <v-list nav density="comfortable" class="px-2" bg-color="transparent">
           <v-list-item
             v-for="section in sections"
@@ -141,32 +86,18 @@ onUnmounted(() => {
             :prepend-icon="section.icon"
             :title="section.title"
             class="mb-1 settings-nav-item"
-            @click="scrollToSection(section.id)"
+            @click="activeSection = section.id"
           />
         </v-list>
       </div>
 
-      <div ref="contentRef" class="settings-content">
+      <div class="settings-content">
         <div class="content-wrapper pa-6">
-          <section id="section-general" class="settings-section mb-8">
-            <GeneralSettings />
-          </section>
-
-          <section id="section-auth" class="settings-section mb-8">
-            <AuthSettings />
-          </section>
-
-          <section id="section-java" class="settings-section mb-8">
-            <JavaSettings />
-          </section>
-
-          <section id="section-memory" class="settings-section mb-8">
-            <MemorySettings />
-          </section>
-
-          <section id="section-window" class="settings-section mb-8">
-            <WindowSettings />
-          </section>
+          <GeneralSettings v-if="activeSection === 'general'" />
+          <AuthSettings v-else-if="activeSection === 'auth'" />
+          <JavaSettings v-else-if="activeSection === 'java'" />
+          <MemorySettings v-else-if="activeSection === 'memory'" />
+          <WindowSettings v-else-if="activeSection === 'window'" />
         </div>
       </div>
     </template>
@@ -216,21 +147,10 @@ onUnmounted(() => {
 .settings-content {
   flex: 1;
   overflow-y: auto;
-  scroll-behavior: smooth;
 }
 
 .content-wrapper {
   max-width: 900px;
-}
-
-.settings-section {
-  scroll-margin-top: 24px;
-}
-
-@media (max-width: 767px) {
-  .settings-container {
-    flex-direction: column;
-  }
 }
 </style>
 
@@ -239,8 +159,9 @@ onUnmounted(() => {
   margin-bottom: 32px;
 }
 
-.group-header {
-  padding-bottom: 16px;
-  border-bottom: 1px solid rgb(var(--v-theme-outline-variant));
+/* v-alert 默认把 prepend 图标垂直居中于整块内容，
+   多行提示里图标会飘到中间，改成贴住第一行标题 */
+.tip-alert .v-alert__prepend {
+  align-self: flex-start;
 }
 </style>

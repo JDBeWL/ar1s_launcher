@@ -44,9 +44,11 @@ pub fn remove_custom_java_path(path: String) -> Result<(), LauncherError> {
 }
 
 #[tauri::command]
-pub fn check_java_compatibility(mc_version: String) -> Result<JavaCompatibilityResult, LauncherError> {
+pub fn check_java_compatibility(
+    mc_version: String,
+) -> Result<JavaCompatibilityResult, LauncherError> {
     let config = load_config()?;
-    
+
     // 解析实际的 Minecraft 版本号（处理整合包 ID）
     let actual_mc_version = java::resolve_actual_mc_version(&mc_version, &config.game_dir);
     log::info!("检查 Java 兼容性: {} -> {}", mc_version, actual_mc_version);

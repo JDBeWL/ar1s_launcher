@@ -1,20 +1,19 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
-import { useRoute } from "vue-router";
-import InstanceCard from "../components/instance/InstanceCard.vue";
-import { useNotificationStore } from "../stores/notificationStore";
-import { useAuthStore } from "../stores/authStore";
-import { useSettingsStore } from "../stores/settings";
-import { instanceApi, javaApi } from "../services";
-import type { GameInstance, JavaCompatibilityResult } from "../types/events";
-import { formatLastPlayed, getLoaderIcon, getLoaderColor, getErrorMessage } from "../utils/format";
-import { logError } from "../utils/logger";
-import { getInstanceViewMode, getInstanceSortBy } from "../utils/storage";
+import { ref, computed, onMounted, watch } from 'vue';
+import { useRoute } from 'vue-router';
+import InstanceCard from '../components/instance/InstanceCard.vue';
+import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
+import { useNotificationStore } from '../stores/notificationStore';
+import { instanceApi } from '../services';
+import { useGameLaunch } from '../composables/useGameLaunch';
+import type { GameInstance, ModInfo } from '../types/events';
+import { formatLastPlayed, getErrorMessage } from '../utils/format';
+import { logError } from '../utils/logger';
+import { getInstanceViewMode, getInstanceSortBy } from '../utils/storage';
 
 const route = useRoute();
 const notificationStore = useNotificationStore();
-const authStore = useAuthStore();
-const settingsStore = useSettingsStore();
+const { launchInstance: startInstance } = useGameLaunch();
 const instances = ref<GameInstance[]>([]);
 const loading = ref(false);
 const launchingInstanceId = ref<string | null>(null);
@@ -22,11 +21,19 @@ const searchQuery = ref('');
 const viewMode = ref<'grid' | 'list'>(getInstanceViewMode());
 
 const renameDialog = ref(false);
-const renameInstanceName = ref("");
+const renameInstanceName = ref('');
 const currentInstance = ref<GameInstance | null>(null);
 const deleteDialog = ref(false);
 const deleteConfirmName = ref('');
 const sortBy = ref(getInstanceSortBy());
+
+const modDialog = ref(false);
+const mods = ref<ModInfo[]>([]);
+const modsLoading = ref(false);
+const modsError = ref('');
+const modBusy = ref<string | null>(null);
+const modDeleteDialog = ref(false);
+const modToDelete = ref<ModInfo | null>(null);
 
 const sortOptions = [
   { title: '最近游玩', value: 'lastPlayed' },
@@ -37,13 +44,14 @@ const sortOptions = [
 // 过滤和排序后的实例列表
 const filteredInstances = computed(() => {
   let result = instances.value;
-  
+
   if (searchQuery.value) {
     const query = searchQuery.value.toLowerCase();
-    result = result.filter(instance => 
-      instance.name.toLowerCase().includes(query) ||
-      instance.gameVersion?.toLowerCase().includes(query) ||
-      instance.loaderType?.toLowerCase().includes(query)
+    result = result.filter(
+      (instance) =>
+        instance.name.toLowerCase().includes(query) ||
+        instance.gameVersion?.toLowerCase().includes(query) ||
+        instance.loaderType?.toLowerCase().includes(query),
     );
   }
 
@@ -65,118 +73,37 @@ async function loadInstances() {
   try {
     instances.value = await instanceApi.getInstances();
   } catch (error) {
-    logError("Failed to load instances", error, 'InstanceManagerView')
+    logError('Failed to load instances', error, 'InstanceManagerView');
   } finally {
     loading.value = false;
   }
 }
 
-async function checkAndResolveJava(version: string): Promise<{ shouldLaunch: boolean; overrideJavaPath?: string }> {
-  let result: JavaCompatibilityResult;
-  try {
-    result = await javaApi.checkJavaCompatibility(version);
-  } catch {
-    return { shouldLaunch: true };
+// 列表行的次要信息：加载器 + 游戏版本 + Mod 数
+function instanceMeta(instance: GameInstance): string {
+  const loader = instance.loaderType && instance.loaderType !== 'None' ? instance.loaderType : '';
+  const version = instance.gameVersion || instance.version || '';
+  const parts: string[] = [];
+
+  if (loader) {
+    parts.push(version ? `${loader} · ${version}` : loader);
+  } else if (version) {
+    parts.push(version);
   }
 
-  if (result.compatible || result.autoMatchEnabled) {
-    return { shouldLaunch: true };
+  if (instance.modCount) {
+    parts.push(`${instance.modCount} Mods`);
   }
 
-  const currentVer = result.currentJavaVersion != null ? `Java ${result.currentJavaVersion}` : '未知';
-  const requiredVer = `Java ${result.requiredJavaVersion}`;
-
-  let content = `当前 Java 版本 (${currentVer}) 不满足 Minecraft ${version} 的要求 (需要 ${requiredVer})。\n\n请选择如何处理：`;
-
-  const options: Array<{ id: string; label: string; color?: string; variant?: 'elevated' | 'outlined' | 'text' | 'flat' | 'tonal' | 'plain' }> = [];
-
-  if (result.recommendedJavaPath) {
-    options.push({
-      id: 'temp',
-      label: `临时使用 Java ${result.recommendedJavaVersion}`,
-      color: 'primary',
-      variant: 'elevated',
-    });
-  }
-
-  options.push({
-    id: 'auto',
-    label: '开启自动匹配',
-    color: 'success',
-    variant: 'tonal',
-  });
-
-  options.push({
-    id: 'manual',
-    label: '手动选择 Java',
-    color: 'warning',
-    variant: 'outlined',
-  });
-
-  options.push({
-    id: 'continue',
-    label: '继续启动',
-    color: 'info',
-    variant: 'text',
-  });
-
-  const selected = await notificationStore.choice(
-    'Java 版本提示',
-    content,
-    options,
-    'warning'
-  );
-
-  if (selected === null) {
-    return { shouldLaunch: false };
-  }
-
-  if (selected === 'continue') {
-    return { shouldLaunch: true };
-  }
-
-  if (selected === 'temp' && result.recommendedJavaPath) {
-    return { shouldLaunch: true, overrideJavaPath: result.recommendedJavaPath };
-  }
-
-  if (selected === 'auto') {
-    settingsStore.autoMatchJava = true;
-    await settingsStore.saveAutoMatchJava();
-    return { shouldLaunch: false };
-  }
-
-  if (selected === 'manual') {
-    notificationStore.warning('请在设置中手动选择兼容的 Java 路径');
-    return { shouldLaunch: false };
-  }
-
-  return { shouldLaunch: false };
+  return parts.join(' · ');
 }
 
 async function launchInstance(instance: GameInstance) {
-  if (!authStore.isLoggedIn) {
-    notificationStore.warning('请先设置玩家名称或登录 Microsoft 账户');
-    return;
-  }
-
   launchingInstanceId.value = instance.id;
   try {
-    if (authStore.authType === 'microsoft' && authStore.msLoggedIn && authStore.isTokenExpired) {
-      await authStore.tryRefreshMicrosoftToken();
+    if (await startInstance(instance.name)) {
+      await loadInstances();
     }
-
-    const javaResolve = await checkAndResolveJava(instance.name);
-
-    if (!javaResolve.shouldLaunch) {
-      return;
-    }
-
-    await instanceApi.launchInstance(instance.name, javaResolve.overrideJavaPath);
-    notificationStore.success('启动成功', `${instance.name} 正在启动`);
-    await loadInstances();
-  } catch (error) {
-    logError("Failed to launch instance", error, 'InstanceManagerView');
-    notificationStore.error('启动失败', getErrorMessage(error), true);
   } finally {
     launchingInstanceId.value = null;
   }
@@ -186,7 +113,7 @@ async function openInstanceFolder(instance: GameInstance) {
   try {
     await instanceApi.openInstanceFolder(instance.name);
   } catch (error) {
-    logError("Failed to open folder", error, 'InstanceManagerView')
+    logError('Failed to open folder', error, 'InstanceManagerView');
   }
 }
 
@@ -198,15 +125,15 @@ function openRenameDialog(instance: GameInstance) {
 
 async function renameInstance() {
   if (!currentInstance.value || !renameInstanceName.value) return;
-  
+
   try {
     await instanceApi.renameInstance(currentInstance.value.name, renameInstanceName.value);
     renameDialog.value = false;
     notificationStore.success('重命名成功');
     await loadInstances();
   } catch (error) {
-    logError("Failed to rename instance", error, 'InstanceManagerView')
-    notificationStore.error('重命名失败', getErrorMessage(error))
+    logError('Failed to rename instance', error, 'InstanceManagerView');
+    notificationStore.error('重命名失败', getErrorMessage(error));
   }
 }
 
@@ -222,16 +149,80 @@ const deleteConfirmed = computed(() => {
 
 async function deleteInstance() {
   if (!currentInstance.value) return;
-  
+
   try {
     await instanceApi.deleteInstance(currentInstance.value.name);
     deleteDialog.value = false;
     notificationStore.success('删除成功');
     await loadInstances();
   } catch (error) {
-    logError("Failed to delete instance", error, 'InstanceManagerView')
-    notificationStore.error('删除失败', getErrorMessage(error))
+    logError('Failed to delete instance', error, 'InstanceManagerView');
+    notificationStore.error('删除失败', getErrorMessage(error));
   }
+}
+
+/** 打开某个实例的 Mod 管理对话框 */
+async function openModDialog(instance: GameInstance) {
+  currentInstance.value = instance;
+  mods.value = [];
+  modDialog.value = true;
+  await loadMods();
+}
+
+async function loadMods() {
+  if (!currentInstance.value) return;
+  modsLoading.value = true;
+  modsError.value = '';
+  try {
+    mods.value = await instanceApi.getMods(currentInstance.value.name);
+  } catch (error) {
+    logError('Failed to load mods', error, 'InstanceManagerView');
+    modsError.value = getErrorMessage(error);
+  } finally {
+    modsLoading.value = false;
+  }
+}
+
+async function toggleMod(mod: ModInfo) {
+  if (!currentInstance.value) return;
+  modBusy.value = mod.fileName;
+  try {
+    await instanceApi.setModEnabled(currentInstance.value.name, mod.fileName, !mod.enabled);
+    await loadMods();
+    await loadInstances();
+  } catch (error) {
+    logError('Failed to toggle mod', error, 'InstanceManagerView');
+    notificationStore.error('模组操作失败', getErrorMessage(error));
+  } finally {
+    modBusy.value = null;
+  }
+}
+
+function askDeleteMod(mod: ModInfo) {
+  modToDelete.value = mod;
+  modDeleteDialog.value = true;
+}
+
+async function deleteMod() {
+  if (!currentInstance.value || !modToDelete.value) return;
+  const fileName = modToDelete.value.fileName;
+  modBusy.value = fileName;
+  try {
+    await instanceApi.deleteMod(currentInstance.value.name, fileName);
+    modDeleteDialog.value = false;
+    modToDelete.value = null;
+    await loadMods();
+    await loadInstances();
+  } catch (error) {
+    logError('Failed to delete mod', error, 'InstanceManagerView');
+    notificationStore.error('删除模组失败', getErrorMessage(error));
+  } finally {
+    modBusy.value = null;
+  }
+}
+
+function formatModSize(bytes: number): string {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 // 持久化用户偏好
@@ -250,17 +241,59 @@ onMounted(() => {
 
 <template>
   <v-container fluid class="page-container pa-4">
-    <!-- 页面标题 -->
-    <div class="d-flex align-center justify-space-between mb-5">
-      <div class="d-flex align-center">
-        <v-avatar size="48" color="primary-container" class="mr-3">
-          <v-icon size="24" color="on-primary-container">mdi-folder-multiple-outline</v-icon>
-        </v-avatar>
-        <div>
-          <h1 class="text-h6 font-weight-bold">实例管理</h1>
-          <p class="text-body-2 text-on-surface-variant mb-0">管理和启动你的游戏实例</p>
-        </div>
+    <!-- 搜索和筛选工具栏 -->
+    <div class="d-flex align-center justify-space-between mb-4">
+      <div class="d-flex align-center flex-grow-1 mr-4">
+        <v-text-field
+          v-model="searchQuery"
+          label="搜索实例"
+          density="comfortable"
+          variant="outlined"
+          hide-details
+          clearable
+          class="search-field"
+          style="max-width: 300px"
+        >
+          <template #prepend-inner>
+            <v-icon size="18" color="on-surface-variant">mdi-magnify</v-icon>
+          </template>
+        </v-text-field>
+
+        <v-select
+          v-model="sortBy"
+          aria-label="排序方式"
+          :items="sortOptions"
+          hide-details
+          density="comfortable"
+          variant="outlined"
+          class="ml-3"
+          style="max-width: 180px"
+        >
+          <template #prepend-inner>
+            <v-icon size="18" color="on-surface-variant">mdi-sort</v-icon>
+          </template>
+        </v-select>
+
+        <v-btn-toggle
+          v-model="viewMode"
+          mandatory
+          border
+          divided
+          rounded="pill"
+          density="comfortable"
+          variant="text"
+          color="primary"
+          class="ml-3"
+        >
+          <v-btn value="grid" icon aria-label="网格视图">
+            <v-icon size="18">mdi-view-grid</v-icon>
+          </v-btn>
+          <v-btn value="list" icon aria-label="列表视图">
+            <v-icon size="18">mdi-view-list</v-icon>
+          </v-btn>
+        </v-btn-toggle>
       </div>
+
       <div class="d-flex align-center ga-2">
         <v-btn
           icon
@@ -281,77 +314,21 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 搜索和筛选工具栏 -->
-    <div class="d-flex align-center justify-space-between mb-4">
-      <div class="d-flex align-center flex-grow-1 mr-4">
-        <v-text-field
-          v-model="searchQuery"
-          label="搜索实例"
-          density="comfortable"
-          variant="outlined"
-          hide-details
-          clearable
-          class="search-field"
-          style="max-width: 300px;"
-        >
-          <template #prepend-inner>
-            <v-icon size="18" color="on-surface-variant">mdi-magnify</v-icon>
-          </template>
-        </v-text-field>
-
-        <v-select
-          v-model="sortBy"
-          aria-label="排序方式"
-          :items="sortOptions"
-          hide-details
-          density="comfortable"
-          variant="outlined"
-          class="ml-3"
-          style="max-width: 180px;"
-        >
-          <template #prepend-inner>
-            <v-icon size="18" color="on-surface-variant">mdi-sort</v-icon>
-          </template>
-        </v-select>
-        
-        <v-btn-toggle
-          v-model="viewMode"
-          mandatory
-          density="comfortable"
-          class="ml-3"
-          variant="outlined"
-        >
-          <v-btn value="grid" size="small" aria-label="网格视图">
-            <v-icon size="18">mdi-view-grid</v-icon>
-          </v-btn>
-          <v-btn value="list" size="small" aria-label="列表视图">
-            <v-icon size="18">mdi-view-list</v-icon>
-          </v-btn>
-        </v-btn-toggle>
-      </div>
-    </div>
-
     <!-- 加载状态 - 骨架屏 -->
     <template v-if="loading">
-      <v-row dense>
-        <v-col
-          v-for="i in 6"
-          :key="i"
-          cols="12"
-          sm="6"
-          md="4"
-        >
+      <v-row density="compact">
+        <v-col v-for="i in 6" :key="i" cols="12" sm="6" md="4">
           <v-card color="surface-container" variant="flat" class="skeleton-card">
             <v-card-text class="pa-4">
               <div class="d-flex align-center mb-3">
-                <v-skeleton-loader type="avatar" class="mr-3" style="width: 44px; height: 44px;" />
+                <v-skeleton-loader type="avatar" class="mr-3" style="width: 44px; height: 44px" />
                 <div class="flex-grow-1">
-                  <v-skeleton-loader type="text" style="width: 60%;" />
-                  <v-skeleton-loader type="text" style="width: 40%;" class="mt-1" />
+                  <v-skeleton-loader type="text" style="width: 60%" />
+                  <v-skeleton-loader type="text" style="width: 40%" class="mt-1" />
                 </div>
               </div>
-              <v-skeleton-loader type="text" style="width: 50%;" class="mb-3" />
-              <v-skeleton-loader type="button" style="width: 100%;" />
+              <v-skeleton-loader type="text" style="width: 50%" class="mb-3" />
+              <v-skeleton-loader type="button" style="width: 100%" />
             </v-card-text>
           </v-card>
         </v-col>
@@ -363,10 +340,8 @@ onMounted(() => {
       <v-avatar size="80" color="surface-container-high" class="mb-4">
         <v-icon size="40" color="on-surface-variant">mdi-cube-outline</v-icon>
       </v-avatar>
-      <div class="text-h6 font-weight-medium mb-2">没有实例</div>
-      <div class="text-body-2 text-on-surface-variant mb-4">
-        创建你的第一个游戏实例
-      </div>
+      <div class="text-title-large font-weight-medium mb-2">没有实例</div>
+      <div class="text-body-medium text-on-surface-variant mb-4">创建你的第一个游戏实例</div>
       <v-btn color="primary" to="/add-instance">
         <v-icon start size="18">mdi-plus</v-icon>
         创建实例
@@ -378,24 +353,19 @@ onMounted(() => {
       <v-avatar size="64" color="surface-container-high" class="mb-3">
         <v-icon size="32" color="on-surface-variant">mdi-magnify-close</v-icon>
       </v-avatar>
-      <div class="text-body-1 font-weight-medium">没有找到匹配的实例</div>
-      <div class="text-body-2 text-on-surface-variant">尝试其他搜索词</div>
+      <div class="text-body-large font-weight-medium">没有找到匹配的实例</div>
+      <div class="text-body-medium text-on-surface-variant">尝试其他搜索词</div>
     </div>
 
     <!-- 网格视图 -->
-    <v-row v-else-if="viewMode === 'grid'" dense>
-      <v-col
-        v-for="instance in filteredInstances"
-        :key="instance.name"
-        cols="12"
-        sm="6"
-        md="4"
-      >
+    <v-row v-else-if="viewMode === 'grid'" density="compact">
+      <v-col v-for="instance in filteredInstances" :key="instance.name" cols="12" sm="6" md="4">
         <InstanceCard
           :instance="instance"
           :launching="launchingInstanceId === instance.id"
           @launch="launchInstance"
           @open-folder="openInstanceFolder"
+          @manage-mods="openModDialog"
           @rename="openRenameDialog"
           @delete="openDeleteDialog"
         />
@@ -405,24 +375,17 @@ onMounted(() => {
     <!-- 列表视图 -->
     <v-card v-else color="surface-container" variant="flat">
       <v-list lines="two" bg-color="transparent">
-        <v-list-item
-          v-for="instance in filteredInstances"
-          :key="instance.name"
-          class="py-3"
-        >
+        <v-list-item v-for="instance in filteredInstances" :key="instance.name" class="py-3">
           <template #prepend>
-            <v-avatar size="44" :color="getLoaderColor(instance.loaderType).bgColor" class="mr-3">
-              <v-icon size="22" :color="getLoaderColor(instance.loaderType).color">{{ getLoaderIcon(instance.loaderType) }}</v-icon>
-            </v-avatar>
+            <InstanceAvatar :instance="instance" :size="44" class="mr-3" />
           </template>
 
           <v-list-item-title class="font-weight-medium">
             {{ instance.name }}
           </v-list-item-title>
           <v-list-item-subtitle>
-            <span v-if="instance.loaderType && instance.loaderType !== 'None'">{{ instance.loaderType }} · </span>
-            {{ instance.gameVersion || instance.version }}
-            <span class="ml-2">
+            {{ instanceMeta(instance) }}
+            <span class="ml-2 d-inline-flex align-center">
               <v-icon size="12" class="mr-1">mdi-clock-outline</v-icon>
               {{ formatLastPlayed(instance.lastPlayed) }}
             </span>
@@ -451,20 +414,26 @@ onMounted(() => {
                   <template #prepend>
                     <v-icon size="18">mdi-folder-open</v-icon>
                   </template>
-                  <v-list-item-title class="text-body-2">打开文件夹</v-list-item-title>
+                  <v-list-item-title class="text-body-medium">打开文件夹</v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="openModDialog(instance)">
+                  <template #prepend>
+                    <v-icon size="18">mdi-puzzle-outline</v-icon>
+                  </template>
+                  <v-list-item-title class="text-body-medium">Mod 管理</v-list-item-title>
                 </v-list-item>
                 <v-list-item @click="openRenameDialog(instance)">
                   <template #prepend>
                     <v-icon size="18">mdi-pencil</v-icon>
                   </template>
-                  <v-list-item-title class="text-body-2">重命名</v-list-item-title>
+                  <v-list-item-title class="text-body-medium">重命名</v-list-item-title>
                 </v-list-item>
                 <v-divider class="my-1" />
                 <v-list-item @click="openDeleteDialog(instance)">
                   <template #prepend>
                     <v-icon size="18" color="error">mdi-delete</v-icon>
                   </template>
-                  <v-list-item-title class="text-body-2 text-error">删除</v-list-item-title>
+                  <v-list-item-title class="text-body-medium text-error">删除</v-list-item-title>
                 </v-list-item>
               </v-list>
             </v-menu>
@@ -474,7 +443,7 @@ onMounted(() => {
     </v-card>
 
     <!-- 统计信息 -->
-    <div v-if="instances.length > 0" class="text-center text-caption text-on-surface-variant mt-4">
+    <div v-if="instances.length > 0" class="text-center text-body-small text-on-surface-variant mt-4">
       共 {{ instances.length }} 个实例
       <span v-if="searchQuery && filteredInstances.length !== instances.length">
         ，显示 {{ filteredInstances.length }} 个
@@ -485,7 +454,7 @@ onMounted(() => {
     <v-dialog v-model="renameDialog" max-width="360">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
-          <div class="text-h6 font-weight-bold mb-4">重命名实例</div>
+          <div class="text-title-large font-weight-bold mb-4">重命名实例</div>
           <v-text-field
             v-model="renameInstanceName"
             label="新名称"
@@ -503,12 +472,118 @@ onMounted(() => {
       </v-card>
     </v-dialog>
 
+    <!-- Mod 管理对话框 -->
+    <v-dialog v-model="modDialog" max-width="640" scrollable>
+      <v-card color="surface-container-high">
+        <v-card-title class="d-flex align-center pa-4 pb-3">
+          <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-puzzle-outline</v-icon>
+          <span class="text-title-medium font-weight-bold">Mod 管理</span>
+          <span v-if="currentInstance" class="text-body-medium text-on-surface-variant ml-2">
+            · {{ currentInstance.name }}
+          </span>
+          <v-spacer />
+          <v-btn
+            icon
+            size="small"
+            variant="text"
+            aria-label="重新加载模组列表"
+            :loading="modsLoading"
+            @click="loadMods"
+          >
+            <v-icon size="18">mdi-refresh</v-icon>
+          </v-btn>
+          <v-btn icon size="small" variant="text" aria-label="关闭" @click="modDialog = false">
+            <v-icon size="18">mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        <v-divider />
+
+        <v-card-text class="pa-0" style="min-height: 160px">
+          <div v-if="modsLoading && mods.length === 0" class="d-flex align-center justify-center pa-8">
+            <v-progress-circular indeterminate size="28" color="primary" />
+          </div>
+          <div v-else-if="modsError" class="text-center pa-8">
+            <div class="text-body-medium text-error mb-3">{{ modsError }}</div>
+            <v-btn size="small" variant="tonal" color="primary" @click="loadMods">重试</v-btn>
+          </div>
+          <div v-else-if="mods.length === 0" class="text-center pa-8 text-on-surface-variant">
+            <v-icon size="36" class="mb-2" color="on-surface-variant">mdi-puzzle-outline</v-icon>
+            <div class="text-body-medium">这个实例还没有模组</div>
+          </div>
+          <v-list v-else lines="two" density="compact">
+            <v-list-item v-for="mod in mods" :key="mod.fileName">
+              <template #prepend>
+                <v-icon size="20" color="on-surface-variant">mdi-puzzle-outline</v-icon>
+              </template>
+              <v-list-item-title class="text-body-medium" :class="{ 'text-on-surface-variant': !mod.enabled }">
+                {{ mod.displayName }}
+              </v-list-item-title>
+              <v-list-item-subtitle class="text-body-small">
+                <template v-if="mod.version">v{{ mod.version }} · </template>
+                {{ formatModSize(mod.size) }} · {{ mod.fileName }}
+              </v-list-item-subtitle>
+              <template #append>
+                <div class="d-flex align-center ga-1">
+                  <v-switch
+                    :model-value="mod.enabled"
+                    :loading="modBusy === mod.fileName"
+                    :disabled="modBusy === mod.fileName"
+                    :aria-label="mod.enabled ? `禁用 ${mod.displayName}` : `启用 ${mod.displayName}`"
+                    hide-details
+                    inset
+                    density="compact"
+                    color="primary"
+                    @update:model-value="toggleMod(mod)"
+                  />
+                  <v-btn
+                    icon
+                    size="small"
+                    variant="text"
+                    :aria-label="`删除 ${mod.displayName}`"
+                    :disabled="modBusy === mod.fileName"
+                    @click="askDeleteMod(mod)"
+                  >
+                    <v-icon size="18">mdi-delete-outline</v-icon>
+                  </v-btn>
+                </div>
+              </template>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+
+        <v-divider />
+        <v-card-actions class="pa-3">
+          <span class="text-body-small text-on-surface-variant"> 禁用只是把文件改名为 .jar.disabled，不会删除 </span>
+          <v-spacer />
+          <v-btn variant="text" @click="modDialog = false">关闭</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- 删除模组确认 -->
+    <v-dialog v-model="modDeleteDialog" max-width="380">
+      <v-card color="surface-container-high">
+        <v-card-text class="pa-5">
+          <div class="text-title-large font-weight-bold mb-2">删除模组</div>
+          <div class="text-body-medium text-on-surface-variant">
+            确定要删除 <strong class="text-on-surface">{{ modToDelete?.displayName }}</strong> 吗？ 文件
+            {{ modToDelete?.fileName }} 会直接从磁盘移除。
+          </div>
+        </v-card-text>
+        <v-card-actions class="pa-4 pt-0">
+          <v-spacer />
+          <v-btn variant="text" @click="modDeleteDialog = false">取消</v-btn>
+          <v-btn color="error" :loading="modBusy === modToDelete?.fileName" @click="deleteMod">删除</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <!-- 删除确认对话框 -->
     <v-dialog v-model="deleteDialog" max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
-          <div class="text-h6 font-weight-bold mb-2">删除实例</div>
-          <div class="text-body-2 text-on-surface-variant mb-4">
+          <div class="text-title-large font-weight-bold mb-2">删除实例</div>
+          <div class="text-body-medium text-on-surface-variant mb-4">
             确定要删除 <strong class="text-on-surface">{{ currentInstance?.name }}</strong> 吗？此操作无法撤销。
           </div>
           <v-text-field

@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2025 jdbEwl
+Copyright (c) 2025-2026 JDBeWL
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,4 +19,17 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Third-party notices
+-------------------
+
+public/icons/{dirt_path,grass_block,snow_grass}.{svg,ico}
+Block artwork by XuanYuSLF, contributed through pull request #2 (2025-10-01) and
+still copyright of its author. Distributed with this project under the MIT terms
+above, together with this attribution.
+
+@mdi/font
+The Material Design Icons webfont shipped in the user interface. Its icons and
+fonts are under Apache-2.0; the unmodified license text is bundled with the
+application as licenses/mdi-font-LICENSE.txt.
 

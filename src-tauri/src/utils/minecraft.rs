@@ -153,9 +153,7 @@ fn evaluate_rules_impl(rules: Option<&serde_json::Value>, default: RuleDefault) 
 /// Minecraft 1.20+ 的版本 JSON 使用 features 来控制可选参数。
 /// 只有所有请求的 features 都被启动器支持时才返回 true。
 pub fn check_features(features: &serde_json::Value) -> bool {
-    const SUPPORTED_FEATURES: &[&str] = &[
-        "has_custom_resolution",
-    ];
+    const SUPPORTED_FEATURES: &[&str] = &["has_custom_resolution"];
 
     if let Some(obj) = features.as_object() {
         for (key, value) in obj {
@@ -311,18 +309,22 @@ mod tests {
     #[test]
     fn test_maven_name_to_path_no_dots_in_group() {
         let result = maven_name_to_path("mymod:core:2.0.0", None, "jar");
-        assert_eq!(
-            result,
-            Some("mymod/core/2.0.0/core-2.0.0.jar".to_string())
-        );
+        assert_eq!(result, Some("mymod/core/2.0.0/core-2.0.0.jar".to_string()));
     }
 
     #[test]
     fn test_maven_name_to_path_custom_extension() {
-        let result = maven_name_to_path("net.minecraftforge:forge:1.20.2-48.0.48", Some("sources"), "zip");
+        let result = maven_name_to_path(
+            "net.minecraftforge:forge:1.20.2-48.0.48",
+            Some("sources"),
+            "zip",
+        );
         assert_eq!(
             result,
-            Some("net/minecraftforge/forge/1.20.2-48.0.48/forge-1.20.2-48.0.48-sources.zip".to_string())
+            Some(
+                "net/minecraftforge/forge/1.20.2-48.0.48/forge-1.20.2-48.0.48-sources.zip"
+                    .to_string()
+            )
         );
     }
 
@@ -360,7 +362,11 @@ mod tests {
         assert!(!evaluate_rules(Some(&rules)));
 
         // 允许其他 OS（当前 OS 不匹配，保持默认禁止）
-        let other_os = if current_mc_os == "windows" { "osx" } else { "windows" };
+        let other_os = if current_mc_os == "windows" {
+            "osx"
+        } else {
+            "windows"
+        };
         let rules = serde_json::json!([
             {"action": "allow", "os": {"name": other_os}}
         ]);
@@ -394,7 +400,11 @@ mod tests {
 
     #[test]
     fn test_evaluate_rules_os_no_match() {
-        let other_os = if get_mc_os_name() == "windows" { "osx" } else { "windows" };
+        let other_os = if get_mc_os_name() == "windows" {
+            "osx"
+        } else {
+            "windows"
+        };
         let rules = serde_json::json!([
             {"action": "disallow", "os": {"name": other_os}}
         ]);
@@ -612,4 +622,3 @@ mod tests {
         assert!(content.contains("langServer:en_us"));
     }
 }
-

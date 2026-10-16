@@ -1,23 +1,15 @@
 <template>
   <v-container fluid class="page-container pa-4">
-    <v-card color="surface-container">
+    <v-card variant="flat" color="surface-container">
       <!-- 标题栏 -->
       <v-card-title class="d-flex align-center pa-4">
-        <v-btn 
-          variant="text" 
-          icon="mdi-arrow-left" 
-          :disabled="installing"
-          @click="goBack" 
-          class="mr-2"
-        />
+        <v-btn variant="text" icon="mdi-arrow-left" :disabled="installing" @click="goBack" class="mr-2" />
         <div class="flex-grow-1">
           <div class="d-flex align-center">
-            <span class="text-h6">{{ title }}</span>
-            <v-chip v-if="installing" color="primary" variant="tonal" size="small" class="ml-2">
-              安装中
-            </v-chip>
+            <span class="text-title-large">{{ title }}</span>
+            <v-chip v-if="installing" color="primary" variant="tonal" size="small" class="ml-2"> 安装中 </v-chip>
           </div>
-          <div class="text-caption text-on-surface-variant">Modrinth · {{ projectId }}</div>
+          <div class="text-body-small text-on-surface-variant">Modrinth · {{ projectId }}</div>
         </div>
       </v-card-title>
 
@@ -39,9 +31,9 @@
                     class="mr-2"
                   />
                   <v-icon v-else size="18" color="primary" class="mr-2">mdi-download</v-icon>
-                  <span class="text-body-2">{{ installProgress.message }}</span>
+                  <span class="text-body-medium">{{ installProgress.message }}</span>
                 </div>
-                <span class="text-body-2 font-weight-medium text-primary">{{ installProgress.progress }}%</span>
+                <span class="text-body-medium font-weight-medium text-primary">{{ installProgress.progress }}%</span>
               </div>
               <v-progress-linear
                 :model-value="installProgress.progress"
@@ -84,12 +76,7 @@
         <!-- 版本选择表单 -->
         <template v-else-if="!installing">
           <!-- 无可用版本 -->
-          <v-alert
-            v-if="modpackVersions.length === 0"
-            type="warning"
-            variant="tonal"
-            class="mb-4"
-          >
+          <v-alert v-if="modpackVersions.length === 0" type="warning" variant="tonal" class="mb-4">
             <template #title>无可用版本</template>
             该整合包暂无可安装的版本，请返回重新选择
           </v-alert>
@@ -97,12 +84,12 @@
           <template v-else>
             <!-- 版本配置区域 -->
             <div class="config-section mb-4">
-              <div class="text-subtitle-2 text-on-surface-variant mb-3">
+              <div class="text-title-small text-on-surface-variant mb-3">
                 <v-icon size="18" class="mr-1">mdi-tune</v-icon>
                 版本配置
               </div>
-              
-              <v-row dense>
+
+              <v-row density="compact">
                 <!-- 加载器 -->
                 <v-col cols="6" sm="4" md="3">
                   <v-select
@@ -158,7 +145,7 @@
                     <template #item="{ item, props }">
                       <v-list-item v-bind="props">
                         <template #subtitle>
-                          <span class="text-caption">
+                          <span class="text-body-small">
                             {{ item.game_versions?.slice(0, 3).join(', ') }}
                             {{ item.game_versions?.length > 3 ? '...' : '' }}
                           </span>
@@ -172,11 +159,11 @@
 
             <!-- 实例配置区域 -->
             <div class="config-section mb-4">
-              <div class="text-subtitle-2 text-on-surface-variant mb-3">
+              <div class="text-title-small text-on-surface-variant mb-3">
                 <v-icon size="18" class="mr-1">mdi-folder-cog</v-icon>
                 实例配置
               </div>
-              
+
               <v-text-field
                 v-model="instanceName"
                 label="实例名称"
@@ -194,9 +181,9 @@
                 </template>
                 <template #append-inner>
                   <v-fade-transition>
-                    <v-icon 
-                      v-if="instanceName && !instanceNameError && !checkingInstanceName" 
-                      size="18" 
+                    <v-icon
+                      v-if="instanceName && !instanceNameError && !checkingInstanceName"
+                      size="18"
                       color="success"
                     >
                       mdi-check-circle
@@ -204,25 +191,18 @@
                   </v-fade-transition>
                 </template>
               </v-text-field>
-              
-              <div class="text-caption text-on-surface-variant mt-2">
-                留空将使用整合包名称作为实例名称
-              </div>
+
+              <div class="text-body-small text-on-surface-variant mt-2">留空将使用整合包名称作为实例名称</div>
             </div>
 
             <!-- 选中版本信息预览 -->
             <v-expand-transition>
-              <v-card 
-                v-if="selectedVersionInfo" 
-                color="surface-container-high" 
-                variant="flat"
-                class="mb-4"
-              >
+              <v-card v-if="selectedVersionInfo" color="surface-container-high" variant="flat" class="mb-4">
                 <v-card-text class="pa-3">
                   <div class="d-flex align-center justify-space-between">
                     <div>
-                      <div class="text-body-2 font-weight-medium">{{ selectedVersionInfo.name }}</div>
-                      <div class="text-caption text-on-surface-variant">
+                      <div class="text-body-medium font-weight-medium">{{ selectedVersionInfo.name }}</div>
+                      <div class="text-body-small text-on-surface-variant">
                         版本号: {{ selectedVersionInfo.version_number }}
                       </div>
                     </div>
@@ -246,17 +226,11 @@
 
         <!-- 操作按钮 -->
         <div class="d-flex justify-end ga-2 mt-4">
+          <v-btn v-if="!installing" variant="text" @click="goBack"> 取消 </v-btn>
           <v-btn
             v-if="!installing"
-            variant="text"
-            @click="goBack"
-          >
-            取消
-          </v-btn>
-          <v-btn 
-            v-if="!installing"
-            color="primary" 
-            :disabled="!canInstall" 
+            color="primary"
+            :disabled="!canInstall"
             :loading="checkingInstanceName"
             @click="install"
           >
@@ -270,243 +244,245 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { useNotificationStore } from '../stores/notificationStore'
-import { modpackApi, instanceApi } from '../services'
-import { logError } from '../utils/logger'
-import { compareVersionDesc } from '../utils/format'
-import type { ModrinthVersion, InstallProgressPayload } from '../types/events'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useNotificationStore } from '../stores/notificationStore';
+import { modpackApi, instanceApi } from '../services';
+import { logError } from '../utils/logger';
+import { compareVersionDesc, getErrorMessage } from '../utils/format';
+import type { ModrinthVersion, InstallProgressPayload } from '../types/events';
 
-const route = useRoute()
-const router = useRouter()
-const notificationStore = useNotificationStore()
+const route = useRoute();
+const router = useRouter();
+const notificationStore = useNotificationStore();
 
-const projectId = String(route.query.projectId || '')
-const title = String(route.query.title || '')
+const projectId = String(route.query.projectId || '');
+const title = String(route.query.title || '');
 
-const loadingVersions = ref(false)
-const modpackVersions = ref<ModrinthVersion[]>([])
-const selectedVersionId = ref<string | null>(null)
-const selectedLoader = ref<string | null>(null)
-const selectedGameVersion = ref<string | null>(null)
-const instanceName = ref<string>('')
-const installing = ref(false)
-const cancelling = ref(false)
+const loadingVersions = ref(false);
+const modpackVersions = ref<ModrinthVersion[]>([]);
+const selectedVersionId = ref<string | null>(null);
+const selectedLoader = ref<string | null>(null);
+const selectedGameVersion = ref<string | null>(null);
+const instanceName = ref<string>('');
+const installing = ref(false);
+const cancelling = ref(false);
 const installProgress = ref<InstallProgressPayload>({
   progress: 0,
   message: '准备安装...',
-  indeterminate: false
-})
+  indeterminate: false,
+});
 
-const instanceNameError = ref<string | null>(null)
-const checkingInstanceName = ref(false)
+const instanceNameError = ref<string | null>(null);
+const checkingInstanceName = ref(false);
 
-let unlistenProgress: UnlistenFn | null = null
-let instanceNameCheckTimeout: ReturnType<typeof setTimeout> | null = null
+let unlistenProgress: UnlistenFn | null = null;
+let instanceNameCheckTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // 获取选中版本的详细信息
 const selectedVersionInfo = computed(() => {
-  if (!selectedVersionId.value) return null
-  return modpackVersions.value.find(v => v.id === selectedVersionId.value) || null
-})
+  if (!selectedVersionId.value) return null;
+  return modpackVersions.value.find((v) => v.id === selectedVersionId.value) || null;
+});
 
 // 获取实际使用的实例名称
 const effectiveInstanceName = computed(() => {
-  return instanceName.value.trim() || title
-})
+  return instanceName.value.trim() || title;
+});
 
 // 监听实例名称变化
 watch(instanceName, (newName) => {
   if (instanceNameCheckTimeout) {
-    clearTimeout(instanceNameCheckTimeout)
+    clearTimeout(instanceNameCheckTimeout);
   }
-  
-  instanceNameError.value = null
-  
+
+  instanceNameError.value = null;
+
   // 使用实际名称进行检查
-  const nameToCheck = newName.trim() || title
-  if (!nameToCheck) return
-  
+  const nameToCheck = newName.trim() || title;
+  if (!nameToCheck) return;
+
   instanceNameCheckTimeout = setTimeout(async () => {
-    await checkInstanceName(nameToCheck)
-  }, 300)
-})
+    await checkInstanceName(nameToCheck);
+  }, 300);
+});
 
 async function checkInstanceName(name: string) {
-  if (!name) return
-  
-  checkingInstanceName.value = true
+  if (!name) return;
+
+  checkingInstanceName.value = true;
   try {
-    const result = await instanceApi.checkInstanceNameAvailable(name)
-    instanceNameError.value = result.is_valid ? null : result.error_message
+    const result = await instanceApi.checkInstanceNameAvailable(name);
+    instanceNameError.value = result.is_valid ? null : result.error_message;
   } catch (e) {
-    logError('检查实例名称失败', e, 'InstallModpackView')
+    logError('检查实例名称失败', e, 'InstallModpackView');
   } finally {
-    checkingInstanceName.value = false
+    checkingInstanceName.value = false;
   }
 }
 
 const canInstall = computed(() => {
-  return selectedVersionId.value && 
-         !instanceNameError.value && 
-         !checkingInstanceName.value &&
-         modpackVersions.value.length > 0
-})
+  return (
+    selectedVersionId.value &&
+    !instanceNameError.value &&
+    !checkingInstanceName.value &&
+    modpackVersions.value.length > 0
+  );
+});
 
 onBeforeRouteLeave(() => {
   if (installing.value && !cancelling.value) {
-    notificationStore.warning('安装进行中', '请先取消安装或等待安装完成')
-    return false
+    notificationStore.warning('安装进行中', '请先取消安装或等待安装完成');
+    return false;
   }
-  return true
-})
+  return true;
+});
 
 function goBack() {
   if (installing.value && !cancelling.value) {
-    notificationStore.warning('安装进行中', '请先取消安装或等待安装完成')
-    return
+    notificationStore.warning('安装进行中', '请先取消安装或等待安装完成');
+    return;
   }
-  router.back()
+  router.back();
 }
 
 async function cancelInstall() {
-  if (cancelling.value) return
-  cancelling.value = true
+  if (cancelling.value) return;
+  cancelling.value = true;
   try {
-    await modpackApi.cancelModpackInstall()
-    notificationStore.info('正在取消', '安装将在当前步骤完成后取消')
+    await modpackApi.cancelModpackInstall();
+    notificationStore.info('正在取消', '安装将在当前步骤完成后取消');
   } catch (e) {
-    logError('取消安装失败', e, 'InstallModpackView')
+    logError('取消安装失败', e, 'InstallModpackView');
   }
 }
 
 const loaderOptions = computed(() => {
-  const loaders = new Set<string>()
+  const loaders = new Set<string>();
   for (const v of modpackVersions.value) {
     for (const loader of v.loaders) {
-      loaders.add(loader)
+      loaders.add(loader);
     }
   }
-  const priority = ['forge', 'neoforge', 'fabric', 'quilt']
+  const priority = ['forge', 'neoforge', 'fabric', 'quilt'];
   return Array.from(loaders).sort((a, b) => {
-    const ai = priority.indexOf(a.toLowerCase())
-    const bi = priority.indexOf(b.toLowerCase())
-    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
-  })
-})
+    const ai = priority.indexOf(a.toLowerCase());
+    const bi = priority.indexOf(b.toLowerCase());
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+});
 
 const filteredGameVersions = computed(() => {
-  if (!selectedLoader.value) return []
-  
-  const versions = new Set<string>()
+  if (!selectedLoader.value) return [];
+
+  const versions = new Set<string>();
   for (const v of modpackVersions.value) {
-    if (v.loaders.some(l => l.toLowerCase() === selectedLoader.value?.toLowerCase())) {
+    if (v.loaders.some((l) => l.toLowerCase() === selectedLoader.value?.toLowerCase())) {
       for (const gv of v.game_versions) {
-        versions.add(gv)
+        versions.add(gv);
       }
     }
   }
-  return Array.from(versions).sort(compareVersionDesc)
-})
+  return Array.from(versions).sort(compareVersionDesc);
+});
 
 const filteredModpackVersions = computed(() => {
-  if (!selectedLoader.value) return []
-  
-  let filtered = modpackVersions.value.filter(v => 
-    v.loaders.some(l => l.toLowerCase() === selectedLoader.value?.toLowerCase())
-  )
-  
+  if (!selectedLoader.value) return [];
+
+  let filtered = modpackVersions.value.filter((v) =>
+    v.loaders.some((l) => l.toLowerCase() === selectedLoader.value?.toLowerCase()),
+  );
+
   if (selectedGameVersion.value) {
-    filtered = filtered.filter(v => v.game_versions.includes(selectedGameVersion.value as string))
+    filtered = filtered.filter((v) => v.game_versions.includes(selectedGameVersion.value as string));
   }
-  
-  return filtered.map(v => ({
+
+  return filtered.map((v) => ({
     ...v,
-    displayName: `${v.name} (${v.version_number})`
-  }))
-})
+    displayName: `${v.name} (${v.version_number})`,
+  }));
+});
 
 function onLoaderChange() {
-  selectedGameVersion.value = filteredGameVersions.value[0] || null
-  onGameVersionChange()
+  selectedGameVersion.value = filteredGameVersions.value[0] || null;
+  onGameVersionChange();
 }
 
 function onGameVersionChange() {
-  const first = filteredModpackVersions.value[0]
-  selectedVersionId.value = first ? first.id : null
+  const first = filteredModpackVersions.value[0];
+  selectedVersionId.value = first ? first.id : null;
 }
 
 async function loadVersions() {
-  if (!projectId) return
-  loadingVersions.value = true
+  if (!projectId) return;
+  loadingVersions.value = true;
   try {
-    const versions = await modpackApi.getModrinthModpackVersions(projectId)
-    modpackVersions.value = versions || []
+    const versions = await modpackApi.getModrinthModpackVersions(projectId);
+    modpackVersions.value = versions || [];
 
     if (loaderOptions.value.length > 0) {
-      selectedLoader.value = loaderOptions.value[0]
-      onLoaderChange()
+      selectedLoader.value = loaderOptions.value[0];
+      onLoaderChange();
     }
   } catch (e) {
-    logError('加载整合包版本失败', e, 'InstallModpackView')
-    notificationStore.error('加载失败', '无法获取整合包版本信息')
+    logError('加载整合包版本失败', e, 'InstallModpackView');
+    notificationStore.error('加载失败', '无法获取整合包版本信息');
   } finally {
-    loadingVersions.value = false
+    loadingVersions.value = false;
   }
 }
 
 async function install() {
-  if (!projectId || !selectedVersionId.value || !canInstall.value) return
-  
-  installing.value = true
-  installProgress.value = { progress: 0, message: '准备安装...', indeterminate: false } as InstallProgressPayload
-  
+  if (!projectId || !selectedVersionId.value || !canInstall.value) return;
+
+  installing.value = true;
+  installProgress.value = { progress: 0, message: '准备安装...', indeterminate: false } as InstallProgressPayload;
+
   try {
     unlistenProgress = await listen<InstallProgressPayload>('modpack-install-progress', (event) => {
-      installProgress.value = event.payload
-    })
+      installProgress.value = event.payload;
+    });
 
     await modpackApi.installModrinthModpack({
       modpack_id: projectId,
       version_id: selectedVersionId.value!,
       instance_name: effectiveInstanceName.value,
       install_path: '',
-    })
-    
-    notificationStore.success('安装成功', `${effectiveInstanceName.value} 已安装完成`)
-    router.push('/instance-manager')
+    });
+
+    notificationStore.success('安装成功', `${effectiveInstanceName.value} 已安装完成`);
+    router.push('/instance-manager');
   } catch (e) {
-    logError('安装整合包失败', e, 'InstallModpackView')
-    const errorMessage = e instanceof Error ? e.message : String(e)
-    notificationStore.error('安装失败', errorMessage, true)
+    logError('安装整合包失败', e, 'InstallModpackView');
+    const errorMessage = getErrorMessage(e);
+    notificationStore.error('安装失败', errorMessage, true);
   } finally {
-    installing.value = false
-    cancelling.value = false
+    installing.value = false;
+    cancelling.value = false;
     if (unlistenProgress) {
-      unlistenProgress()
-      unlistenProgress = null
+      unlistenProgress();
+      unlistenProgress = null;
     }
   }
 }
 
 onMounted(async () => {
-  await loadVersions()
+  await loadVersions();
   // 检查默认实例名称
   if (title) {
-    await checkInstanceName(title)
+    await checkInstanceName(title);
   }
-})
+});
 
 onUnmounted(() => {
   if (unlistenProgress) {
-    unlistenProgress()
+    unlistenProgress();
   }
   if (instanceNameCheckTimeout) {
-    clearTimeout(instanceNameCheckTimeout)
+    clearTimeout(instanceNameCheckTimeout);
   }
-})
+});
 </script>
 
 <style scoped>

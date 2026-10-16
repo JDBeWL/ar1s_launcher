@@ -5,8 +5,8 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 
@@ -57,12 +57,18 @@ pub fn spawn_and_monitor_process(
 }
 
 /// 启动监控线程（带超时机制）
-fn spawn_monitor_thread(mut child: Child, window: tauri::Window, pid: u32, working_dir: std::path::PathBuf) {
+fn spawn_monitor_thread(
+    mut child: Child,
+    window: tauri::Window,
+    pid: u32,
+    working_dir: std::path::PathBuf,
+) {
     let stdout = child.stdout.take().expect("Failed to open stdout");
     let stderr = child.stderr.take().expect("Failed to open stderr");
 
     let is_running = Arc::new(AtomicBool::new(true));
-    let stderr_lines: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let stderr_lines: Arc<std::sync::Mutex<Vec<String>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
     let window_clone = window.clone();
     let is_running_stdout = is_running.clone();
 
@@ -110,7 +116,7 @@ fn spawn_monitor_thread(mut child: Child, window: tauri::Window, pid: u32, worki
         let timeout_thread = std::thread::spawn(move || {
             while is_running_timeout.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_secs(60));
-                
+
                 if !is_running_timeout.load(Ordering::SeqCst) {
                     break;
                 }
@@ -146,7 +152,10 @@ fn spawn_monitor_thread(mut child: Child, window: tauri::Window, pid: u32, worki
                 );
                 let _ = window.emit(
                     "minecraft-timeout",
-                    format!("游戏运行超过 {} 小时，监控已停止", MAX_GAME_RUNTIME.as_secs() / 3600),
+                    format!(
+                        "游戏运行超过 {} 小时，监控已停止",
+                        MAX_GAME_RUNTIME.as_secs() / 3600
+                    ),
                 );
             }
             Err(e) => {
@@ -259,4 +268,3 @@ fn handle_process_exit(
         format!("游戏已退出，状态码: {:?}", exit_code),
     );
 }
-

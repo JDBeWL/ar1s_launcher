@@ -4,8 +4,7 @@ use crate::errors::LauncherError;
 use crate::services::loaders::{
     fabric,
     forge::{self, ForgeVersion},
-    neoforge,
-    quilt,
+    neoforge, quilt,
 };
 use serde::Serialize;
 
@@ -27,12 +26,16 @@ pub struct AvailableLoaders {
 }
 
 #[tauri::command]
-pub async fn get_forge_versions(minecraft_version: String) -> Result<Vec<ForgeVersion>, LauncherError> {
+pub async fn get_forge_versions(
+    minecraft_version: String,
+) -> Result<Vec<ForgeVersion>, LauncherError> {
     forge::get_forge_versions(&minecraft_version).await
 }
 
 #[tauri::command]
-pub async fn get_fabric_versions(minecraft_version: String) -> Result<Vec<LoaderVersionInfo>, LauncherError> {
+pub async fn get_fabric_versions(
+    minecraft_version: String,
+) -> Result<Vec<LoaderVersionInfo>, LauncherError> {
     let versions = fabric::get_fabric_versions(&minecraft_version).await?;
     Ok(versions
         .into_iter()
@@ -44,7 +47,9 @@ pub async fn get_fabric_versions(minecraft_version: String) -> Result<Vec<Loader
 }
 
 #[tauri::command]
-pub async fn get_quilt_versions(minecraft_version: String) -> Result<Vec<LoaderVersionInfo>, LauncherError> {
+pub async fn get_quilt_versions(
+    minecraft_version: String,
+) -> Result<Vec<LoaderVersionInfo>, LauncherError> {
     let versions = quilt::get_quilt_versions(&minecraft_version).await?;
     Ok(versions
         .into_iter()
@@ -56,7 +61,9 @@ pub async fn get_quilt_versions(minecraft_version: String) -> Result<Vec<LoaderV
 }
 
 #[tauri::command]
-pub async fn get_neoforge_versions(minecraft_version: String) -> Result<Vec<LoaderVersionInfo>, LauncherError> {
+pub async fn get_neoforge_versions(
+    minecraft_version: String,
+) -> Result<Vec<LoaderVersionInfo>, LauncherError> {
     let versions = neoforge::get_neoforge_versions(&minecraft_version).await?;
     Ok(versions
         .into_iter()
@@ -69,7 +76,9 @@ pub async fn get_neoforge_versions(minecraft_version: String) -> Result<Vec<Load
 
 /// 检查指定 MC 版本支持哪些加载器
 #[tauri::command]
-pub async fn get_available_loaders(minecraft_version: String) -> Result<AvailableLoaders, LauncherError> {
+pub async fn get_available_loaders(
+    minecraft_version: String,
+) -> Result<AvailableLoaders, LauncherError> {
     // 并行检查所有加载器
     let (forge_result, fabric_result, quilt_result, neoforge_result) = tokio::join!(
         check_forge_available(&minecraft_version),

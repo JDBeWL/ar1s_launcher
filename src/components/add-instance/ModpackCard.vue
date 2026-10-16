@@ -1,14 +1,15 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import type { ModrinthModpack } from '../../types/events';
 
-defineProps<{
-  modpack: ModrinthModpack
-  selected: boolean
-}>()
+const props = defineProps<{
+  modpack: ModrinthModpack;
+  selected: boolean;
+}>();
 
 const emit = defineEmits<{
-  (e: 'select', modpack: ModrinthModpack): void
-}>()
+  (e: 'select', modpack: ModrinthModpack): void;
+}>();
 
 function formatNumber(num: number): string {
   if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
@@ -35,10 +36,13 @@ function sanitizeModrinthImageUrl(url: string | null | undefined): string {
     return '';
   }
 }
+
+const iconUrl = computed(() => sanitizeModrinthImageUrl(props.modpack.icon_url));
 </script>
 
 <template>
-  <v-card 
+  <v-card
+    variant="flat"
     color="surface-container"
     class="modpack-card h-100"
     :class="{ 'modpack-card--selected': selected }"
@@ -47,25 +51,26 @@ function sanitizeModrinthImageUrl(url: string | null | undefined): string {
     <v-card-text class="pa-4">
       <div class="d-flex align-start mb-3">
         <!-- 图标 -->
-        <v-avatar
-          size="56"
-          rounded="lg"
-          class="mr-3 flex-shrink-0"
-          :color="modpack.icon_url ? undefined : 'secondary-container'"
-        >
-          <v-img v-if="sanitizeModrinthImageUrl(modpack.icon_url)" :src="sanitizeModrinthImageUrl(modpack.icon_url)" cover />
+        <v-avatar size="56" rounded="lg" class="mr-3 flex-shrink-0" color="secondary-container">
+          <v-img v-if="iconUrl" :src="iconUrl" cover>
+            <template #error>
+              <div class="d-flex align-center justify-center w-100 h-100">
+                <v-icon size="28" color="on-secondary-container">mdi-package-variant</v-icon>
+              </div>
+            </template>
+          </v-img>
           <v-icon v-else size="28" color="on-secondary-container">mdi-package-variant</v-icon>
         </v-avatar>
 
         <!-- 标题和作者 -->
         <div class="flex-grow-1 min-width-0">
-          <div class="text-subtitle-1 font-weight-bold text-truncate">{{ modpack.title }}</div>
-          <div class="text-caption text-on-surface-variant">{{ modpack.author }}</div>
+          <div class="text-title-medium font-weight-bold text-truncate">{{ modpack.title }}</div>
+          <div class="text-body-small text-on-surface-variant">{{ modpack.author }}</div>
         </div>
       </div>
 
       <!-- 描述 -->
-      <div class="text-body-2 text-on-surface-variant mb-3 modpack-desc">
+      <div class="text-body-medium text-on-surface-variant mb-3 modpack-desc">
         {{ truncateText(modpack.description, 80) }}
       </div>
 
@@ -80,18 +85,13 @@ function sanitizeModrinthImageUrl(url: string | null | undefined): string {
         >
           {{ loader }}
         </v-chip>
-        <v-chip
-          v-if="modpack.game_versions.length > 0"
-          size="small"
-          color="secondary"
-          variant="tonal"
-        >
+        <v-chip v-if="modpack.game_versions.length > 0" size="small" color="secondary" variant="tonal">
           {{ modpack.game_versions[0] }}
         </v-chip>
       </div>
 
       <!-- 统计 -->
-      <div class="d-flex align-center text-caption text-on-surface-variant">
+      <div class="d-flex align-center text-body-small text-on-surface-variant">
         <v-icon size="16" class="mr-1">mdi-download</v-icon>
         <span>{{ formatNumber(modpack.downloads) }}</span>
       </div>

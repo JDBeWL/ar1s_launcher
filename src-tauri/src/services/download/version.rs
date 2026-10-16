@@ -43,7 +43,7 @@ pub async fn process_and_download_version(
         let local_text = fs::read_to_string(&local_version_json_path)?;
         let local_json: serde_json::Value = serde_json::from_str(&local_text)
             .map_err(|e| LauncherError::Custom(format!("解析本地版本JSON失败: {}", e)))?;
-        
+
         // 检查是否有 inheritsFrom 字段
         if let Some(inherits_from) = local_json["inheritsFrom"].as_str() {
             info!("版本 {} 继承自 {}", version_id, inherits_from);
@@ -52,13 +52,21 @@ pub async fn process_and_download_version(
                 inherits_from.to_string(),
                 mirror.clone(),
                 window,
-            )).await?;
-            
+            ))
+            .await?;
+
             // 返回，因为基础版本已经下载完成
             // 整合包的库文件需要单独处理
-            return download_modpack_libraries(&local_json, &libraries_base_dir, is_mirror, base_url, window).await;
+            return download_modpack_libraries(
+                &local_json,
+                &libraries_base_dir,
+                is_mirror,
+                base_url,
+                window,
+            )
+            .await;
         }
-        
+
         (version_id.clone(), local_json, local_text)
     } else {
         // 从网络获取版本信息
@@ -89,7 +97,7 @@ pub async fn process_and_download_version(
         let version_json: serde_json::Value = serde_json::from_str(&text)
             .or_else(|_| serde_json::from_str(text.trim_start_matches('\u{feff}')))
             .map_err(|_| LauncherError::Custom(format!("无法解析版本JSON for {}", version_id)))?;
-        
+
         (version_id.clone(), version_json, text)
     };
 
@@ -97,7 +105,14 @@ pub async fn process_and_download_version(
     let mut downloads = Vec::new();
 
     // 添加客户端 JAR
-    collect_client_jar(&version_json, &version_dir, &actual_version_id, is_mirror, base_url, &mut downloads)?;
+    collect_client_jar(
+        &version_json,
+        &version_dir,
+        &actual_version_id,
+        is_mirror,
+        base_url,
+        &mut downloads,
+    )?;
 
     // 添加资源文件
     collect_assets(
@@ -111,7 +126,13 @@ pub async fn process_and_download_version(
     .await?;
 
     // 添加库文件
-    collect_libraries(&version_json, &libraries_base_dir, is_mirror, base_url, &mut downloads)?;
+    collect_libraries(
+        &version_json,
+        &libraries_base_dir,
+        is_mirror,
+        base_url,
+        &mut downloads,
+    )?;
 
     // 执行批量下载
     match download_all_files(downloads, window).await {
@@ -149,16 +170,22 @@ async fn download_modpack_libraries(
     window: &Window,
 ) -> Result<(), LauncherError> {
     let mut downloads = Vec::new();
-    
+
     // 收集库文件
-    collect_libraries(version_json, libraries_base_dir, is_mirror, base_url, &mut downloads)?;
-    
+    collect_libraries(
+        version_json,
+        libraries_base_dir,
+        is_mirror,
+        base_url,
+        &mut downloads,
+    )?;
+
     if downloads.is_empty() {
         return Ok(());
     }
-    
+
     info!("下载整合包库文件: {} 个", downloads.len());
-    
+
     // 执行批量下载
     download_all_files(downloads, window).await
 }
@@ -295,12 +322,15 @@ fn collect_libraries(
 
         // 处理普通库
         if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
-            if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url) {
+            if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url)
+            {
                 downloads.push(job);
             }
         } else {
             // 没有 downloads.artifact，尝试从 name 构建下载任务 (Forge 库常见情况)
-            if let Some(job) = create_library_job_from_name(lib, libraries_base_dir, is_mirror, base_url) {
+            if let Some(job) =
+                create_library_job_from_name(lib, libraries_base_dir, is_mirror, base_url)
+            {
                 downloads.push(job);
             }
         }
@@ -323,41 +353,52 @@ fn create_library_job_from_name(
 ) -> Option<DownloadJob> {
     let name = lib["name"].as_str()?;
     let maven_path = maven_name_to_path(name, None, "jar")?;
-    
+
     let target_path = libraries_base_dir.join(&maven_path);
-    
+
     // 如果文件已存在，跳过
     if target_path.exists() {
         return None;
     }
-    
+
     // 获取库的 URL 基础路径
     let lib_url = lib.get("url").and_then(|u| u.as_str());
-    
+
     // 构建下载 URL，优先使用 BMCLAPI 镜像
     let download_url = if is_mirror {
         format!("{}/maven/{}", base_url, maven_path)
     } else if let Some(url) = lib_url {
-        let base = if url.ends_with('/') { url.to_string() } else { format!("{}/", url) };
+        let base = if url.ends_with('/') {
+            url.to_string()
+        } else {
+            format!("{}/", url)
+        };
         format!("{}{}", base, maven_path)
     } else {
         // 默认使用 Maven Central
         format!("https://repo1.maven.org/maven2/{}", maven_path)
     };
-    
+
     // 构建 fallback URL
     let fallback_url = if is_mirror {
         if let Some(url) = lib_url {
-            let base = if url.ends_with('/') { url.to_string() } else { format!("{}/", url) };
+            let base = if url.ends_with('/') {
+                url.to_string()
+            } else {
+                format!("{}/", url)
+            };
             Some(format!("{}{}", base, maven_path))
         } else {
             Some(format!("https://repo1.maven.org/maven2/{}", maven_path))
         }
     } else {
         // 非镜像模式，使用 BMCLAPI 作为 fallback
-        Some(format!("https://bmclapi2.bangbang93.com/maven/{}", maven_path))
+        Some(format!(
+            "https://bmclapi2.bangbang93.com/maven/{}",
+            maven_path
+        ))
     };
-    
+
     Some(DownloadJob {
         url: download_url,
         fallback_url,
@@ -395,16 +436,29 @@ fn create_library_job(
 
     let download_url = if is_mirror {
         // 替换各种库源为镜像
-        url.replace("https://libraries.minecraft.net", &format!("{}/libraries", base_url))
-           .replace("https://maven.minecraftforge.net", &format!("{}/maven", base_url))
-           .replace("https://maven.neoforged.net/releases", &format!("{}/maven", base_url))
+        url.replace(
+            "https://libraries.minecraft.net",
+            &format!("{}/libraries", base_url),
+        )
+        .replace(
+            "https://maven.minecraftforge.net",
+            &format!("{}/maven", base_url),
+        )
+        .replace(
+            "https://maven.neoforged.net/releases",
+            &format!("{}/maven", base_url),
+        )
     } else {
         url.to_string()
     };
 
     Some(DownloadJob {
         url: download_url,
-        fallback_url: if is_mirror { Some(url.to_string()) } else { None },
+        fallback_url: if is_mirror {
+            Some(url.to_string())
+        } else {
+            None
+        },
         path: libraries_base_dir.join(path),
         size,
         hash,
@@ -428,7 +482,11 @@ fn collect_natives_library(
         .map_or(false, |name| name.contains("lwjgl"));
 
     let current_os = std::env::consts::OS;
-    let os_key = if current_os == "macos" { "osx" } else { current_os };
+    let os_key = if current_os == "macos" {
+        "osx"
+    } else {
+        current_os
+    };
 
     let Some(natives_obj) = natives.as_object() else {
         return;
@@ -449,7 +507,8 @@ fn collect_natives_library(
             .and_then(|d| d.get("classifiers"))
             .and_then(|c| c.get(os_classifier))
         {
-            if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url) {
+            if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url)
+            {
                 downloads.push(job);
                 continue;
             }
@@ -457,14 +516,21 @@ fn collect_natives_library(
 
         // 尝试从 classifiers 获取
         if let Some(artifact) = lib.get("classifiers").and_then(|c| c.get(os_classifier)) {
-            if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url) {
+            if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url)
+            {
                 downloads.push(job);
                 continue;
             }
         }
 
         // 回退：根据 maven 坐标构建路径
-        if let Some(job) = create_natives_job_from_name(lib, os_classifier, libraries_base_dir, is_mirror, base_url) {
+        if let Some(job) = create_natives_job_from_name(
+            lib,
+            os_classifier,
+            libraries_base_dir,
+            is_mirror,
+            base_url,
+        ) {
             downloads.push(job);
         }
     }
@@ -489,7 +555,11 @@ fn create_natives_job_from_name(
     let version = parts[2];
     let classifier = os_classifier.replace(
         "${arch}",
-        if cfg!(target_pointer_width = "64") { "64" } else { "32" },
+        if cfg!(target_pointer_width = "64") {
+            "64"
+        } else {
+            "32"
+        },
     );
 
     let natives_path = if artifact_id == "lwjgl" {

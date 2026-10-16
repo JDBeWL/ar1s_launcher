@@ -68,7 +68,9 @@ pub async fn install_fabric(
 }
 
 /// 获取 Fabric 加载器版本列表
-pub async fn get_fabric_versions(mc_version: &str) -> Result<Vec<FabricLoaderVersion>, LauncherError> {
+pub async fn get_fabric_versions(
+    mc_version: &str,
+) -> Result<Vec<FabricLoaderVersion>, LauncherError> {
     let client = http_client::get_client();
     let url = format!("{}/versions/loader/{}", FABRIC_META_URL, mc_version);
 

@@ -1,7 +1,7 @@
 {
   "name": "ar1s_launcher",
   "private": true,
-  "version": "0.5.2",
+  "version": "0.6.1",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -11,6 +11,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -26,6 +28,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.3",
     "@vitejs/plugin-vue": "^6.0.10",
+    "prettier": "^3.9.10",
     "typescript": "~5.9.3",
     "vite": "^8.3.4",
     "vite-plugin-vuetify": "^2.1.3",

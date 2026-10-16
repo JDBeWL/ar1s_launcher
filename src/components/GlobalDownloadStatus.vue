@@ -15,13 +15,13 @@ const showNotification = computed({
     } else {
       downloadStore.hideDownloadNotification();
     }
-  }
+  },
 });
 
 const progressPercentage = computed(() => {
-  if (downloadProgress.value.total_bytes === 0) return 0
-  return Math.min((downloadProgress.value.bytes_downloaded / downloadProgress.value.total_bytes) * 100, 100)
-})
+  if (downloadProgress.value.total_bytes === 0) return 0;
+  return Math.min((downloadProgress.value.bytes_downloaded / downloadProgress.value.total_bytes) * 100, 100);
+});
 
 function cancelDownload() {
   downloadStore.cancelDownload();
@@ -40,7 +40,7 @@ function cancelDownload() {
       :status="downloadProgress.status"
       @cancel="cancelDownload"
     />
-    
+
     <v-btn
       v-if="(isDownloading || downloadProgress.status === 'completed') && !showNotification"
       icon

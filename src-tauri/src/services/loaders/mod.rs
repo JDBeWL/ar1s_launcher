@@ -81,17 +81,21 @@ pub async fn install_loader(
     game_dir: &Path,
 ) -> Result<(), LauncherError> {
     match loader {
-        LoaderType::Forge { mc_version, loader_version } => {
-            forge::install_forge(mc_version, loader_version, instance_name, game_dir).await
-        }
-        LoaderType::Fabric { mc_version, loader_version } => {
-            fabric::install_fabric(mc_version, loader_version, instance_name, game_dir).await
-        }
-        LoaderType::Quilt { mc_version, loader_version } => {
-            quilt::install_quilt(mc_version, loader_version, instance_name, game_dir).await
-        }
-        LoaderType::NeoForge { mc_version, loader_version } => {
-            neoforge::install_neoforge(mc_version, loader_version, instance_name, game_dir).await
-        }
+        LoaderType::Forge {
+            mc_version,
+            loader_version,
+        } => forge::install_forge(mc_version, loader_version, instance_name, game_dir).await,
+        LoaderType::Fabric {
+            mc_version,
+            loader_version,
+        } => fabric::install_fabric(mc_version, loader_version, instance_name, game_dir).await,
+        LoaderType::Quilt {
+            mc_version,
+            loader_version,
+        } => quilt::install_quilt(mc_version, loader_version, instance_name, game_dir).await,
+        LoaderType::NeoForge {
+            mc_version,
+            loader_version,
+        } => neoforge::install_neoforge(mc_version, loader_version, instance_name, game_dir).await,
     }
 }

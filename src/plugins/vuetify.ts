@@ -1,6 +1,30 @@
-import 'vuetify/styles'
-import '@mdi/font/css/materialdesignicons.css'
-import { createVuetify } from 'vuetify'
+import 'vuetify/styles';
+import '@mdi/font/css/materialdesignicons.css';
+import { createVuetify } from 'vuetify';
+
+// 告警色阶与加载器品牌色（Forge/Fabric/Quilt/NeoForge）的容器色。
+// 品牌色不随主题方案（紫/青/玫瑰）变化，故集中定义后注入每个主题。
+const toneLight = {
+  'warning-container': '#FFDBC8',
+  'on-warning-container': '#3E2600',
+  'blue-container': '#D7E3FF',
+  'red-container': '#FFDAD6',
+  'purple-container': '#E9DDFF',
+  'orange-container': '#FFDBC8',
+  'teal-container': '#B6EDE3',
+  'grey-container': '#E7E0EC',
+};
+
+const toneDark = {
+  'warning-container': '#7A4F14',
+  'on-warning-container': '#FFDBC8',
+  'blue-container': '#1A4A73',
+  'red-container': '#732B2B',
+  'purple-container': '#4A3573',
+  'orange-container': '#6E4A1A',
+  'teal-container': '#1A5C55',
+  'grey-container': '#49454F',
+};
 
 // Material Design 3 主题配置
 const vuetify = createVuetify({
@@ -42,7 +66,8 @@ const vuetify = createVuetify({
           info: '#0288D1',
           success: '#2E7D32',
           warning: '#ED6C02',
-        }
+          ...toneLight,
+        },
       },
       'dark-indigo': {
         dark: true,
@@ -79,7 +104,8 @@ const vuetify = createVuetify({
           info: '#29B6F6',
           success: '#66BB6A',
           warning: '#FFA726',
-        }
+          ...toneDark,
+        },
       },
       // MD3 清新青
       'light-emerald': {
@@ -117,7 +143,8 @@ const vuetify = createVuetify({
           info: '#0288D1',
           success: '#2E7D32',
           warning: '#ED6C02',
-        }
+          ...toneLight,
+        },
       },
       'dark-emerald': {
         dark: true,
@@ -154,7 +181,8 @@ const vuetify = createVuetify({
           info: '#29B6F6',
           success: '#66BB6A',
           warning: '#FFA726',
-        }
+          ...toneDark,
+        },
       },
       // MD3 玫瑰
       'light-rose': {
@@ -192,7 +220,8 @@ const vuetify = createVuetify({
           info: '#0288D1',
           success: '#2E7D32',
           warning: '#ED6C02',
-        }
+          ...toneLight,
+        },
       },
       'dark-rose': {
         dark: true,
@@ -229,9 +258,10 @@ const vuetify = createVuetify({
           info: '#29B6F6',
           success: '#66BB6A',
           warning: '#FFA726',
-        }
-      }
-    }
+          ...toneDark,
+        },
+      },
+    },
   },
   defaults: {
     VBtn: {
@@ -292,7 +322,7 @@ const vuetify = createVuetify({
     VListItem: {
       rounded: 'lg',
     },
-  }
-})
+  },
+});
 
-export default vuetify
+export default vuetify;

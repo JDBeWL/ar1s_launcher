@@ -9,22 +9,13 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-const CACHE_MISS_SYMBOL = Symbol('CACHE_MISS');
+/** 缓存未命中的哨兵值。用符号而不是 null，才能让「缓存了 null」和「没缓存」区分开。 */
+export const CACHE_MISS = Symbol('CACHE_MISS');
 
 class MemoryCache {
   private cache = new Map<string, CacheEntry<unknown>>();
   private defaultTTL = 5 * 60 * 1000;
   private maxSize = 200;
-
-  has(key: string): boolean {
-    const entry = this.cache.get(key);
-    if (!entry) return false;
-    if (Date.now() > entry.expiresAt) {
-      this.cache.delete(key);
-      return false;
-    }
-    return true;
-  }
 
   private evictOldest(): void {
     let oldestKey: string | null = null;
@@ -40,16 +31,16 @@ class MemoryCache {
     }
   }
 
-  get<T>(key: string): T | typeof CACHE_MISS_SYMBOL {
+  get<T>(key: string): T | typeof CACHE_MISS {
     const entry = this.cache.get(key);
-    
+
     if (!entry) {
-      return CACHE_MISS_SYMBOL;
+      return CACHE_MISS;
     }
 
     if (Date.now() > entry.expiresAt) {
       this.cache.delete(key);
-      return CACHE_MISS_SYMBOL;
+      return CACHE_MISS;
     }
 
     entry.timestamp = Date.now();
@@ -109,14 +100,14 @@ class MemoryCache {
   cleanup(): number {
     const now = Date.now();
     let count = 0;
-    
+
     for (const [key, entry] of this.cache.entries()) {
       if (now > entry.expiresAt) {
         this.cache.delete(key);
         count++;
       }
     }
-    
+
     return count;
   }
 
@@ -143,28 +134,27 @@ export const CacheKeys = {
 /**
  * 带缓存的异步函数包装器
  */
-export async function withCache<T>(
-  key: string,
-  fetcher: () => Promise<T>,
-  ttl?: number
-): Promise<T> {
+export async function withCache<T>(key: string, fetcher: () => Promise<T>, ttl?: number): Promise<T> {
   const cached = cache.get<T>(key);
-  if (cached !== CACHE_MISS_SYMBOL) {
+  if (cached !== CACHE_MISS) {
     return cached;
   }
 
   const data = await fetcher();
   cache.set(key, data, ttl);
-  
+
   return data;
 }
 
 // 定期清理过期缓存（每 5 分钟）
 if (typeof window !== 'undefined') {
-  setInterval(() => {
+  setInterval(
+    () => {
       const cleaned = cache.cleanup();
       if (cleaned > 0) {
         logDebug(`Cleaned ${cleaned} expired entries`, 'Cache');
       }
-  }, 5 * 60 * 1000);
+    },
+    5 * 60 * 1000,
+  );
 }

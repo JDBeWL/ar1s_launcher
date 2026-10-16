@@ -11,7 +11,7 @@ fn get_base_minecraft_version(version_json: &serde_json::Value, fallback: &str) 
     if let Some(jar) = version_json.get("jar").and_then(|j| j.as_str()) {
         return jar.to_string();
     }
-    
+
     // 2. 从 inheritsFrom 链中查找基础 MC 版本
     // Forge 版本格式通常是 "1.20.2-forge-48.0.48"，我们需要提取 "1.20.2"
     if let Some(inherits) = version_json.get("inheritsFrom").and_then(|i| i.as_str()) {
@@ -22,19 +22,24 @@ fn get_base_minecraft_version(version_json: &serde_json::Value, fallback: &str) 
             }
         }
         // 如果 inheritsFrom 看起来像纯 MC 版本号（如 "1.20.2"）
-        if inherits.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) 
-           && !inherits.contains("forge") {
+        if inherits
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+            && !inherits.contains("forge")
+        {
             return inherits.to_string();
         }
     }
-    
+
     // 3. 从当前版本 ID 尝试提取
     if fallback.contains("-forge") {
         if let Some(mc_ver) = fallback.split("-forge").next() {
             return mc_ver.to_string();
         }
     }
-    
+
     // 4. 回退到传入的版本名
     fallback.to_string()
 }
@@ -54,11 +59,11 @@ pub fn build_arguments(
 ) -> (Vec<String>, Vec<String>) {
     let libraries_dir = game_dir.join("libraries");
     let classpath_separator = if cfg!(windows) { ";" } else { ":" };
-    
+
     // 获取原版 Minecraft 版本名（用于 Forge 的 ignoreList）
     // 优先使用 jar 字段，其次从 inheritsFrom 链中查找基础 MC 版本
     let base_mc_version = get_base_minecraft_version(version_json, &options.version);
-    
+
     let replace_placeholders = |arg: &str| -> String {
         let actual_game_dir = if config.version_isolation {
             version_dir.to_string_lossy().to_string()
@@ -66,15 +71,9 @@ pub fn build_arguments(
             game_dir.to_string_lossy().to_string()
         };
 
-        let auth_access_token = options
-            .access_token
-            .as_deref()
-            .unwrap_or("0");
+        let auth_access_token = options.access_token.as_deref().unwrap_or("0");
 
-        let auth_uuid = options
-            .uuid
-            .as_deref()
-            .unwrap_or(uuid);
+        let auth_uuid = options.uuid.as_deref().unwrap_or(uuid);
 
         let user_type = if options.auth_type.as_deref() == Some("microsoft") {
             "msa"
@@ -121,13 +120,7 @@ pub fn build_arguments(
     }
 
     // 自动补齐 tweakClass
-    auto_add_tweak_class(
-        version_json,
-        options,
-        classpath,
-        &mut game_args_vec,
-        emit,
-    );
+    auto_add_tweak_class(version_json, options, classpath, &mut game_args_vec, emit);
 
     (jvm_args, game_args_vec)
 }

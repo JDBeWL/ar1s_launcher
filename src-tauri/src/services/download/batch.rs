@@ -7,8 +7,8 @@ use crate::errors::LauncherError;
 use crate::models::{DownloadJob, DownloadProgress, DownloadStatus};
 use crate::services::config::load_config;
 use log::{debug, info, warn};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::async_runtime;
 use tauri::{Emitter, Listener, Window};
@@ -62,7 +62,7 @@ pub async fn download_all_files(
 
     // 尝试从状态文件恢复（断点续传）
     let download_state = Arc::new(Mutex::new(
-        DownloadState::load_from_file(&state_file).unwrap_or_else(DownloadState::new)
+        DownloadState::load_from_file(&state_file).unwrap_or_else(DownloadState::new),
     ));
 
     // 过滤已完成的任务（同时验证文件是否真的存在于磁盘上）
@@ -167,11 +167,8 @@ pub async fn download_all_files(
     );
 
     // 定期保存状态（每 30 秒）
-    let state_saver_handle = spawn_state_saver(
-        download_state.clone(),
-        state_file.clone(),
-        state.clone(),
-    );
+    let state_saver_handle =
+        spawn_state_saver(download_state.clone(), state_file.clone(), state.clone());
 
     // 执行并发下载
     let semaphore = Arc::new(tokio::sync::Semaphore::new(threads));
@@ -420,10 +417,7 @@ fn spawn_download_task(
                     if e.to_string().contains("cancelled") {
                         break;
                     }
-                    warn!(
-                        "Download failed: {} ({}) - {}",
-                        current_url, attempt_str, e
-                    );
+                    warn!("Download failed: {} ({}) - {}", current_url, attempt_str, e);
                     current_job_error = Some(e);
                     if retry < MAX_JOB_RETRIES - 1 {
                         let backoff = Duration::from_secs(1 << retry);

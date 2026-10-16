@@ -35,6 +35,7 @@ pub struct AuthStatus {
     pub logged_in: bool,
     pub username: Option<String>,
     pub uuid: Option<String>,
+    pub skin_url: Option<String>,
     pub expires_at: Option<i64>,
 }
 
@@ -51,6 +52,7 @@ pub struct DeviceCodeDisplay {
 pub struct MicrosoftLoginResult {
     pub username: String,
     pub uuid: String,
+    pub skin_url: Option<String>,
     pub expires_at: i64,
 }
 
@@ -71,6 +73,10 @@ pub fn get_auth_status() -> Result<AuthStatus, LauncherError> {
         logged_in,
         username: config.username.clone(),
         uuid: config.uuid.clone(),
+        // 切回离线模式后皮肤就不该再显示了，这里按当前认证类型过一道闸
+        skin_url: matches!(config.auth_type, AuthType::Microsoft)
+            .then(|| config.skin_url.clone())
+            .flatten(),
         expires_at: config.ms_expires_at,
     })
 }
@@ -124,10 +130,7 @@ pub async fn complete_microsoft_login() -> Result<MicrosoftLoginResult, Launcher
 
         match result {
             Ok(token_resp) => {
-                let refresh = token_resp
-                    .refresh_token
-                    .clone()
-                    .unwrap_or_default();
+                let refresh = token_resp.refresh_token.clone().unwrap_or_default();
                 let expires_in = token_resp.expires_in.unwrap_or(3600);
 
                 let auth_result = microsoft_auth::complete_microsoft_auth(
@@ -141,6 +144,7 @@ pub async fn complete_microsoft_login() -> Result<MicrosoftLoginResult, Launcher
                 config.auth_type = AuthType::Microsoft;
                 config.username = Some(auth_result.username.clone());
                 config.uuid = Some(auth_result.uuid.clone());
+                config.skin_url = auth_result.skin_url.clone();
                 config.ms_access_token = Some(auth_result.access_token);
                 config.ms_refresh_token = Some(auth_result.refresh_token);
                 config.ms_expires_at = Some(auth_result.expires_at);
@@ -149,6 +153,7 @@ pub async fn complete_microsoft_login() -> Result<MicrosoftLoginResult, Launcher
                 return Ok(MicrosoftLoginResult {
                     username: auth_result.username,
                     uuid: auth_result.uuid,
+                    skin_url: auth_result.skin_url,
                     expires_at: auth_result.expires_at,
                 });
             }
@@ -165,16 +170,45 @@ pub async fn complete_microsoft_login() -> Result<MicrosoftLoginResult, Launcher
         }
     }
 
-    Err(LauncherError::Custom(
-        "登录超时，请重新尝试".to_string(),
-    ))
+    Err(LauncherError::Custom("登录超时，请重新尝试".to_string()))
+}
+
+#[tauri::command]
+pub async fn refresh_skin_url() -> Result<Option<String>, LauncherError> {
+    let stored = {
+        let config = load_config()?;
+        if !matches!(config.auth_type, AuthType::Microsoft) {
+            return Ok(None);
+        }
+        (config.ms_access_token.clone(), config.skin_url.clone())
+    };
+
+    let Some(token) = stored.0 else {
+        return Ok(stored.1);
+    };
+
+    match microsoft_auth::fetch_skin_url(&token).await {
+        Ok(skin_url) => {
+            let mut config = (*load_config()?).clone();
+            config.skin_url = skin_url.clone();
+            save_config(&config)?;
+            Ok(skin_url)
+        }
+        // 皮肤地址只是装饰，取不到就退回已存的值，不该因此打断启动流程
+        Err(e) => {
+            log::warn!("刷新皮肤地址失败，沿用已存的值: {}", e);
+            Ok(stored.1)
+        }
+    }
 }
 
 #[tauri::command]
 pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherError> {
     let refresh_token = {
         let config = load_config()?;
-        config.ms_refresh_token.clone()
+        config
+            .ms_refresh_token
+            .clone()
             .ok_or_else(|| LauncherError::Custom("未找到 refresh_token，请重新登录".to_string()))?
     };
 
@@ -184,6 +218,7 @@ pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherEr
     config.auth_type = AuthType::Microsoft;
     config.username = Some(auth_result.username.clone());
     config.uuid = Some(auth_result.uuid.clone());
+    config.skin_url = auth_result.skin_url.clone();
     config.ms_access_token = Some(auth_result.access_token);
     config.ms_refresh_token = Some(auth_result.refresh_token);
     config.ms_expires_at = Some(auth_result.expires_at);
@@ -192,6 +227,7 @@ pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherEr
     Ok(MicrosoftLoginResult {
         username: auth_result.username,
         uuid: auth_result.uuid,
+        skin_url: auth_result.skin_url,
         expires_at: auth_result.expires_at,
     })
 }
@@ -205,6 +241,7 @@ pub async fn logout_microsoft() -> Result<(), LauncherError> {
     config.ms_access_token = None;
     config.ms_refresh_token = None;
     config.ms_expires_at = None;
+    config.skin_url = None;
     save_config(&config)
 }
 
@@ -239,6 +276,7 @@ pub async fn complete_microsoft_auth_code_login() -> Result<MicrosoftLoginResult
     config.auth_type = AuthType::Microsoft;
     config.username = Some(auth_result.username.clone());
     config.uuid = Some(auth_result.uuid.clone());
+    config.skin_url = auth_result.skin_url.clone();
     config.ms_access_token = Some(auth_result.access_token);
     config.ms_refresh_token = Some(auth_result.refresh_token);
     config.ms_expires_at = Some(auth_result.expires_at);
@@ -247,6 +285,7 @@ pub async fn complete_microsoft_auth_code_login() -> Result<MicrosoftLoginResult
     Ok(MicrosoftLoginResult {
         username: auth_result.username,
         uuid: auth_result.uuid,
+        skin_url: auth_result.skin_url,
         expires_at: auth_result.expires_at,
     })
 }

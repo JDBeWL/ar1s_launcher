@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from "vue";
-import { open } from "@tauri-apps/plugin-dialog";
+import { ref, onMounted, watch } from 'vue';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useSettingsStore } from '../../stores/settings';
 import { configApi, javaApi } from '../../services';
 import { logError } from '../../utils/logger';
@@ -14,14 +14,13 @@ const customJavaPaths = ref<string[]>([]);
 const autoMatchJava = ref(false);
 const inputJavaPath = ref('');
 
-const formattedJavaPath = computed(() => {
-  if (!javaPath.value) return '';
-  return javaPath.value.replace(/\\/g, '/');
-});
-
-watch(javaPath, (val) => {
-  inputJavaPath.value = val;
-}, { immediate: true });
+watch(
+  javaPath,
+  (val) => {
+    inputJavaPath.value = val;
+  },
+  { immediate: true },
+);
 
 async function loadJavaPath() {
   try {
@@ -35,7 +34,7 @@ async function loadJavaPath() {
       }
     }
   } catch (error) {
-    logError('Failed to load Java path', error, 'JavaSettings')
+    logError('Failed to load Java path', error, 'JavaSettings');
   }
 }
 
@@ -44,7 +43,7 @@ async function loadAutoMatchJava() {
     const val = await configApi.loadConfigKey('autoMatchJava');
     autoMatchJava.value = val === 'true';
   } catch (error) {
-    logError('Failed to load autoMatchJava', error, 'JavaSettings')
+    logError('Failed to load autoMatchJava', error, 'JavaSettings');
   }
 }
 
@@ -52,7 +51,7 @@ async function toggleAutoMatchJava() {
   try {
     await configApi.saveConfigKey('autoMatchJava', autoMatchJava.value.toString());
   } catch (error) {
-    logError('Failed to save autoMatchJava', error, 'JavaSettings')
+    logError('Failed to save autoMatchJava', error, 'JavaSettings');
   }
 }
 
@@ -61,7 +60,7 @@ async function loadCustomJavaPaths() {
     customJavaPaths.value = await javaApi.getCustomJavaPaths();
     await loadCustomJavaVersions();
   } catch (error) {
-    logError('Failed to load custom Java paths', error, 'JavaSettings')
+    logError('Failed to load custom Java paths', error, 'JavaSettings');
   }
 }
 
@@ -77,12 +76,13 @@ async function findJavaInstallations() {
   try {
     loadingJava.value = true;
     await settingsStore.findJavaInstallations();
-    
+    await loadDetectedJavaVersions();
+
     if (settingsStore.javaInstallations.length > 0 && !javaPath.value) {
       await selectJavaPath(settingsStore.javaInstallations[0]);
     }
   } catch (err) {
-    logError('Failed to find Java installations', err, 'JavaSettings')
+    logError('Failed to find Java installations', err, 'JavaSettings');
   } finally {
     loadingJava.value = false;
   }
@@ -98,7 +98,7 @@ async function selectJavaPath(path: string) {
       await getJavaVersion();
     }
   } catch (err) {
-    logError('Failed to set Java path', err, 'JavaSettings')
+    logError('Failed to set Java path', err, 'JavaSettings');
   }
 }
 
@@ -107,16 +107,18 @@ async function browseJavaPath() {
     const selected = await open({
       multiple: false,
       title: '选择 Java 可执行文件',
-      filters: [{
-        name: 'Java',
-        extensions: ['exe', '']
-      }]
+      filters: [
+        {
+          name: 'Java',
+          extensions: ['exe', ''],
+        },
+      ],
     });
     if (selected) {
       await selectJavaPath(selected as string);
     }
   } catch (err) {
-    logError('Failed to browse Java path', err, 'JavaSettings')
+    logError('Failed to browse Java path', err, 'JavaSettings');
   }
 }
 
@@ -139,10 +141,12 @@ async function addCustomJava() {
     const selected = await open({
       multiple: false,
       title: '选择 Java 可执行文件',
-      filters: [{
-        name: 'Java',
-        extensions: ['exe', '']
-      }]
+      filters: [
+        {
+          name: 'Java',
+          extensions: ['exe', ''],
+        },
+      ],
     });
     if (selected) {
       const path = selected as string;
@@ -154,7 +158,7 @@ async function addCustomJava() {
       await loadCustomJavaPaths();
     }
   } catch (err) {
-    logError('Failed to add custom Java path', err, 'JavaSettings')
+    logError('Failed to add custom Java path', err, 'JavaSettings');
   }
 }
 
@@ -163,11 +167,11 @@ async function removeCustomJava(path: string) {
     await javaApi.removeCustomJavaPath(path);
     await loadCustomJavaPaths();
   } catch (err) {
-    logError('Failed to remove custom Java path', err, 'JavaSettings')
+    logError('Failed to remove custom Java path', err, 'JavaSettings');
   }
 }
 
-async function getCustomJavaVersion(path: string): Promise<string> {
+async function fetchJavaVersion(path: string): Promise<string> {
   try {
     return await javaApi.getJavaVersion(path);
   } catch {
@@ -180,62 +184,52 @@ const customJavaVersions = ref<Record<string, string>>({});
 async function loadCustomJavaVersions() {
   const entries = await Promise.all(
     customJavaPaths.value.map(async (path) => {
-      const version = await getCustomJavaVersion(path);
+      const version = await fetchJavaVersion(path);
       return [path, version] as const;
-    })
+    }),
   );
   customJavaVersions.value = Object.fromEntries(entries);
 }
 
+const detectedJavaVersions = ref<Record<string, string>>({});
+
+async function loadDetectedJavaVersions() {
+  const entries = await Promise.all(
+    settingsStore.javaInstallations.map(async (path) => {
+      const version = await fetchJavaVersion(path);
+      return [path, version] as const;
+    }),
+  );
+  detectedJavaVersions.value = Object.fromEntries(entries);
+}
+
 onMounted(async () => {
   await Promise.all([loadJavaPath(), loadCustomJavaPaths(), loadAutoMatchJava()]);
-  
+
   if (!settingsStore.hasFoundJavaInstallations && settingsStore.javaInstallations.length === 0) {
     await findJavaInstallations();
+  } else {
+    await loadDetectedJavaVersions();
   }
 });
 </script>
 
 <template>
   <div class="settings-group">
-    <!-- 标题 -->
-    <div class="group-header mb-5">
-      <div class="d-flex align-center">
-        <v-avatar size="48" color="primary-container" class="mr-3">
-          <v-icon size="24" color="on-primary-container">mdi-language-java</v-icon>
-        </v-avatar>
-        <div>
-          <h2 class="text-h6 font-weight-bold">Java 配置</h2>
-          <p class="text-body-2 text-on-surface-variant mb-0">选择用于启动游戏的 Java 运行时</p>
-        </div>
-      </div>
-    </div>
-
     <!-- Java 路径选择 -->
-    <v-card color="surface-container" class="mb-4">
+    <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-4">
           <div class="d-flex align-center">
-            <v-icon class="mr-2" color="on-surface-variant">mdi-file-cog-outline</v-icon>
-            <span class="text-subtitle-1 font-weight-medium">Java 路径</span>
+            <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-file-cog-outline</v-icon>
+            <span class="text-title-medium">Java 路径</span>
           </div>
           <div class="d-flex ga-2">
-            <v-btn
-              variant="tonal"
-              color="primary"
-              size="small"
-              :loading="loadingJava"
-              @click="findJavaInstallations"
-            >
+            <v-btn variant="tonal" color="primary" size="small" :loading="loadingJava" @click="findJavaInstallations">
               <v-icon start size="18">mdi-magnify</v-icon>
               自动查找
             </v-btn>
-            <v-btn
-              variant="tonal"
-              color="secondary"
-              size="small"
-              @click="browseJavaPath"
-            >
+            <v-btn variant="tonal" color="secondary" size="small" @click="browseJavaPath">
               <v-icon start size="18">mdi-folder-open-outline</v-icon>
               浏览
             </v-btn>
@@ -268,30 +262,21 @@ onMounted(async () => {
           </template>
         </v-text-field>
 
-        <!-- 当前选择信息 -->
-        <div v-if="javaPath" class="current-java pa-3 mb-4">
-          <div class="d-flex align-center justify-space-between">
-            <div class="text-body-2 font-mono">{{ formattedJavaPath }}</div>
-            <v-chip
-              :color="isJavaPathValid ? 'success' : 'error'"
-              variant="tonal"
-              size="small"
-            >
-              <v-icon start size="14">
-                {{ isJavaPathValid ? 'mdi-check-circle' : 'mdi-alert-circle' }}
-              </v-icon>
-              {{ isJavaPathValid ? '有效' : '无效' }}
-            </v-chip>
-          </div>
-          <div v-if="javaVersion" class="text-caption text-on-surface-variant mt-1">
-            版本: {{ javaVersion }}
-          </div>
+        <!-- 路径本身已经在上面的输入框里，这里只补版本和无效告警 -->
+        <div v-if="javaPath" class="d-flex align-center mb-4">
+          <v-icon size="16" :color="isJavaPathValid ? 'success' : 'error'" class="mr-2">
+            {{ isJavaPathValid ? 'mdi-check-circle' : 'mdi-alert-circle' }}
+          </v-icon>
+          <span v-if="isJavaPathValid" class="text-body-small text-on-surface-variant">
+            {{ javaVersion || '路径有效' }}
+          </span>
+          <span v-else class="text-body-small text-error">路径无效，无法执行</span>
         </div>
 
         <!-- 已检测到的 Java -->
         <div v-if="settingsStore.javaInstallations.length > 0" class="mb-2">
-          <div class="text-body-2 text-on-surface-variant mb-2">检测到的 Java 安装：</div>
-          <v-list density="compact" class="java-list" bg-color="surface-container-high">
+          <div class="text-body-medium text-on-surface-variant mb-2">检测到的 Java 安装：</div>
+          <v-list density="compact" lines="two" class="java-list" bg-color="surface-container-high">
             <v-list-item
               v-for="path in settingsStore.javaInstallations"
               :key="'detected-' + path"
@@ -303,19 +288,18 @@ onMounted(async () => {
                   {{ javaPath === path ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank' }}
                 </v-icon>
               </template>
-              <v-list-item-title class="text-body-2 font-mono">
+              <v-list-item-title class="text-body-medium font-mono">
                 {{ path.replace(/\\/g, '/') }}
               </v-list-item-title>
+              <v-list-item-subtitle v-if="detectedJavaVersions[path]" class="text-body-small">
+                {{ detectedJavaVersions[path] }}
+              </v-list-item-subtitle>
             </v-list-item>
           </v-list>
         </div>
 
         <!-- 未选择提示 -->
-        <v-alert
-          v-if="!javaPath"
-          color="warning-container"
-          density="compact"
-        >
+        <v-alert v-if="!javaPath" color="warning-container" density="compact">
           <template #prepend>
             <v-icon color="on-warning-container">mdi-alert-outline</v-icon>
           </template>
@@ -325,29 +309,24 @@ onMounted(async () => {
     </v-card>
 
     <!-- 自定义 Java 路径管理 -->
-    <v-card color="surface-container" class="mb-4">
+    <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-4">
           <div class="d-flex align-center">
-            <v-icon class="mr-2" color="on-surface-variant">mdi-bookmark-multiple-outline</v-icon>
+            <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-bookmark-multiple-outline</v-icon>
             <div>
-              <span class="text-subtitle-1 font-weight-medium">自定义 Java</span>
-              <div class="text-caption text-on-surface-variant">手动添加常用的 Java 路径，方便快速切换</div>
+              <span class="text-title-medium">自定义 Java</span>
+              <div class="text-body-small text-on-surface-variant">手动添加常用的 Java 路径，方便快速切换</div>
             </div>
           </div>
-          <v-btn
-            variant="tonal"
-            color="primary"
-            size="small"
-            @click="addCustomJava"
-          >
+          <v-btn variant="tonal" color="primary" size="small" @click="addCustomJava">
             <v-icon start size="18">mdi-plus</v-icon>
             添加
           </v-btn>
         </div>
 
         <div v-if="customJavaPaths.length > 0">
-          <v-list density="compact" class="java-list" bg-color="surface-container-high">
+          <v-list density="compact" lines="two" class="java-list" bg-color="surface-container-high">
             <v-list-item
               v-for="path in customJavaPaths"
               :key="'custom-' + path"
@@ -359,41 +338,37 @@ onMounted(async () => {
                   {{ javaPath === path ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank' }}
                 </v-icon>
               </template>
-              <v-list-item-title class="text-body-2 font-mono">
+              <v-list-item-title class="text-body-medium font-mono">
                 {{ path.replace(/\\/g, '/') }}
               </v-list-item-title>
-              <v-list-item-subtitle v-if="customJavaVersions[path]" class="text-caption">
+              <v-list-item-subtitle v-if="customJavaVersions[path]" class="text-body-small">
                 {{ customJavaVersions[path] }}
               </v-list-item-subtitle>
               <template #append>
-                <v-btn
-                  icon
-                  size="x-small"
-                  variant="text"
-                  color="error"
-                  @click.stop="removeCustomJava(path)"
-                >
+                <v-btn icon size="x-small" variant="text" color="error" @click.stop="removeCustomJava(path)">
                   <v-icon size="16">mdi-close</v-icon>
                 </v-btn>
               </template>
             </v-list-item>
           </v-list>
         </div>
-        <div v-else class="text-caption text-on-surface-variant">
+        <div v-else class="text-body-small text-on-surface-variant">
           尚未添加自定义 Java 路径，点击"添加"按钮手动选择
         </div>
       </v-card-text>
     </v-card>
 
     <!-- 自动匹配 Java -->
-    <v-card color="surface-container" class="mb-4">
+    <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between">
           <div class="d-flex align-center">
-            <v-icon class="mr-2" color="on-surface-variant">mdi-auto-fix</v-icon>
+            <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-auto-fix</v-icon>
             <div>
-              <span class="text-subtitle-1 font-weight-medium">自动匹配 Java 版本</span>
-              <div class="text-caption text-on-surface-variant">启动游戏时根据 Minecraft 版本自动选择合适的 Java</div>
+              <span class="text-title-medium">自动匹配 Java 版本</span>
+              <div class="text-body-small text-on-surface-variant">
+                启动游戏时根据 Minecraft 版本自动选择合适的 Java
+              </div>
             </div>
           </div>
           <v-switch
@@ -401,34 +376,32 @@ onMounted(async () => {
             aria-label="自动匹配 Java 版本"
             color="primary"
             hide-details
+            inset
+            density="compact"
             @change="toggleAutoMatchJava"
           />
         </div>
-        <v-alert
-          v-if="autoMatchJava"
-          color="tertiary-container"
-          density="compact"
-          class="mt-3"
-        >
+        <v-alert v-if="autoMatchJava" color="secondary-container" density="compact" class="mt-3">
           <template #prepend>
-            <v-icon color="on-tertiary-container" size="18">mdi-information-outline</v-icon>
+            <v-icon color="on-secondary-container" size="18">mdi-information-outline</v-icon>
           </template>
-          <span class="text-on-tertiary-container text-body-2">
-            启用后，启动游戏时会自动选择匹配的 Java 版本（1.16.5 及以下 → Java 8，1.17~1.20.4 → Java 17，1.20.5+ → Java 21）
+          <span class="text-on-secondary-container text-body-medium">
+            启用后，启动游戏时会自动选择匹配的 Java 版本（1.16.5 及以下 → Java 8，1.17~1.20.4 → Java 17，1.20.5+ → Java
+            21）
           </span>
         </v-alert>
       </v-card-text>
     </v-card>
 
     <!-- Java 提示 -->
-    <v-alert color="tertiary-container">
+    <v-alert color="secondary-container" class="tip-alert">
       <template #prepend>
-        <v-icon color="on-tertiary-container">mdi-information-outline</v-icon>
+        <v-icon size="20" color="on-secondary-container">mdi-information-outline</v-icon>
       </template>
       <template #title>
-        <span class="text-body-2 font-weight-medium text-on-tertiary-container">Java 版本建议</span>
+        <span class="text-body-medium font-weight-medium text-on-secondary-container">Java 版本建议</span>
       </template>
-      <ul class="text-body-2 pl-4 mb-0 mt-1 text-on-tertiary-container">
+      <ul class="text-body-small pl-4 mb-0 mt-1 text-on-secondary-container">
         <li>Minecraft 1.17+ 需要 Java 17 或更高版本</li>
         <li>Minecraft 1.16.5 及以下版本建议使用 Java 8</li>
         <li>推荐使用 Adoptium (Eclipse Temurin) 或 Azul Zulu</li>
@@ -442,11 +415,6 @@ onMounted(async () => {
 .java-list {
   max-height: 200px;
   overflow-y: auto;
-}
-
-.current-java {
-  background: rgb(var(--v-theme-surface-container-high));
-  border-radius: 12px;
 }
 
 .font-mono {

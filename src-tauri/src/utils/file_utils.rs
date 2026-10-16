@@ -16,7 +16,7 @@ pub struct InstanceNameValidation {
 }
 
 /// 验证实例名称是否安全有效
-/// 
+///
 /// 规则：
 /// - 长度在 1-64 字符之间
 /// - 不能包含路径分隔符 (/, \)
@@ -96,11 +96,10 @@ pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
     let name_upper = name.to_uppercase();
     let base_name = name_upper.split('.').next().unwrap_or(&name_upper);
     const RESERVED_NAMES: &[&str] = &[
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
-    
+
     if RESERVED_NAMES.contains(&base_name) {
         return InstanceNameValidation {
             is_valid: false,
@@ -119,7 +118,9 @@ pub fn validate_instance_name_or_error(name: &str) -> Result<(), LauncherError> 
     let validation = validate_instance_name(name);
     if !validation.is_valid {
         return Err(LauncherError::Custom(
-            validation.error_message.unwrap_or_else(|| "实例名称无效".to_string())
+            validation
+                .error_message
+                .unwrap_or_else(|| "实例名称无效".to_string()),
         ));
     }
     Ok(())
@@ -149,13 +150,16 @@ pub fn verify_file(
     if !path.exists() {
         return Ok(false);
     }
-    
+
     let actual_size = std::fs::metadata(path)?.len();
     if expected_size > 0 && actual_size != expected_size {
-        warn!("文件大小不匹配: 期望 {} 字节, 实际 {} 字节", expected_size, actual_size);
+        warn!(
+            "文件大小不匹配: 期望 {} 字节, 实际 {} 字节",
+            expected_size, actual_size
+        );
         return Ok(false);
     }
-    
+
     if let Some(hash) = expected_hash {
         let mut file = std::fs::File::open(path)?;
         let mut hasher = Sha1::new();
@@ -167,13 +171,17 @@ pub fn verify_file(
             }
             hasher.update(&buf[..read]);
         }
-        let actual_hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        let actual_hash: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         let is_valid = actual_hash.to_lowercase() == hash.to_lowercase();
-        
+
         if !is_valid {
             warn!("文件哈希不匹配: 期望 {}, 实际 {}", hash, actual_hash);
         }
-        
+
         Ok(is_valid)
     } else {
         Ok(true)
@@ -186,41 +194,41 @@ pub async fn verify_and_repair_file(
     client: &reqwest::Client,
 ) -> Result<bool, LauncherError> {
     let path = &job.path;
-    
+
     // 1. 检查文件是否存在
     if !path.exists() {
         debug!("文件不存在，需要下载: {}", path.display());
         return Ok(false);
     }
-    
+
     // 2. 验证文件完整性
     if verify_file(path, job.hash.as_deref(), job.size)? {
         debug!("文件验证通过: {}", path.display());
         return Ok(true);
     }
-    
+
     // 3. 文件损坏，尝试修复
     warn!("文件损坏，尝试修复: {}", path.display());
-    
+
     // 3.1 备份损坏的文件
     let backup_path = path.with_extension("bak");
     if let Err(e) = std::fs::copy(path, &backup_path) {
         warn!("备份损坏文件失败: {}", e);
     }
-    
+
     // 3.2 删除损坏的文件
     if let Err(e) = std::fs::remove_file(path) {
         warn!("删除损坏文件失败: {}", e);
     }
-    
+
     // 3.3 重新下载文件
     info!("重新下载文件: {}", path.display());
-    
+
     // 创建父目录
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    
+
     // 下载文件
     let response = client.get(&job.url).send().await?;
     if !response.status().is_success() {
@@ -229,10 +237,10 @@ pub async fn verify_and_repair_file(
             response.status()
         )));
     }
-    
+
     let content = response.bytes().await?;
     std::fs::write(path, &content)?;
-    
+
     // 3.4 验证重新下载的文件
     if verify_file(path, job.hash.as_deref(), job.size)? {
         info!("文件修复成功: {}", path.display());
@@ -255,31 +263,33 @@ pub async fn batch_verify_files(
     client: &reqwest::Client,
 ) -> Result<Vec<(String, bool)>, LauncherError> {
     use tokio::task;
-    
+
     let mut tasks = vec![];
-    
+
     for job in jobs {
         let job_clone = job.clone();
         let client_clone = client.clone();
-        
+
         tasks.push(task::spawn(async move {
-            let file_name = job_clone.path.file_name()
+            let file_name = job_clone
+                .path
+                .file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            
+
             match verify_and_repair_file(&job_clone, &client_clone).await {
                 Ok(is_valid) => (file_name, is_valid),
                 Err(_) => (file_name, false),
             }
         }));
     }
-    
+
     let mut results = vec![];
     for task in tasks {
         results.push(task.await?);
     }
-    
+
     Ok(results)
 }
 
@@ -298,14 +308,17 @@ pub fn collect_download_jobs_from_json(
     if let Some(client) = version_json.get("downloads").and_then(|d| d.get("client")) {
         if let Some(url) = client.get("url").and_then(|u| u.as_str()) {
             let size = client.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-            let hash = client.get("sha1").and_then(|h| h.as_str()).map(|h| h.to_string());
+            let hash = client
+                .get("sha1")
+                .and_then(|h| h.as_str())
+                .map(|h| h.to_string());
             let path = version_dir.join(format!("{}.jar", version_id));
-            jobs.push(DownloadJob { 
-                url: url.to_string(), 
-                fallback_url: None, 
-                path, 
-                size, 
-                hash 
+            jobs.push(DownloadJob {
+                url: url.to_string(),
+                fallback_url: None,
+                path,
+                size,
+                hash,
             });
         }
     }
@@ -314,13 +327,18 @@ pub fn collect_download_jobs_from_json(
     if let Some(asset_idx) = version_json.get("assetIndex") {
         if let Some(idx_id) = asset_idx.get("id").and_then(|v| v.as_str()) {
             if let Some(idx_url) = asset_idx.get("url").and_then(|v| v.as_str()) {
-                let index_path = assets_base_dir.join("indexes").join(format!("{}.json", idx_id));
+                let index_path = assets_base_dir
+                    .join("indexes")
+                    .join(format!("{}.json", idx_id));
                 jobs.push(DownloadJob {
                     url: idx_url.to_string(),
                     fallback_url: None,
                     path: index_path.clone(),
                     size: asset_idx.get("size").and_then(|s| s.as_u64()).unwrap_or(0),
-                    hash: asset_idx.get("sha1").and_then(|h| h.as_str()).map(|h| h.to_string()),
+                    hash: asset_idx
+                        .get("sha1")
+                        .and_then(|h| h.as_str())
+                        .map(|h| h.to_string()),
                 });
             }
         }
@@ -335,19 +353,32 @@ pub fn collect_download_jobs_from_json(
 
             // 主构件
             if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
-                let path = artifact.get("path").and_then(|p| p.as_str()).map(|s| s.to_string());
-                let url = artifact.get("url").and_then(|u| u.as_str()).map(|s| s.to_string());
+                let path = artifact
+                    .get("path")
+                    .and_then(|p| p.as_str())
+                    .map(|s| s.to_string());
+                let url = artifact
+                    .get("url")
+                    .and_then(|u| u.as_str())
+                    .map(|s| s.to_string());
                 let size = artifact.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                let hash = artifact.get("sha1").and_then(|h| h.as_str()).map(|h| h.to_string());
+                let hash = artifact
+                    .get("sha1")
+                    .and_then(|h| h.as_str())
+                    .map(|h| h.to_string());
                 if let Some(path_str) = path {
                     let file_path = libraries_base_dir.join(path_str.clone());
-                    let download_url = if let Some(u) = url { u } else { format!("https://libraries.minecraft.net/{}", path_str) };
-                    jobs.push(DownloadJob { 
-                        url: download_url, 
-                        fallback_url: None, 
-                        path: file_path, 
-                        size, 
-                        hash 
+                    let download_url = if let Some(u) = url {
+                        u
+                    } else {
+                        format!("https://libraries.minecraft.net/{}", path_str)
+                    };
+                    jobs.push(DownloadJob {
+                        url: download_url,
+                        fallback_url: None,
+                        path: file_path,
+                        size,
+                        hash,
                     });
                 }
             }
@@ -358,20 +389,36 @@ pub fn collect_download_jobs_from_json(
                     let current_os = get_mc_os_name();
                     for (os_name, classifier_val) in natives_map.iter() {
                         let classifier = classifier_val.as_str().unwrap_or("");
-                        if os_name == current_os || lib.get("name").and_then(|n| n.as_str()).map_or(false, |s| s.contains("lwjgl")) {
+                        if os_name == current_os
+                            || lib
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .map_or(false, |s| s.contains("lwjgl"))
+                        {
                             // 优先使用 downloads.classifiers
-                            if let Some(classifiers) = lib.get("downloads").and_then(|d| d.get("classifiers")) {
+                            if let Some(classifiers) =
+                                lib.get("downloads").and_then(|d| d.get("classifiers"))
+                            {
                                 if let Some(artifact) = classifiers.get(classifier) {
-                                    if let (Some(path), Some(url)) = (artifact.get("path").and_then(|p| p.as_str()), artifact.get("url").and_then(|u| u.as_str())) {
-                                        let size = artifact.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                                        let hash = artifact.get("sha1").and_then(|h| h.as_str()).map(|h| h.to_string());
+                                    if let (Some(path), Some(url)) = (
+                                        artifact.get("path").and_then(|p| p.as_str()),
+                                        artifact.get("url").and_then(|u| u.as_str()),
+                                    ) {
+                                        let size = artifact
+                                            .get("size")
+                                            .and_then(|s| s.as_u64())
+                                            .unwrap_or(0);
+                                        let hash = artifact
+                                            .get("sha1")
+                                            .and_then(|h| h.as_str())
+                                            .map(|h| h.to_string());
                                         let file_path = libraries_base_dir.join(path);
-                                        jobs.push(DownloadJob { 
-                                            url: url.to_string(), 
-                                            fallback_url: None, 
-                                            path: file_path, 
-                                            size, 
-                                            hash 
+                                        jobs.push(DownloadJob {
+                                            url: url.to_string(),
+                                            fallback_url: None,
+                                            path: file_path,
+                                            size,
+                                            hash,
                                         });
                                         continue;
                                     }
@@ -380,16 +427,25 @@ pub fn collect_download_jobs_from_json(
 
                             if let Some(classifiers) = lib.get("classifiers") {
                                 if let Some(artifact) = classifiers.get(classifier) {
-                                    if let (Some(path), Some(url)) = (artifact.get("path").and_then(|p| p.as_str()), artifact.get("url").and_then(|u| u.as_str())) {
-                                        let size = artifact.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                                        let hash = artifact.get("sha1").and_then(|h| h.as_str()).map(|h| h.to_string());
+                                    if let (Some(path), Some(url)) = (
+                                        artifact.get("path").and_then(|p| p.as_str()),
+                                        artifact.get("url").and_then(|u| u.as_str()),
+                                    ) {
+                                        let size = artifact
+                                            .get("size")
+                                            .and_then(|s| s.as_u64())
+                                            .unwrap_or(0);
+                                        let hash = artifact
+                                            .get("sha1")
+                                            .and_then(|h| h.as_str())
+                                            .map(|h| h.to_string());
                                         let file_path = libraries_base_dir.join(path);
-                                        jobs.push(DownloadJob { 
-                                            url: url.to_string(), 
-                                            fallback_url: None, 
-                                            path: file_path, 
-                                            size, 
-                                            hash 
+                                        jobs.push(DownloadJob {
+                                            url: url.to_string(),
+                                            fallback_url: None,
+                                            path: file_path,
+                                            size,
+                                            hash,
                                         });
                                         continue;
                                     }
@@ -403,16 +459,32 @@ pub fn collect_download_jobs_from_json(
                                     let group_id = parts[0].replace(".", "/");
                                     let artifact_id = parts[1];
                                     let version = parts[2];
-                                    let classifier_replaced = classifier.replace("${arch}", if cfg!(target_pointer_width = "64") { "64" } else { "32" });
-                                    let natives_path = format!("{}/{}/{}/{}-{}-{}.jar", group_id, artifact_id, version, artifact_id, version, classifier_replaced);
-                                    let natives_url = format!("https://libraries.minecraft.net/{}", natives_path);
+                                    let classifier_replaced = classifier.replace(
+                                        "${arch}",
+                                        if cfg!(target_pointer_width = "64") {
+                                            "64"
+                                        } else {
+                                            "32"
+                                        },
+                                    );
+                                    let natives_path = format!(
+                                        "{}/{}/{}/{}-{}-{}.jar",
+                                        group_id,
+                                        artifact_id,
+                                        version,
+                                        artifact_id,
+                                        version,
+                                        classifier_replaced
+                                    );
+                                    let natives_url =
+                                        format!("https://libraries.minecraft.net/{}", natives_path);
                                     let file_path = libraries_base_dir.join(&natives_path);
-                                    jobs.push(DownloadJob { 
-                                        url: natives_url, 
-                                        fallback_url: None, 
-                                        path: file_path, 
-                                        size: 0, 
-                                        hash: None
+                                    jobs.push(DownloadJob {
+                                        url: natives_url,
+                                        fallback_url: None,
+                                        path: file_path,
+                                        size: 0,
+                                        hash: None,
                                     });
                                 }
                             }
@@ -427,11 +499,7 @@ pub fn collect_download_jobs_from_json(
 }
 
 /// 清理实例创建过程中创建的文件和目录
-pub fn cleanup_instance_creation(
-    game_dir: &PathBuf,
-    instance_name: &str,
-    _base_version_id: &str,
-) {
+pub fn cleanup_instance_creation(game_dir: &PathBuf, instance_name: &str, _base_version_id: &str) {
     info!("file_utils: 开始清理实例创建过程中的文件和目录");
 
     // 清理整个实例目录（remove_dir_all 会递归删除所有子文件和子目录）
@@ -485,7 +553,10 @@ pub fn cleanup_forge_installation(
 
     // 3. 清理临时安装器文件
     if installer_path.exists() {
-        info!("file_utils: 清理临时安装器文件: {}", installer_path.display());
+        info!(
+            "file_utils: 清理临时安装器文件: {}",
+            installer_path.display()
+        );
         if let Err(e) = fs::remove_file(installer_path) {
             warn!("file_utils: 清理安装器文件失败: {}", e);
         } else {
@@ -557,7 +628,11 @@ mod tests {
     fn test_reserved_characters() {
         for c in &['<', '>', ':', '"', '|', '?', '*'] {
             let name = format!("test{}name", c);
-            assert!(!validate_instance_name(&name).is_valid, "应该拒绝包含 '{}' 的名称", c);
+            assert!(
+                !validate_instance_name(&name).is_valid,
+                "应该拒绝包含 '{}' 的名称",
+                c
+            );
         }
     }
 
@@ -624,7 +699,14 @@ mod tests {
 
         let correct_hash = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
         assert!(verify_file(&file_path, Some(correct_hash), 5).unwrap());
-        assert!(!verify_file(&file_path, Some("0000000000000000000000000000000000000000"), 5).unwrap());
+        assert!(
+            !verify_file(
+                &file_path,
+                Some("0000000000000000000000000000000000000000"),
+                5
+            )
+            .unwrap()
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

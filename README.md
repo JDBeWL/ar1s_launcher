@@ -2,14 +2,15 @@
 
 一个基于Tauri框架构建的现代化Minecraft启动器，使用Vuetify提供Material Design 3风格的用户界面。
 
-![Version](https://img.shields.io/badge/version-0.4.1-blue)
-![Tauri](https://img.shields.io/badge/Tauri-2.0-orange)
+![Version](https://img.shields.io/badge/version-0.6.1-blue)
+![Tauri](https://img.shields.io/badge/Tauri-2.12-orange)
 ![Vue](https://img.shields.io/badge/Vue-3.5-green)
-![Rust](https://img.shields.io/badge/Rust-1.70+-red)
+![Rust](https://img.shields.io/badge/Rust-1.95+-red)
 
 ## 功能特性
 
 ### 核心功能
+
 - **多版本支持**: 支持Minecraft正式版、快照版等多种版本
 - **实例管理**: 独立的游戏实例系统，支持创建、重命名、删除实例
 - **Mod加载器支持**: 支持 Forge、Fabric、Quilt、NeoForge 四种主流加载器
@@ -19,12 +20,14 @@
 - **离线模式**: 支持离线游戏启动，暂时不支持正版验证
 
 ### 实例系统
+
 - **独立实例**: 每个游戏配置独立管理，互不干扰
 - **自定义安装**: 选择基础版本 + 加载器组合创建实例
 - **在线安装**: 直接从 Modrinth 搜索并安装整合包
 - **实例操作**: 支持启动、重命名、删除、打开文件夹等操作
 
 ### 用户界面
+
 - **现代化设计**: 基于Material Design 3设计规范
 - **暗色/亮色主题**: 支持主题切换，提供舒适的视觉体验
 - **响应式布局**: 适配不同屏幕尺寸
@@ -32,6 +35,7 @@
 - **实时进度**: 下载和安装过程实时显示进度
 
 ### 技术特性
+
 - **跨平台**: 基于Tauri构建，支持Windows、macOS、Linux(但是还没有在macOS、Linux上测试过，如果有问题请提交issue)
 - **高性能**: Rust后端提供出色的性能表现(Rust高效我的代码不一定高效())
 - **安全性**: 本地数据存储，保护用户隐私
@@ -41,62 +45,71 @@
 ## 技术栈
 
 ### 前端技术
+
 - **Vue 3.5**: 现代化的前端框架，使用 Composition API
-- **Vuetify 3.7**: Material Design 3 组件库
-- **TypeScript 5.8**: 类型安全的JavaScript超集
-- **Pinia 3**: Vue 状态管理库
-- **Vue Router 4**: 前端路由管理
+- **Vuetify 4.2**: Material Design 3 组件库
+- **TypeScript 5.9**: 类型安全的JavaScript超集
+- **Pinia 4**: Vue 状态管理库
+- **Vue Router 5**: 前端路由管理
 
 ### 后端技术
-- **Rust 1.70+**: 系统级编程语言，提供高性能后端
-- **Tauri 2.0**: 跨平台桌面应用框架
+
+- **Rust 1.95+**: 系统级编程语言，提供高性能后端
+- **Tauri 2.12**: 跨平台桌面应用框架
 - **Tokio**: Rust异步运行时
 - **Reqwest**: HTTP 客户端
 - **Serde**: 序列化/反序列化框架
 
 ### 开发工具
-- **Vite 6**: 快速的前端构建工具
+
+- **Vite 8**: 快速的前端构建工具
 - **Cargo**: Rust包管理器
 - **vue-tsc**: Vue TypeScript 编译器
 
 ## 安装与构建
 
 ### 环境要求
-- Node.js 18+
-- Rust 1.70+
+
+- Node.js 22.12+
+- Rust 1.95+
 - Cargo
 
 ### 开发环境搭建
 
 1. **克隆项目**
+
 ```bash
 git clone https://github.com/JDBeWL/ar1s_launcher.git
 cd Ar1s_Launcher
 ```
 
 2. **安装前端依赖**
+
 ```bash
-npm install
+pnpm install
 ```
 
 3. **安装Rust依赖**
+
 ```bash
 cd src-tauri
 cargo build
 ```
 
 4. **开发模式运行**
+
 ```bash
-npm run tauri dev
+pnpm run tauri dev
 ```
 
 ### 生产构建
+
 ```bash
 # 构建前端
-npm run build
+pnpm run build
 
 # 构建Tauri应用
-npm run tauri build
+pnpm run tauri build
 ```
 
 ## 项目结构
@@ -173,6 +186,7 @@ Ar1s_Launcher/
 ## 使用指南
 
 ### 主页
+
 - 选择已安装的游戏版本
 - 设置玩家名称
 - 切换离线/在线模式
@@ -180,30 +194,36 @@ Ar1s_Launcher/
 - 快捷访问下载、添加实例、实例管理功能
 
 ### 实例管理
+
 - 查看所有已创建的游戏实例
 - 显示实例的加载器类型和游戏版本
 - 支持启动、重命名、删除实例
 - 快速打开实例文件夹
 
 ### 添加实例
+
 #### 自定义安装
+
 1. 选择基础 Minecraft 版本
 2. 可选择安装 Mod 加载器（Forge/Fabric/Quilt/NeoForge）
 3. 选择加载器版本
 4. 输入实例名称并创建
 
 #### 从互联网安装
+
 1. 选择平台（目前支持 Modrinth）
 2. 搜索整合包，支持按游戏版本、加载器、分类筛选
 3. 选择整合包版本并安装
 
 ### 下载页面
+
 - 浏览所有可用版本（正式版、快照版）
 - 支持搜索和筛选
 - 选择下载源（官方/BMCL镜像）
 - 实时下载进度显示
 
 ### 设置页面
+
 - **通用设置**: 游戏目录配置、下载源选择、下载线程数
 - **Java设置**: Java路径配置、自动检测系统Java
 - **内存设置**: JVM内存分配配置
@@ -211,43 +231,48 @@ Ar1s_Launcher/
 ## 配置说明
 
 ### 游戏目录
+
 应用会自动检测当前目录下默认的Minecraft游戏目录，也支持自定义目录设置。
 
 ### Java环境
+
 - 自动检测系统Java安装
 - 支持手动指定Java路径
 - Java版本兼容性验证
 
 ### 网络设置
+
 - 支持多线程下载
 - 可配置下载源（官方源/BMCL镜像源）
 - 网络连接状态监控
 - 自动 fallback 机制
 
 ### 版本隔离
+
 - 支持版本隔离模式
 - 每个实例独立的游戏目录
 - 独立的存档、资源包、Mod管理
 
 ## 支持的加载器
 
-| 加载器 | 状态 | 说明 |
-|--------|------|------|
-| Forge | ✅ 支持 | 最流行的 Mod 加载器 |
-| Fabric | ✅ 支持 | 轻量级 Mod 加载器 |
-| Quilt | ✅ 支持 | Fabric 的分支 |
-| NeoForge | ✅ 支持 | Forge 的现代化分支 |
+| 加载器   | 状态    | 说明                |
+| -------- | ------- | ------------------- |
+| Forge    | ✅ 支持 | 最流行的 Mod 加载器 |
+| Fabric   | ✅ 支持 | 轻量级 Mod 加载器   |
+| Quilt    | ✅ 支持 | Fabric 的分支       |
+| NeoForge | ✅ 支持 | Forge 的现代化分支  |
 
 ## 支持的整合包平台
 
-| 平台 | 状态 | 说明 |
-|------|------|------|
-| Modrinth | ✅ 支持 | 开源整合包平台 |
+| 平台       | 状态      | 说明             |
+| ---------- | --------- | ---------------- |
+| Modrinth   | ✅ 支持   | 开源整合包平台   |
 | CurseForge | 🚧 开发中 | 最大的整合包平台 |
 
 ## 问题排查
 
 ### 常见问题
+
 1. **游戏启动失败**
    - 检查Java环境配置，暂时需要手动切换Java版本
    - 验证游戏文件完整性（启动时会自动检测并提示修复）
@@ -274,6 +299,7 @@ Ar1s_Launcher/
    - 尝试重新安装
 
 ### 日志文件
+
 日志文件位于应用目录下的`src-tauri/logs`文件夹，包含详细的运行信息，可用于问题诊断。
 
 ## 贡献指南
@@ -287,6 +313,7 @@ Ar1s_Launcher/
 5. 创建Pull Request
 
 ### 开发规范
+
 - 遵循现有的代码风格
 - 添加适当的注释和文档
 - 确保所有测试通过
@@ -294,16 +321,19 @@ Ar1s_Launcher/
 
 ## 许可证
 
-本项目采用MIT许可证 - 查看LICENSE文件了解详情。
+本项目采用MIT许可证 - 查看LICENSE文件了解详情。第三方素材与图标的署名、许可同样记录在LICENSE的Third-party notices一节。
 
 ## 致谢
 
 - [Tauri](https://tauri.app/) - 优秀的跨平台应用框架
 - [Vuetify](https://vuetifyjs.com/) - Material Design组件库
+- [Material Design Icons](https://pictogrammers.com/library/mdi/) - 界面图标字体
 - [BMCLAPI](https://bmclapidoc.bangbang93.com/) - Minecraft镜像下载服务
 - [Modrinth](https://modrinth.com/) - 开源整合包和Mod平台
 
 感谢[M-Crowe](https://github.com/m-crowe)的测试和部分非MD3 UI的设计。
+
+感谢[XuanYuSLF](https://github.com/XuanYuSLF)绘制的方块图标素材（`public/icons`下的 dirt_path、grass_block、snow_grass）。
 
 ## 路线图
 

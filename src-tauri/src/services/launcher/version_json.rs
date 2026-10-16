@@ -126,7 +126,10 @@ fn merge_arguments(version_json: &mut serde_json::Value, parent_json: &serde_jso
 }
 
 /// 合并 game 参数数组
-fn merge_game_arguments(version_json: &mut serde_json::Value, parent_game_arr: Vec<serde_json::Value>) {
+fn merge_game_arguments(
+    version_json: &mut serde_json::Value,
+    parent_game_arr: Vec<serde_json::Value>,
+) {
     if version_json
         .get("arguments")
         .and_then(|a| a.get("game"))
@@ -156,7 +159,10 @@ fn merge_game_arguments(version_json: &mut serde_json::Value, parent_game_arr: V
 }
 
 /// 合并 jvm 参数数组（新版 Forge 1.13+ 需要 --module-path 等参数）
-fn merge_jvm_arguments(version_json: &mut serde_json::Value, parent_jvm_arr: Vec<serde_json::Value>) {
+fn merge_jvm_arguments(
+    version_json: &mut serde_json::Value,
+    parent_jvm_arr: Vec<serde_json::Value>,
+) {
     if version_json
         .get("arguments")
         .and_then(|a| a.get("jvm"))

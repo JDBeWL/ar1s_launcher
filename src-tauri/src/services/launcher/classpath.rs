@@ -106,24 +106,30 @@ pub fn build_classpath(
     }
 
     // 确定主游戏 JAR 的版本（递归查找继承链）
-    let versions_dir = version_dir.parent().ok_or_else(|| {
-        LauncherError::Custom("无法获取 versions 目录".to_string())
-    })?;
-    let game_dir = versions_dir.parent().ok_or_else(|| {
-        LauncherError::Custom("无法获取游戏根目录".to_string())
-    })?;
+    let versions_dir = version_dir
+        .parent()
+        .ok_or_else(|| LauncherError::Custom("无法获取 versions 目录".to_string()))?;
+    let game_dir = versions_dir
+        .parent()
+        .ok_or_else(|| LauncherError::Custom("无法获取游戏根目录".to_string()))?;
     let jar_version = find_jar_version(version_json, game_dir)?;
-    
+
     // 主游戏 JAR 路径
     let main_game_jar_path = if jar_version != version {
-        versions_dir.join(&jar_version).join(format!("{}.jar", jar_version))
+        versions_dir
+            .join(&jar_version)
+            .join(format!("{}.jar", jar_version))
     } else {
         version_dir.join(format!("{}.jar", version))
     };
-    
+
     emit(
         "log-debug",
-        format!("主游戏JAR路径: {} (jar_version: {})", main_game_jar_path.display(), jar_version),
+        format!(
+            "主游戏JAR路径: {} (jar_version: {})",
+            main_game_jar_path.display(),
+            jar_version
+        ),
     );
 
     if !main_game_jar_path.exists() {

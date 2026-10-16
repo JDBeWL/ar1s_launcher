@@ -21,7 +21,15 @@ pub async fn search_modrinth_modpacks(
         .or_else(|| game_version.map(|single| vec![single]));
 
     modpack_installer::get_installer()
-        .search_modpacks(query, merged_versions, loaders, categories, limit, offset, sort_by)
+        .search_modpacks(
+            query,
+            merged_versions,
+            loaders,
+            categories,
+            limit,
+            offset,
+            sort_by,
+        )
         .await
 }
 

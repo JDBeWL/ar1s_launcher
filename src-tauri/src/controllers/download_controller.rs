@@ -36,8 +36,8 @@ pub async fn cancel_download(window: Window) -> Result<(), LauncherError> {
     // 设置全局取消标志
     set_cancel_flag();
     // 同时发送事件以触发监听器
-    window.emit("cancel-download", ()).map_err(|e| {
-        LauncherError::Custom(format!("发送取消事件失败: {}", e))
-    })?;
+    window
+        .emit("cancel-download", ())
+        .map_err(|e| LauncherError::Custom(format!("发送取消事件失败: {}", e)))?;
     Ok(())
 }

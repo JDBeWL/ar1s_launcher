@@ -22,11 +22,11 @@ const {
   modpackInitialLoad,
   gameVersions,
   loaders,
-  categories,
+  categoryOptions,
   modpackSortOptions,
   fetchGameVersions,
   searchModpacks,
-  onModpackPageChange
+  onModpackPageChange,
 } = useModrinth();
 
 function selectModpack(modpack: ModrinthModpack) {
@@ -35,8 +35,8 @@ function selectModpack(modpack: ModrinthModpack) {
     path: '/install-modpack',
     query: {
       projectId: modpack.slug,
-      title: modpack.title
-    }
+      title: modpack.title,
+    },
   });
 }
 
@@ -50,16 +50,11 @@ onMounted(async () => {
 <template>
   <div>
     <!-- 搜索和筛选 -->
-    <v-card color="surface-container" class="mb-4">
+    <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
-        <v-row dense>
+        <v-row density="compact">
           <v-col cols="12" sm="6">
-            <v-text-field
-              v-model="modpackSearchQuery"
-              label="搜索整合包"
-              hide-details
-              clearable
-            >
+            <v-text-field density="comfortable" v-model="modpackSearchQuery" label="搜索整合包" hide-details clearable>
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-magnify</v-icon>
               </template>
@@ -67,6 +62,7 @@ onMounted(async () => {
           </v-col>
           <v-col cols="6" sm="3">
             <v-select
+              density="comfortable"
               v-model="selectedGameVersion"
               :items="gameVersions"
               label="游戏版本"
@@ -80,6 +76,7 @@ onMounted(async () => {
           </v-col>
           <v-col cols="6" sm="3">
             <v-select
+              density="comfortable"
               v-model="selectedLoader"
               :items="loaders"
               label="加载器"
@@ -93,11 +90,12 @@ onMounted(async () => {
           </v-col>
         </v-row>
 
-        <v-row dense class="mt-2">
+        <v-row density="compact" class="mt-2">
           <v-col cols="6">
             <v-select
+              density="comfortable"
               v-model="selectedCategory"
-              :items="categories"
+              :items="categoryOptions"
               label="分类"
               clearable
               hide-details
@@ -108,12 +106,7 @@ onMounted(async () => {
             </v-select>
           </v-col>
           <v-col cols="6">
-            <v-select
-              v-model="sortBy"
-              :items="modpackSortOptions"
-              label="排序"
-              hide-details
-            >
+            <v-select density="comfortable" v-model="sortBy" :items="modpackSortOptions" label="排序" hide-details>
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-sort</v-icon>
               </template>
@@ -126,7 +119,7 @@ onMounted(async () => {
     <!-- 加载状态 -->
     <div v-if="loadingModpacks" class="text-center py-12">
       <v-progress-circular indeterminate size="48" color="primary" />
-      <div class="text-body-2 text-on-surface-variant mt-4">搜索整合包中...</div>
+      <div class="text-body-medium text-on-surface-variant mt-4">搜索整合包中...</div>
     </div>
 
     <!-- 空状态 -->
@@ -134,29 +127,19 @@ onMounted(async () => {
       <v-avatar size="80" color="surface-container-high" class="mb-4">
         <v-icon size="40" color="on-surface-variant">mdi-package-variant</v-icon>
       </v-avatar>
-      <div class="text-body-1 font-weight-medium">
+      <div class="text-body-large font-weight-medium">
         {{ modpackInitialLoad ? '正在加载...' : '没有找到整合包' }}
       </div>
-      <div class="text-body-2 text-on-surface-variant">
+      <div class="text-body-medium text-on-surface-variant">
         {{ modpackInitialLoad ? '' : '尝试调整搜索条件或输入关键词' }}
       </div>
     </div>
 
     <!-- 整合包列表 -->
     <template v-else>
-      <v-row dense>
-        <v-col 
-          v-for="modpack in modpacks" 
-          :key="modpack.slug" 
-          cols="12" 
-          sm="6" 
-          md="4"
-        >
-          <ModpackCard 
-            :modpack="modpack" 
-            :selected="selectedModpack?.slug === modpack.slug"
-            @select="selectModpack"
-          />
+      <v-row density="compact">
+        <v-col v-for="modpack in modpacks" :key="modpack.slug" cols="12" sm="6" md="4">
+          <ModpackCard :modpack="modpack" :selected="selectedModpack?.slug === modpack.slug" @select="selectModpack" />
         </v-col>
       </v-row>
 
@@ -170,9 +153,7 @@ onMounted(async () => {
           color="primary"
           @update:model-value="onModpackPageChange"
         />
-        <div class="text-caption text-on-surface-variant mt-2">
-          共 {{ modpackTotalHits }} 个整合包
-        </div>
+        <div class="text-body-small text-on-surface-variant mt-2">共 {{ modpackTotalHits }} 个整合包</div>
       </div>
     </template>
   </div>

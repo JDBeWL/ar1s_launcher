@@ -58,6 +58,8 @@ pub struct GameConfig {
     pub isolate_logs: bool,
     pub username: Option<String>,
     pub uuid: Option<String>,
+    /// 正版皮肤原图地址，登录/刷新 token 时从 Mojang 个人资料接口取
+    pub skin_url: Option<String>,
     #[serde(default = "default_max_memory")]
     pub max_memory: u32,
     pub download_mirror: Option<String>,
@@ -75,6 +77,10 @@ pub struct GameConfig {
     pub instance_last_played: HashMap<String, i64>,
     /// 上次选择的游戏版本
     pub last_selected_version: Option<String>,
+    /// 界面配色方案 (indigo / emerald / rose)
+    pub theme_palette: Option<String>,
+    /// 界面明暗模式 (dark / light)
+    pub theme_mode: Option<String>,
     /// 认证类型 (offline / microsoft)
     #[serde(default)]
     pub auth_type: AuthType,
@@ -104,6 +110,7 @@ impl Default for GameConfig {
             isolate_logs: true,
             username: None,
             uuid: None,
+            skin_url: None,
             max_memory: default_max_memory(),
             download_mirror: None,
             auto_memory_enabled: false,
@@ -112,6 +119,8 @@ impl Default for GameConfig {
             fullscreen: false,
             instance_last_played: HashMap::new(),
             last_selected_version: None,
+            theme_palette: None,
+            theme_mode: None,
             auth_type: AuthType::default(),
             ms_access_token: None,
             ms_refresh_token: None,
@@ -242,6 +251,8 @@ pub struct InstanceInfo {
     pub game_version: Option<String>,
     pub last_played: Option<i64>,
     pub mod_count: Option<u32>,
+    /// 整合包自带的封面图 URL，没有时前端回退到加载器图标
+    pub icon_url: Option<String>,
 }
 
 // 整合包相关模型

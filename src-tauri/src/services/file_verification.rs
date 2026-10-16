@@ -161,8 +161,9 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
 
     let version_json_str = fs::read_to_string(&version_json_path)?;
     let version_json: serde_json::Value = serde_json::from_str(&version_json_str)?;
-    
-    info!("版本 JSON 内容: id={:?}, inheritsFrom={:?}, jar={:?}",
+
+    info!(
+        "版本 JSON 内容: id={:?}, inheritsFrom={:?}, jar={:?}",
         version_json["id"].as_str(),
         version_json["inheritsFrom"].as_str(),
         version_json["jar"].as_str()
@@ -179,7 +180,7 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
         .join("versions")
         .join(&jar_version)
         .join(format!("{}.jar", &jar_version));
-    
+
     if !main_game_jar_path.exists() {
         info!("主游戏JAR文件不存在: {}", main_game_jar_path.display());
         missing_files.push(format!(
@@ -191,23 +192,26 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
     // 递归验证整个继承链的版本 JSON 文件，并检查所有库
     let mut versions_to_check = vec![version_json.clone()];
     let mut current_json = version_json.clone();
-    
+
     while let Some(inherits_from) = current_json["inheritsFrom"].as_str() {
         debug!("检查继承版本: {}", inherits_from);
         let base_version_json_path = game_dir
             .join("versions")
             .join(inherits_from)
             .join(format!("{}.json", inherits_from));
-        
+
         if !base_version_json_path.exists() {
-            info!("基础版本JSON文件不存在: {}", base_version_json_path.display());
+            info!(
+                "基础版本JSON文件不存在: {}",
+                base_version_json_path.display()
+            );
             missing_files.push(format!(
                 "基础版本JSON文件不存在: {}",
                 base_version_json_path.display()
             ));
             break;
         }
-        
+
         // 读取父版本 JSON 继续检查
         let parent_str = fs::read_to_string(&base_version_json_path)?;
         let parent_json: serde_json::Value = serde_json::from_str(&parent_str)?;
@@ -232,12 +236,21 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
     Ok(missing_files)
 }
 
-use crate::utils::minecraft::{evaluate_rules, find_jar_version, get_mc_os_name, maven_name_to_path};
+use crate::utils::minecraft::{
+    evaluate_rules, find_jar_version, get_mc_os_name, maven_name_to_path,
+};
 
 /// 检查单个库文件是否存在
-fn check_library(lib: &serde_json::Value, libraries_base_dir: &PathBuf, missing_files: &mut Vec<String>) {
-    let lib_name = lib.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
-    
+fn check_library(
+    lib: &serde_json::Value,
+    libraries_base_dir: &PathBuf,
+    missing_files: &mut Vec<String>,
+) {
+    let lib_name = lib
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("unknown");
+
     if let Some(natives) = lib.get("natives") {
         let os_key = get_mc_os_name();
 
@@ -255,11 +268,9 @@ fn check_library(lib: &serde_json::Value, libraries_base_dir: &PathBuf, missing_
                     .and_then(|d| d.get("classifiers"))
                     .and_then(|c| c.get(&classifier))
                 {
-                    let lib_path =
-                        libraries_base_dir.join(artifact["path"].as_str().unwrap_or(""));
+                    let lib_path = libraries_base_dir.join(artifact["path"].as_str().unwrap_or(""));
                     if !lib_path.exists() {
-                        missing_files
-                            .push(format!("Natives库文件不存在: {}", lib_path.display()));
+                        missing_files.push(format!("Natives库文件不存在: {}", lib_path.display()));
                     }
                 }
             }
@@ -269,7 +280,7 @@ fn check_library(lib: &serde_json::Value, libraries_base_dir: &PathBuf, missing_
         if !evaluate_rules(lib.get("rules")) {
             return;
         }
-        
+
         if let Some(path) = lib
             .get("downloads")
             .and_then(|d| d.get("artifact"))
@@ -287,7 +298,11 @@ fn check_library(lib: &serde_json::Value, libraries_base_dir: &PathBuf, missing_
                 if let Some(path) = maven_name_to_path(name, None, "jar") {
                     let lib_path = libraries_base_dir.join(&path);
                     if !lib_path.exists() {
-                        debug!("库文件缺失 (从name构建): {} -> {}", name, lib_path.display());
+                        debug!(
+                            "库文件缺失 (从name构建): {} -> {}",
+                            name,
+                            lib_path.display()
+                        );
                         missing_files.push(format!("库文件不存在: {}", lib_path.display()));
                     }
                 }

@@ -2,9 +2,8 @@
 
 use std::time::Duration;
 
-static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
-    create_client(16)
-});
+static HTTP_CLIENT: std::sync::LazyLock<reqwest::Client> =
+    std::sync::LazyLock::new(|| create_client(16));
 
 pub fn get_http_client() -> &'static reqwest::Client {
     &HTTP_CLIENT

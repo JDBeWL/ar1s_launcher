@@ -3,19 +3,6 @@
  * 统一导出所有 API 和工具
  */
 
-export { 
-  api, 
-  versionApi, 
-  instanceApi, 
-  loaderApi, 
-  javaApi, 
-  configApi, 
-  userApi, 
-  launcherApi, 
-  modpackApi,
-  clearPendingRequests,
-  getPendingRequestCount,
-} from './api';
+export { api, versionApi, instanceApi, loaderApi, javaApi, configApi, userApi, modpackApi } from './api';
 
 export type { ModrinthSearchResult, ModrinthModpack } from '../types/events';
-

@@ -39,7 +39,11 @@ pub fn resolve_path(path: &str) -> PathBuf {
 
     if let Ok(exe_dir) = std::env::current_exe()
         .map_err(|e| format!("无法获取可执行文件路径: {}", e))
-        .and_then(|exe| exe.parent().map(|p| p.to_path_buf()).ok_or("无法获取目录".to_string()))
+        .and_then(|exe| {
+            exe.parent()
+                .map(|p| p.to_path_buf())
+                .ok_or("无法获取目录".to_string())
+        })
     {
         return exe_dir.join(&p);
     }
@@ -99,7 +103,7 @@ pub fn detect_java_version(java_path: &str) -> Option<u32> {
     let output = command.output().ok()?;
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     for line in stderr.lines() {
         if line.contains("version") {
             if let Some(start) = line.find('"') {
@@ -120,7 +124,7 @@ pub fn detect_java_version(java_path: &str) -> Option<u32> {
             }
         }
     }
-    
+
     None
 }
 
@@ -198,7 +202,9 @@ pub fn resolve_actual_mc_version(version_id: &str, game_dir: &str) -> String {
         return version_id.to_string();
     }
 
-    let version_dir = std::path::PathBuf::from(game_dir).join("versions").join(version_id);
+    let version_dir = std::path::PathBuf::from(game_dir)
+        .join("versions")
+        .join(version_id);
     let json_path = version_dir.join(format!("{}.json", version_id));
 
     if !json_path.exists() {
@@ -229,7 +235,10 @@ pub fn resolve_actual_mc_version(version_id: &str, game_dir: &str) -> String {
 
 /// 从版本 JSON 的 arguments 中提取 --fml.mcVersion
 fn extract_fml_mc_version(json: &serde_json::Value) -> Option<String> {
-    let args = json.get("arguments").and_then(|a| a.get("game")).and_then(|g| g.as_array())?;
+    let args = json
+        .get("arguments")
+        .and_then(|a| a.get("game"))
+        .and_then(|g| g.as_array())?;
 
     for (i, arg) in args.iter().enumerate() {
         if arg.as_str() == Some("--fml.mcVersion") {
@@ -263,7 +272,9 @@ fn resolve_actual_mc_version_recursive(version_id: &str, game_dir: &str, depth: 
         return version_id.to_string();
     }
 
-    let version_dir = std::path::PathBuf::from(game_dir).join("versions").join(version_id);
+    let version_dir = std::path::PathBuf::from(game_dir)
+        .join("versions")
+        .join(version_id);
     let json_path = version_dir.join(format!("{}.json", version_id));
 
     if !json_path.exists() {
@@ -297,7 +308,9 @@ pub fn auto_match_java_for_version(mc_version: &str) -> Option<JavaMatchResult> 
     let (min_ver, max_ver) = recommended_java_version_range(mc_version);
     log::info!(
         "Minecraft {} 推荐 Java 版本范围: {} ~ {}",
-        mc_version, min_ver, max_ver
+        mc_version,
+        min_ver,
+        max_ver
     );
 
     let config = load_config().ok()?;

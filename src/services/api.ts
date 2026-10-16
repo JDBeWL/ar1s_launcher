@@ -7,6 +7,7 @@ import { withCache, cache, CacheKeys } from './cache';
 import type {
   VersionManifest,
   GameInstance,
+  ModInfo,
   AvailableLoaders,
   ForgeVersion,
   LoaderVersionInfo,
@@ -36,7 +37,7 @@ const pendingRequests = new Map<string, Promise<unknown>>();
 async function dedupedInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
-  options?: { skipDedup?: boolean }
+  options?: { skipDedup?: boolean },
 ): Promise<T> {
   // 如果跳过去重，直接调用
   if (options?.skipDedup) {
@@ -60,29 +61,12 @@ async function dedupedInvoke<T>(
   return promise;
 }
 
-/**
- * 清除所有进行中的请求缓存
- * 用于特殊场景（如用户登出）
- */
-export function clearPendingRequests(): void {
-  pendingRequests.clear();
-}
-
-/**
- * 获取当前进行中的请求数量
- */
-export function getPendingRequestCount(): number {
-  return pendingRequests.size;
-}
-
 // ============ 版本相关 API ============
 
 export const versionApi = {
   /** 获取 Minecraft 版本列表（缓存 5 分钟） */
   async getVersions(): Promise<VersionManifest> {
-    return withCache(CacheKeys.VERSIONS, () =>
-      dedupedInvoke<VersionManifest>('get_versions')
-    );
+    return withCache(CacheKeys.VERSIONS, () => dedupedInvoke<VersionManifest>('get_versions'));
   },
 
   /** 获取指定版本的文件大小信息 */
@@ -117,7 +101,7 @@ export const instanceApi = {
   async createInstance(
     newInstanceName: string,
     baseVersionId: string,
-    loader?: { type: string; mc_version: string; loader_version: string }
+    loader?: { type: string; mc_version: string; loader_version: string },
   ): Promise<void> {
     await invoke('create_instance', { newInstanceName, baseVersionId, loader });
     cache.deleteByPrefix(CacheKeys.INSTANCES);
@@ -135,6 +119,22 @@ export const instanceApi = {
 
   async openInstanceFolder(instanceName: string): Promise<void> {
     return invoke('open_instance_folder', { instanceName });
+  },
+
+  /** 列出实例 mods 目录里的模组（含已禁用的）；状态会变，不走缓存 */
+  async getMods(instanceName: string): Promise<ModInfo[]> {
+    return invoke<ModInfo[]>('get_instance_mods', { instanceName });
+  },
+
+  /** 启用/禁用模组（改名 *.jar <-> *.jar.disabled） */
+  async setModEnabled(instanceName: string, fileName: string, enabled: boolean): Promise<void> {
+    await invoke('set_mod_enabled', { instanceName, fileName, enabled });
+    cache.deleteByPrefix(CacheKeys.INSTANCES);
+  },
+
+  async deleteMod(instanceName: string, fileName: string): Promise<void> {
+    await invoke('delete_instance_mod', { instanceName, fileName });
+    cache.deleteByPrefix(CacheKeys.INSTANCES);
   },
 
   async launchInstance(instanceName: string, overrideJavaPath?: string): Promise<void> {
@@ -159,35 +159,35 @@ export const loaderApi = {
   /** 获取可用的加载器类型（缓存 5 分钟） */
   async getAvailableLoaders(minecraftVersion: string): Promise<AvailableLoaders> {
     return withCache(`${CacheKeys.LOADERS}:${minecraftVersion}`, () =>
-      dedupedInvoke<AvailableLoaders>('get_available_loaders', { minecraftVersion })
+      dedupedInvoke<AvailableLoaders>('get_available_loaders', { minecraftVersion }),
     );
   },
 
   /** 获取 Forge 版本列表（缓存 5 分钟） */
   async getForgeVersions(minecraftVersion: string): Promise<ForgeVersion[]> {
     return withCache(`${CacheKeys.LOADERS}:forge:${minecraftVersion}`, () =>
-      dedupedInvoke<ForgeVersion[]>('get_forge_versions', { minecraftVersion })
+      dedupedInvoke<ForgeVersion[]>('get_forge_versions', { minecraftVersion }),
     );
   },
 
   /** 获取 Fabric 版本列表（缓存 5 分钟） */
   async getFabricVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
     return withCache(`${CacheKeys.LOADERS}:fabric:${minecraftVersion}`, () =>
-      dedupedInvoke<LoaderVersionInfo[]>('get_fabric_versions', { minecraftVersion })
+      dedupedInvoke<LoaderVersionInfo[]>('get_fabric_versions', { minecraftVersion }),
     );
   },
 
   /** 获取 Quilt 版本列表（缓存 5 分钟） */
   async getQuiltVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
     return withCache(`${CacheKeys.LOADERS}:quilt:${minecraftVersion}`, () =>
-      dedupedInvoke<LoaderVersionInfo[]>('get_quilt_versions', { minecraftVersion })
+      dedupedInvoke<LoaderVersionInfo[]>('get_quilt_versions', { minecraftVersion }),
     );
   },
 
   /** 获取 NeoForge 版本列表（缓存 5 分钟） */
   async getNeoForgeVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
     return withCache(`${CacheKeys.LOADERS}:neoforge:${minecraftVersion}`, () =>
-      dedupedInvoke<LoaderVersionInfo[]>('get_neoforge_versions', { minecraftVersion })
+      dedupedInvoke<LoaderVersionInfo[]>('get_neoforge_versions', { minecraftVersion }),
     );
   },
 };
@@ -197,9 +197,7 @@ export const loaderApi = {
 export const javaApi = {
   /** 查找 Java 安装（缓存 10 分钟） */
   async findJavaInstallations(): Promise<string[]> {
-    return withCache(CacheKeys.JAVA, () =>
-      dedupedInvoke<string[]>('find_java_installations_command'), 10 * 60 * 1000
-    );
+    return withCache(CacheKeys.JAVA, () => dedupedInvoke<string[]>('find_java_installations_command'), 10 * 60 * 1000);
   },
 
   /** 强制刷新 Java 安装列表 */
@@ -264,8 +262,10 @@ export const configApi = {
 
   /** 获取游戏目录信息（缓存 2 分钟） */
   async getGameDirInfo(): Promise<GameDirInfo> {
-    return withCache(`${CacheKeys.CONFIG}:game_dir_info`, () =>
-      dedupedInvoke<GameDirInfo>('get_game_dir_info'), 2 * 60 * 1000
+    return withCache(
+      `${CacheKeys.CONFIG}:game_dir_info`,
+      () => dedupedInvoke<GameDirInfo>('get_game_dir_info'),
+      2 * 60 * 1000,
     );
   },
 
@@ -302,9 +302,17 @@ export const configApi = {
 
   /** 获取总内存（缓存 10 分钟） */
   async getTotalMemory(): Promise<number> {
-    return withCache(`${CacheKeys.CONFIG}:total_memory`, () =>
-      dedupedInvoke<number>('get_total_memory'), 10 * 60 * 1000
-    );
+    const key = `${CacheKeys.CONFIG}:total_memory`;
+    const read = () => dedupedInvoke<number>('get_total_memory');
+
+    let mb = await withCache<number>(key, read, 10 * 60 * 1000);
+    if (!mb) {
+      // sysinfo 冷启动的首次刷新可能返回 0，把这个值缓存住会让之后 10 分钟都读到 0
+      cache.delete(key);
+      mb = await read();
+      if (mb) cache.set(key, mb, 10 * 60 * 1000);
+    }
+    return mb;
   },
 
   /** 获取窗口设置 */
@@ -324,8 +332,10 @@ export const configApi = {
 
   /** 获取自动内存配置（缓存 10 分钟） */
   async getAutoMemoryConfig(): Promise<AutoMemoryConfig> {
-    return withCache(`${CacheKeys.CONFIG}:auto_memory`, () =>
-      dedupedInvoke<AutoMemoryConfig>('get_auto_memory_config'), 10 * 60 * 1000
+    return withCache(
+      `${CacheKeys.CONFIG}:auto_memory`,
+      () => dedupedInvoke<AutoMemoryConfig>('get_auto_memory_config'),
+      10 * 60 * 1000,
     );
   },
 
@@ -399,6 +409,11 @@ export const userApi = {
     return invoke<MicrosoftLoginResult>('refresh_microsoft_auth');
   },
 
+  /** 用已存的 access_token 重新取一次皮肤地址（换皮肤不会触发 token 刷新） */
+  async refreshSkinUrl(): Promise<string | null> {
+    return invoke<string | null>('refresh_skin_url');
+  },
+
   /** 退出 Microsoft 登录 */
   async logoutMicrosoft(): Promise<void> {
     return invoke('logout_microsoft');
@@ -407,25 +422,6 @@ export const userApi = {
   /** 设置认证类型 */
   async setAuthType(authType: string): Promise<void> {
     return invoke('set_auth_type', { authType });
-  },
-};
-
-// ============ 启动器相关 API ============
-
-export const launcherApi = {
-  /** 启动 Minecraft */
-  async launchMinecraft(options: {
-    version: string;
-    username: string;
-    memory?: number;
-    window_width?: number;
-    window_height?: number;
-    fullscreen?: boolean;
-    auth_type?: string;
-    uuid?: string;
-    override_java_path?: string;
-  }): Promise<void> {
-    return invoke('launch_minecraft', { options });
   },
 };
 
@@ -449,7 +445,7 @@ export const modpackApi = {
   async getModrinthModpackVersions(
     projectId: string,
     gameVersions?: string[],
-    loaders?: string[]
+    loaders?: string[],
   ): Promise<ModrinthVersion[]> {
     return dedupedInvoke<ModrinthVersion[]>('get_modrinth_modpack_versions', {
       projectId,
@@ -483,12 +479,7 @@ export const api = {
   java: javaApi,
   config: configApi,
   user: userApi,
-  launcher: launcherApi,
   modpack: modpackApi,
-  
-  // 工具函数
-  clearPendingRequests,
-  getPendingRequestCount,
 };
 
 export default api;

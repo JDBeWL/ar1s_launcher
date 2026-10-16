@@ -72,11 +72,10 @@ pub async fn install_neoforge(
     // 如果 BMCLAPI 失败，尝试官方源
     if !downloaded {
         info!("尝试从官方源下载 NeoForge installer: {}", official_url);
-        let response = client
-            .get(&official_url)
-            .send()
-            .await
-            .map_err(|e| LauncherError::Custom(format!("下载 NeoForge installer 失败: {}", e)))?;
+        let response =
+            client.get(&official_url).send().await.map_err(|e| {
+                LauncherError::Custom(format!("下载 NeoForge installer 失败: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(LauncherError::Custom(format!(
@@ -130,8 +129,9 @@ pub async fn install_neoforge(
         }
     }
 
-    let version_json_str = version_json_content
-        .ok_or_else(|| LauncherError::Custom("NeoForge installer 中未找到 version.json".to_string()))?;
+    let version_json_str = version_json_content.ok_or_else(|| {
+        LauncherError::Custom("NeoForge installer 中未找到 version.json".to_string())
+    })?;
 
     let mut version_json: Value = serde_json::from_str(&version_json_str)
         .map_err(|e| LauncherError::Custom(format!("解析 NeoForge JSON 失败: {}", e)))?;
@@ -159,12 +159,14 @@ pub async fn install_neoforge(
 }
 
 /// 获取 NeoForge 版本列表
-pub async fn get_neoforge_versions(mc_version: &str) -> Result<Vec<NeoForgeVersion>, LauncherError> {
+pub async fn get_neoforge_versions(
+    mc_version: &str,
+) -> Result<Vec<NeoForgeVersion>, LauncherError> {
     let client = http_client::get_client();
-    
+
     // 尝试 BMCLAPI
     let bmclapi_url = format!("{}/list/{}", BMCLAPI_NEOFORGE_URL, mc_version);
-    
+
     if let Ok(response) = client.get(&bmclapi_url).send().await {
         if response.status().is_success() {
             if let Ok(versions) = response.json::<Vec<BmclapiNeoForgeVersion>>().await {

@@ -11,6 +11,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'launch', instance: GameInstance): void;
   (e: 'open-folder', instance: GameInstance): void;
+  (e: 'manage-mods', instance: GameInstance): void;
   (e: 'delete', instance: GameInstance): void;
   (e: 'rename', instance: GameInstance): void;
 }>();
@@ -48,11 +49,7 @@ const chipLabel = computed(() => {
 </script>
 
 <template>
-  <v-card
-    color="surface-container"
-    variant="flat"
-    class="instance-card h-100 d-flex flex-column"
-  >
+  <v-card color="surface-container" variant="flat" class="instance-card h-100 d-flex flex-column">
     <!-- 顶部装饰条 -->
     <div :class="['card-accent', `accent-${(instance.loaderType || 'none').toLowerCase()}`]" />
 
@@ -60,7 +57,7 @@ const chipLabel = computed(() => {
       <!-- 头部：标题和菜单 -->
       <div class="d-flex align-start justify-space-between mb-2">
         <div class="flex-grow-1 min-width-0 mr-2">
-          <div class="text-h6 font-weight-bold text-truncate name-text" :title="instance.name">
+          <div class="text-title-large font-weight-bold text-truncate name-text" :title="instance.name">
             {{ instance.name }}
           </div>
           <div class="d-flex align-center mt-1 version-line">
@@ -73,12 +70,12 @@ const chipLabel = computed(() => {
             >
               {{ chipLabel }}
             </v-chip>
-            <span class="text-caption text-on-surface-variant font-weight-medium version-text" :title="versionLabel">
+            <span class="text-body-small text-on-surface-variant font-weight-medium version-text" :title="versionLabel">
               {{ versionLabel }}
             </span>
           </div>
         </div>
-        
+
         <v-menu>
           <template v-slot:activator="{ props }">
             <v-btn icon variant="text" size="x-small" aria-label="实例操作菜单" v-bind="props" class="mt-1">
@@ -90,27 +87,33 @@ const chipLabel = computed(() => {
               <template #prepend>
                 <v-icon size="18">mdi-folder-open-outline</v-icon>
               </template>
-              <v-list-item-title class="text-body-2">打开文件夹</v-list-item-title>
+              <v-list-item-title class="text-body-medium">打开文件夹</v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="emit('manage-mods', instance)">
+              <template #prepend>
+                <v-icon size="18">mdi-puzzle-outline</v-icon>
+              </template>
+              <v-list-item-title class="text-body-medium">Mod 管理</v-list-item-title>
             </v-list-item>
             <v-list-item @click="emit('rename', instance)">
               <template #prepend>
                 <v-icon size="18">mdi-pencil-outline</v-icon>
               </template>
-              <v-list-item-title class="text-body-2">重命名</v-list-item-title>
+              <v-list-item-title class="text-body-medium">重命名</v-list-item-title>
             </v-list-item>
             <v-divider class="my-1" />
             <v-list-item @click="emit('delete', instance)" color="error">
               <template #prepend>
                 <v-icon size="18" color="error">mdi-delete-outline</v-icon>
               </template>
-              <v-list-item-title class="text-body-2">删除</v-list-item-title>
+              <v-list-item-title class="text-body-medium">删除</v-list-item-title>
             </v-list-item>
           </v-list>
         </v-menu>
       </div>
 
       <!-- 中间信息：最后游玩和 Mod 数量 -->
-      <div class="info-row d-flex align-center ga-4 text-caption text-on-surface-variant mt-auto pt-4 mb-4">
+      <div class="info-row d-flex align-center ga-4 text-body-small text-on-surface-variant mt-auto pt-4 mb-4">
         <div class="d-flex align-center">
           <v-icon size="14" class="mr-1.5" color="on-surface-variant">mdi-clock-outline</v-icon>
           {{ formatLastPlayed(instance.lastPlayed) }}
@@ -131,7 +134,7 @@ const chipLabel = computed(() => {
         @click="emit('launch', instance)"
       >
         <v-icon start size="18" class="mr-2">mdi-play</v-icon>
-        开始游戏
+        启动
       </v-btn>
     </v-card-text>
   </v-card>
@@ -186,11 +189,25 @@ const chipLabel = computed(() => {
 }
 
 /* 加载器特定装饰色 */
-.accent-forge { background: linear-gradient(90deg, #3273a8, #5ea3d8); }
-.accent-fabric { background: linear-gradient(90deg, #dbb076, #f4d09c); }
-.accent-quilt { background: linear-gradient(90deg, #8454b5, #af87db); }
-.accent-neoforge { background: linear-gradient(90deg, #e09240, #ffb86c); }
-.accent-modded { background: linear-gradient(90deg, #2d9687, #4fc3b3); }
-.accent-unknown { background: linear-gradient(90deg, #757575, #9e9e9e); }
-.accent-none { background: linear-gradient(90deg, rgb(var(--v-theme-primary)), rgb(var(--v-theme-primary-container))); }
+.accent-forge {
+  background: linear-gradient(90deg, #3273a8, #5ea3d8);
+}
+.accent-fabric {
+  background: linear-gradient(90deg, #dbb076, #f4d09c);
+}
+.accent-quilt {
+  background: linear-gradient(90deg, #8454b5, #af87db);
+}
+.accent-neoforge {
+  background: linear-gradient(90deg, #e09240, #ffb86c);
+}
+.accent-modded {
+  background: linear-gradient(90deg, #2d9687, #4fc3b3);
+}
+.accent-unknown {
+  background: linear-gradient(90deg, #757575, #9e9e9e);
+}
+.accent-none {
+  background: linear-gradient(90deg, rgb(var(--v-theme-primary)), rgb(var(--v-theme-primary-container)));
+}
 </style>

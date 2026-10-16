@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+# 图片资源不参与换行转换
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary

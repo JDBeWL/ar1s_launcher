@@ -7,9 +7,8 @@ use tauri::Emitter;
 use crate::errors::LauncherError;
 use crate::models::{GameConfig, GameDirInfo};
 use crate::services::memory::{
+    AutoMemoryConfig, DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB, DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
     auto_set_memory_if_enabled, get_memory_warning_message, get_system_memory,
-    is_memory_setting_safe, recommend_memory_for_game, AutoMemoryConfig, MemoryRecommendation,
-    MemoryStats, DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB, DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
 };
 
 static CONFIG_CACHE: std::sync::LazyLock<RwLock<Option<Arc<GameConfig>>>> =
@@ -159,6 +158,7 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         isolate_logs: true,
         username: None,
         uuid: None,
+        skin_url: None,
         max_memory: crate::models::default_max_memory(),
         download_mirror: Some("bmcl".to_string()),
         auto_memory_enabled: false,
@@ -167,6 +167,8 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         fullscreen: false,
         instance_last_played: std::collections::HashMap::new(),
         last_selected_version: None,
+        theme_palette: None,
+        theme_mode: None,
         auth_type: crate::models::AuthType::Offline,
         ms_access_token: None,
         ms_refresh_token: None,
@@ -252,6 +254,8 @@ enum ConfigKey {
     Fullscreen,
     AuthType,
     LastSelectedVersion,
+    ThemePalette,
+    ThemeMode,
 }
 
 impl ConfigKey {
@@ -276,6 +280,8 @@ impl ConfigKey {
             "fullscreen" => Some(Self::Fullscreen),
             "authType" => Some(Self::AuthType),
             "lastSelectedVersion" => Some(Self::LastSelectedVersion),
+            "themePalette" => Some(Self::ThemePalette),
+            "themeMode" => Some(Self::ThemeMode),
             _ => None,
         }
     }
@@ -304,6 +310,8 @@ impl ConfigKey {
                 crate::models::AuthType::Microsoft => "microsoft".to_string(),
             }),
             Self::LastSelectedVersion => config.last_selected_version.clone(),
+            Self::ThemePalette => config.theme_palette.clone(),
+            Self::ThemeMode => config.theme_mode.clone(),
         }
     }
 
@@ -312,72 +320,91 @@ impl ConfigKey {
             Self::JavaPath => config.java_path = Some(value),
             Self::GameDir => config.game_dir = value,
             Self::VersionIsolation => {
-                config.version_isolation = value.parse().map_err(|_| {
-                    LauncherError::Custom("版本隔离设置值无效".to_string())
-                })?
+                config.version_isolation = value
+                    .parse()
+                    .map_err(|_| LauncherError::Custom("版本隔离设置值无效".to_string()))?
             }
             Self::DownloadThreads => {
-                config.download_threads = value.parse().map_err(|_| {
-                    LauncherError::Custom("下载线程数设置值无效".to_string())
-                })?
+                config.download_threads = value
+                    .parse()
+                    .map_err(|_| LauncherError::Custom("下载线程数设置值无效".to_string()))?
             }
             Self::Language => config.language = Some(value),
             Self::IsolateSaves => {
-                config.isolate_saves = value.parse().map_err(|_| {
-                    LauncherError::Custom("存档隔离设置值无效".to_string())
-                })?
+                config.isolate_saves = value
+                    .parse()
+                    .map_err(|_| LauncherError::Custom("存档隔离设置值无效".to_string()))?
             }
             Self::IsolateResourcepacks => {
-                config.isolate_resourcepacks = value.parse().map_err(|_| {
-                    LauncherError::Custom("资源包隔离设置值无效".to_string())
-                })?
+                config.isolate_resourcepacks = value
+                    .parse()
+                    .map_err(|_| LauncherError::Custom("资源包隔离设置值无效".to_string()))?
             }
             Self::IsolateLogs => {
-                config.isolate_logs = value.parse().map_err(|_| {
-                    LauncherError::Custom("日志隔离设置值无效".to_string())
-                })?
+                config.isolate_logs = value
+                    .parse()
+                    .map_err(|_| LauncherError::Custom("日志隔离设置值无效".to_string()))?
             }
             Self::Username => config.username = Some(value),
             Self::Uuid => config.uuid = Some(value),
             Self::MaxMemory => {
-                config.max_memory = value.parse().map_err(|_| {
-                    LauncherError::Custom("最大内存设置值无效".to_string())
-                })?
+                config.max_memory = value
+                    .parse()
+                    .map_err(|_| LauncherError::Custom("最大内存设置值无效".to_string()))?
             }
             Self::DownloadMirror => config.download_mirror = Some(value),
             Self::AutoMatchJava => {
-                config.auto_match_java = value.parse().map_err(|_| {
-                    LauncherError::Custom("自动匹配Java设置值无效".to_string())
-                })?
+                config.auto_match_java = value
+                    .parse()
+                    .map_err(|_| LauncherError::Custom("自动匹配Java设置值无效".to_string()))?
             }
             Self::AutoMemoryEnabled => {
-                config.auto_memory_enabled = value.parse().map_err(|_| {
-                    LauncherError::Custom("自动内存设置值无效".to_string())
-                })?
+                config.auto_memory_enabled = value
+                    .parse()
+                    .map_err(|_| LauncherError::Custom("自动内存设置值无效".to_string()))?
             }
             Self::WindowWidth => {
-                config.window_width = Some(value.parse().map_err(|_| {
-                    LauncherError::Custom("窗口宽度设置值无效".to_string())
-                })?)
+                config.window_width = Some(
+                    value
+                        .parse()
+                        .map_err(|_| LauncherError::Custom("窗口宽度设置值无效".to_string()))?,
+                )
             }
             Self::WindowHeight => {
-                config.window_height = Some(value.parse().map_err(|_| {
-                    LauncherError::Custom("窗口高度设置值无效".to_string())
-                })?)
+                config.window_height = Some(
+                    value
+                        .parse()
+                        .map_err(|_| LauncherError::Custom("窗口高度设置值无效".to_string()))?,
+                )
             }
             Self::Fullscreen => {
-                config.fullscreen = value.parse().map_err(|_| {
-                    LauncherError::Custom("全屏设置值无效".to_string())
-                })?
+                config.fullscreen = value
+                    .parse()
+                    .map_err(|_| LauncherError::Custom("全屏设置值无效".to_string()))?
             }
             Self::AuthType => {
                 config.auth_type = match value.to_lowercase().as_str() {
                     "offline" => crate::models::AuthType::Offline,
                     "microsoft" => crate::models::AuthType::Microsoft,
-                    _ => return Err(LauncherError::Custom("认证类型无效，仅支持 offline 或 microsoft".to_string())),
+                    _ => {
+                        return Err(LauncherError::Custom(
+                            "认证类型无效，仅支持 offline 或 microsoft".to_string(),
+                        ));
+                    }
                 }
             }
             Self::LastSelectedVersion => config.last_selected_version = Some(value),
+            Self::ThemePalette => config.theme_palette = Some(value),
+            Self::ThemeMode => {
+                config.theme_mode = match value.to_lowercase().as_str() {
+                    "dark" | "light" => Some(value.to_lowercase()),
+                    _ => {
+                        return Err(LauncherError::Custom(
+                            "主题模式无效，仅支持 dark 或 light".to_string(),
+                        ));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -387,10 +414,7 @@ pub fn load_config_key(key: String) -> Result<Option<String>, LauncherError> {
     let config = load_config()?;
     match ConfigKey::from_str(&key) {
         Some(config_key) => Ok(config_key.get_value(&config)),
-        None => Err(LauncherError::Custom(format!(
-            "未知的配置项: {}",
-            key
-        ))),
+        None => Err(LauncherError::Custom(format!("未知的配置项: {}", key))),
     }
 }
 
@@ -401,10 +425,7 @@ pub fn save_config_key(key: String, value: String) -> Result<(), LauncherError> 
             config_key.set_value(&mut config, value)?;
             save_config(&config)
         }
-        None => Err(LauncherError::Custom(format!(
-            "未知的配置项: {}",
-            key
-        ))),
+        None => Err(LauncherError::Custom(format!("未知的配置项: {}", key))),
     }
 }
 
@@ -464,10 +485,6 @@ pub fn set_game_dir(path: String, window: &tauri::Window) -> Result<(), Launcher
     Ok(())
 }
 
-pub fn set_version_isolation(enabled: bool) -> Result<(), LauncherError> {
-    set_config_value(|config| config.version_isolation = enabled)
-}
-
 pub fn get_download_threads() -> Result<u8, LauncherError> {
     get_config_value(|config| config.download_threads)
 }
@@ -480,24 +497,6 @@ pub fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
 pub fn get_total_memory() -> u64 {
     let stats = get_system_memory();
     stats.total_memory_mb
-}
-
-/// 获取系统内存统计信息
-pub fn get_memory_stats() -> Result<MemoryStats, LauncherError> {
-    Ok(get_system_memory())
-}
-
-/// 为指定游戏版本推荐内存设置
-pub fn recommend_memory(
-    version: String,
-    modded: bool,
-) -> Result<MemoryRecommendation, LauncherError> {
-    Ok(recommend_memory_for_game(&version, modded))
-}
-
-/// 检查内存设置是否安全（只检查最低限制）
-pub fn validate_memory_setting(memory_mb: u32) -> Result<bool, LauncherError> {
-    is_memory_setting_safe(memory_mb)
 }
 
 /// 检查内存设置是否超过系统90%（用于前端警告）
@@ -555,7 +554,8 @@ pub fn update_instance_last_played(instance_name: &str) -> Result<(), LauncherEr
 
 /// 获取实例的上次启动时间
 pub fn get_instance_last_played(instance_name: &str) -> Option<i64> {
-    load_config().ok()
+    load_config()
+        .ok()
         .and_then(|config| config.instance_last_played.get(instance_name).copied())
 }
 
@@ -576,7 +576,9 @@ pub fn rename_instance_last_played(old_name: &str, new_name: &str) -> Result<(),
 
 /// 获取上次选择的游戏版本
 pub fn get_last_selected_version() -> Option<String> {
-    load_config().ok().and_then(|c| c.last_selected_version.clone())
+    load_config()
+        .ok()
+        .and_then(|c| c.last_selected_version.clone())
 }
 
 pub fn set_last_selected_version(version: &str) -> Result<(), LauncherError> {
@@ -585,13 +587,19 @@ pub fn set_last_selected_version(version: &str) -> Result<(), LauncherError> {
 }
 
 pub fn get_custom_java_paths() -> Vec<String> {
-    load_config().map(|c| c.custom_java_paths.clone()).unwrap_or_default()
+    load_config()
+        .map(|c| c.custom_java_paths.clone())
+        .unwrap_or_default()
 }
 
 pub fn add_custom_java_path(path: &str) -> Result<(), LauncherError> {
     let p = path.to_string();
     set_config_value(|config| {
-        if !config.custom_java_paths.iter().any(|x| x.eq_ignore_ascii_case(&p)) {
+        if !config
+            .custom_java_paths
+            .iter()
+            .any(|x| x.eq_ignore_ascii_case(&p))
+        {
             config.custom_java_paths.push(p);
         }
     })
@@ -600,6 +608,8 @@ pub fn add_custom_java_path(path: &str) -> Result<(), LauncherError> {
 pub fn remove_custom_java_path(path: &str) -> Result<(), LauncherError> {
     let p = path.to_string();
     set_config_value(|config| {
-        config.custom_java_paths.retain(|x| !x.eq_ignore_ascii_case(&p));
+        config
+            .custom_java_paths
+            .retain(|x| !x.eq_ignore_ascii_case(&p));
     })
 }

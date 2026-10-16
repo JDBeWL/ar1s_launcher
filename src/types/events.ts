@@ -10,8 +10,8 @@ export interface DownloadProgress {
 }
 
 export interface GameExitPayload {
-    code: number | null;
-    signal: string | null;
+  code: number | null;
+  signal: string | null;
 }
 
 export type LaunchCommandPayload = string;
@@ -51,6 +51,18 @@ export interface GameInstance {
   gameVersion?: string;
   lastPlayed?: number;
   modCount?: number;
+  /** 整合包自带封面；没有时回退到加载器图标 */
+  iconUrl?: string;
+}
+
+/** 实例 mods 目录里的一个模组文件 */
+export interface ModInfo {
+  /** 磁盘上的实际文件名，禁用时带 .disabled 后缀 */
+  fileName: string;
+  displayName: string;
+  version?: string | null;
+  enabled: boolean;
+  size: number;
 }
 
 // 创建实例参数
@@ -61,7 +73,7 @@ export interface CreateInstancePayload {
 }
 
 // 加载器参数（匹配后端 LoaderType）
-export type LoaderPayload = 
+export type LoaderPayload =
   | { type: 'forge'; mc_version: string; loader_version: string }
   | { type: 'fabric'; mc_version: string; loader_version: string }
   | { type: 'quilt'; mc_version: string; loader_version: string }
@@ -184,6 +196,7 @@ export interface AuthStatus {
   loggedIn: boolean;
   username: string | null;
   uuid: string | null;
+  skinUrl: string | null;
   expiresAt: number | null;
 }
 
@@ -198,6 +211,7 @@ export interface DeviceCodeDisplay {
 export interface MicrosoftLoginResult {
   username: string;
   uuid: string;
+  skinUrl: string | null;
   expiresAt: number;
 }
 
@@ -225,6 +239,7 @@ export interface GameConfig {
   isolate_logs: boolean;
   username: string | null;
   uuid: string | null;
+  skin_url: string | null;
   max_memory: number;
   download_mirror: string | null;
   auto_memory_enabled: boolean;

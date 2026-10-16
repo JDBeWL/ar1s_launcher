@@ -68,7 +68,9 @@ pub async fn install_quilt(
 }
 
 /// 获取 Quilt 加载器版本列表
-pub async fn get_quilt_versions(mc_version: &str) -> Result<Vec<QuiltLoaderVersion>, LauncherError> {
+pub async fn get_quilt_versions(
+    mc_version: &str,
+) -> Result<Vec<QuiltLoaderVersion>, LauncherError> {
     let client = http_client::get_client();
     let url = format!("{}/versions/loader/{}", QUILT_META_URL, mc_version);
 

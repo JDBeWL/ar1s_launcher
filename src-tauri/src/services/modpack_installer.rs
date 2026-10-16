@@ -1,14 +1,15 @@
 use crate::errors::LauncherError;
+use crate::models::DownloadJob;
 use crate::models::modpack::*;
 use crate::services::{config, download, http_client, loaders, modrinth};
 use crate::utils::file_utils::{self, validate_instance_name_or_error};
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 
 /// 全局取消标志
@@ -134,10 +135,10 @@ impl ModpackInstaller {
     ) -> Result<(), LauncherError> {
         // 重置取消标志
         reset_modpack_cancel_flag();
-        
+
         // 验证实例名称
         validate_instance_name_or_error(&options.instance_name)?;
-        
+
         let config = config::load_config()?;
         let game_dir = PathBuf::from(&config.game_dir);
         let instance_dir = game_dir.join("versions").join(&options.instance_name);
@@ -153,12 +154,21 @@ impl ModpackInstaller {
         }
 
         // 执行安装，如果失败或取消则清理
-        let result = self.do_install_modrinth_modpack(&options, window, &game_dir, &instance_dir, &temp_dir, &extract_dir).await;
-        
+        let result = self
+            .do_install_modrinth_modpack(
+                &options,
+                window,
+                &game_dir,
+                &instance_dir,
+                &temp_dir,
+                &extract_dir,
+            )
+            .await;
+
         // 如果安装失败或被取消，清理已创建的目录
         if result.is_err() {
             info!("安装失败或被取消，清理已创建的文件...");
-            
+
             // 清理实例目录
             if instance_dir.exists() {
                 if let Err(e) = fs::remove_dir_all(&instance_dir) {
@@ -167,16 +177,16 @@ impl ModpackInstaller {
                     info!("已清理实例目录: {}", instance_dir.display());
                 }
             }
-            
+
             // 清理解压目录
             if extract_dir.exists() {
                 let _ = fs::remove_dir_all(&extract_dir);
             }
         }
-        
+
         result
     }
-    
+
     /// 执行实际的整合包安装逻辑
     async fn do_install_modrinth_modpack(
         &self,
@@ -270,8 +280,9 @@ impl ModpackInstaller {
         let modrinth_index = if index_path.exists() {
             let content = fs::read_to_string(&index_path)?;
             Some(
-                serde_json::from_str::<ModrinthIndex>(&content)
-                    .map_err(|e| LauncherError::Custom(format!("解析 modrinth.index.json 失败: {}", e)))?,
+                serde_json::from_str::<ModrinthIndex>(&content).map_err(|e| {
+                    LauncherError::Custom(format!("解析 modrinth.index.json 失败: {}", e))
+                })?,
             )
         } else {
             None
@@ -329,13 +340,29 @@ impl ModpackInstaller {
             .or_else(|| selected_version.game_versions.first().cloned())
             .unwrap_or_default();
 
-        let loader_type = if modrinth_index.as_ref().map(|i| i.dependencies.forge.is_some()).unwrap_or(false) {
+        let loader_type = if modrinth_index
+            .as_ref()
+            .map(|i| i.dependencies.forge.is_some())
+            .unwrap_or(false)
+        {
             Some("forge")
-        } else if modrinth_index.as_ref().map(|i| i.dependencies.fabric_loader.is_some() || i.dependencies.fabric.is_some()).unwrap_or(false) {
+        } else if modrinth_index
+            .as_ref()
+            .map(|i| i.dependencies.fabric_loader.is_some() || i.dependencies.fabric.is_some())
+            .unwrap_or(false)
+        {
             Some("fabric")
-        } else if modrinth_index.as_ref().map(|i| i.dependencies.quilt_loader.is_some() || i.dependencies.quilt.is_some()).unwrap_or(false) {
+        } else if modrinth_index
+            .as_ref()
+            .map(|i| i.dependencies.quilt_loader.is_some() || i.dependencies.quilt.is_some())
+            .unwrap_or(false)
+        {
             Some("quilt")
-        } else if modrinth_index.as_ref().map(|i| i.dependencies.neoforge.is_some()).unwrap_or(false) {
+        } else if modrinth_index
+            .as_ref()
+            .map(|i| i.dependencies.neoforge.is_some())
+            .unwrap_or(false)
+        {
             Some("neoforge")
         } else {
             None
@@ -350,6 +377,7 @@ impl ModpackInstaller {
             "modpack_version": selected_version.version_number.clone(),
             "minecraft": mc_version,
             "loader": loader_type,
+            "icon_url": modpack.icon_url.clone(),
             "loaders": selected_version.loaders.clone(),
             "created": chrono::Utc::now().to_rfc3339(),
         });
@@ -376,8 +404,7 @@ impl ModpackInstaller {
         Ok(())
     }
 
-
-    /// 下载整合包中定义的文件（mods等）— 并发下载
+    /// 下载整合包中定义的文件（mods等）— 并发下载，复用版本下载的断点续传实现
     async fn download_modpack_files(
         &self,
         files: &[ModrinthIndexFile],
@@ -396,36 +423,41 @@ impl ModpackInstaller {
         let max_concurrent = (dl_config.download_threads as usize).max(1);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
         let completed_count = Arc::new(AtomicUsize::new(0));
-        let failed_files = Arc::new(AtomicUsize::new(0));
+        let failed_files = Arc::new(Mutex::new(Vec::<String>::new()));
         let client = self.http_client;
+
+        // download_file 靠这两个标志在流式读取中途响应取消
+        let running = Arc::new(AtomicBool::new(true));
+        let cancelled = get_cancel_flag();
+        // 整合包进度按文件数计算，字节计数只是 download_file 的出参，这里不消费
+        let bytes_downloaded = Arc::new(AtomicU64::new(0));
+        let bytes_since_last = Arc::new(AtomicU64::new(0));
 
         let mut handles = Vec::with_capacity(total_files);
 
         for file in files {
             check_cancelled()?;
 
-            let dest_path = instance_dir.join(&file.path);
-
-            // 如果文件已存在，跳过下载
-            if dest_path.exists() {
-                debug!("文件已存在，跳过: {}", file.path);
-                completed_count.fetch_add(1, Ordering::Relaxed);
-                continue;
-            }
-
-            // 预创建父目录
-            if let Some(parent) = dest_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
             let sem = semaphore.clone();
             let completed = completed_count.clone();
             let window_clone = window.clone();
             let file_path = file.path.clone();
-            let file_downloads = file.downloads.clone();
             let total = total_files;
+            let failed = failed_files.clone();
+            let running = running.clone();
+            let cancelled = cancelled.clone();
+            let bytes_downloaded = bytes_downloaded.clone();
+            let bytes_since_last = bytes_since_last.clone();
+            // Modrinth 每个文件给多个镜像，第一个当主源、第二个当备源。
+            // sha1 缺失时不校验，否则会把好文件判成坏文件。
+            let job = DownloadJob {
+                url: file.downloads.first().cloned().unwrap_or_default(),
+                fallback_url: file.downloads.get(1).cloned(),
+                path: instance_dir.join(&file.path),
+                size: file.file_size.unwrap_or(0),
+                hash: (!file.hashes.sha1.is_empty()).then(|| file.hashes.sha1.clone()),
+            };
 
-            let failed_files_clone = failed_files.clone();
             let handle = tokio::spawn(async move {
                 let _permit = match sem.acquire().await {
                     Ok(p) => p,
@@ -447,27 +479,44 @@ impl ModpackInstaller {
                     },
                 );
 
-                let mut downloaded = false;
-                for url in &file_downloads {
+                // 重试时 .part 已经落了半截，download_file 会带 Range 续传而不是从头再下
+                let mut last_error: Option<LauncherError> = None;
+                for attempt in 0..3 {
                     if is_cancelled() {
                         return;
                     }
-
-                    match download_single_file(client, url, &dest_path, 3).await {
-                        Ok(_) => {
-                            downloaded = true;
-                            debug!("下载成功: {}", file_path);
+                    match download::download_file(
+                        client,
+                        &job,
+                        &job.url,
+                        &running,
+                        &cancelled,
+                        &bytes_downloaded,
+                        &bytes_since_last,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            last_error = None;
                             break;
                         }
                         Err(e) => {
-                            warn!("下载失败 {}: {}", url, e);
+                            if e.to_string().contains("cancelled") {
+                                return;
+                            }
+                            warn!("下载失败 {} (第 {} 次尝试): {}", file_path, attempt + 1, e);
+                            last_error = Some(e);
+                            if attempt < 2 {
+                                tokio::time::sleep(std::time::Duration::from_secs(1 << attempt))
+                                    .await;
+                            }
                         }
                     }
                 }
 
-                if !downloaded {
-                    error!("无法下载文件: {}", file_path);
-                    failed_files_clone.fetch_add(1, Ordering::Relaxed);
+                if let Some(e) = last_error {
+                    error!("无法下载文件 {}: {}", file_path, e);
+                    failed.lock().unwrap().push(file_path);
                 }
             });
 
@@ -481,11 +530,25 @@ impl ModpackInstaller {
 
         check_cancelled()?;
 
-        let failed_count = failed_files.load(Ordering::Relaxed);
-        if failed_count > 0 {
+        let failed = failed_files.lock().unwrap();
+        if !failed.is_empty() {
+            const MAX_SHOWN: usize = 5;
+            let shown = failed
+                .iter()
+                .take(MAX_SHOWN)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("、");
+            let suffix = if failed.len() > MAX_SHOWN {
+                format!(" 等 {} 个文件", failed.len())
+            } else {
+                String::new()
+            };
             return Err(LauncherError::Custom(format!(
-                "{} 个文件下载失败，整合包可能不完整",
-                failed_count
+                "{} 个文件下载失败，整合包可能不完整：{}{}",
+                failed.len(),
+                shown,
+                suffix
             )));
         }
 
@@ -522,7 +585,8 @@ impl ModpackInstaller {
                 },
                 instance_name,
                 game_dir,
-            ).await?;
+            )
+            .await?;
         } else if let Some(fabric_version) = deps.fabric_loader.as_ref().or(deps.fabric.as_ref()) {
             info!("安装 Fabric {}", fabric_version);
             loaders::install_loader(
@@ -532,7 +596,8 @@ impl ModpackInstaller {
                 },
                 instance_name,
                 game_dir,
-            ).await?;
+            )
+            .await?;
         } else if let Some(quilt_version) = deps.quilt_loader.as_ref().or(deps.quilt.as_ref()) {
             info!("安装 Quilt {}", quilt_version);
             loaders::install_loader(
@@ -542,7 +607,8 @@ impl ModpackInstaller {
                 },
                 instance_name,
                 game_dir,
-            ).await?;
+            )
+            .await?;
         } else if let Some(neoforge_version) = &deps.neoforge {
             info!("安装 NeoForge {}", neoforge_version);
             loaders::install_loader(
@@ -552,7 +618,8 @@ impl ModpackInstaller {
                 },
                 instance_name,
                 game_dir,
-            ).await?;
+            )
+            .await?;
         } else {
             // 纯净版，创建版本 JSON
             self.create_vanilla_version_json(mc_version, instance_name, game_dir)?;
@@ -572,7 +639,7 @@ impl ModpackInstaller {
         fs::create_dir_all(&version_dir)?;
 
         let json_path = version_dir.join(format!("{}.json", instance_name));
-        
+
         // 如果已经存在，不覆盖
         if json_path.exists() {
             return Ok(());
@@ -612,28 +679,35 @@ impl ModpackInstaller {
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
             let file_name = file.name()?.to_string();
-            
+
             // 安全检查：防止路径遍历攻击
             // 检查是否包含 ".." 或绝对路径
-            if file_name.contains("..") || file_name.starts_with('/') || file_name.starts_with('\\') {
+            if file_name.contains("..") || file_name.starts_with('/') || file_name.starts_with('\\')
+            {
                 log::warn!("跳过可疑的 zip 条目: {}", file_name);
                 continue;
             }
-            
+
             // 在 Windows 上也检查驱动器路径 (如 C:)
             #[cfg(windows)]
             if file_name.len() >= 2 && file_name.chars().nth(1) == Some(':') {
                 log::warn!("跳过可疑的 zip 条目 (绝对路径): {}", file_name);
                 continue;
             }
-            
+
             let outpath = extract_dir.join(&file_name);
-            
+
             // 确保解压路径在目标目录内
-            let canonical_extract = extract_dir.canonicalize().unwrap_or_else(|_| extract_dir.clone());
+            let canonical_extract = extract_dir
+                .canonicalize()
+                .unwrap_or_else(|_| extract_dir.clone());
             if let Ok(canonical_out) = outpath.canonicalize() {
                 if !canonical_out.starts_with(&canonical_extract) {
-                    log::warn!("跳过路径遍历尝试: {} -> {}", file_name, canonical_out.display());
+                    log::warn!(
+                        "跳过路径遍历尝试: {} -> {}",
+                        file_name,
+                        canonical_out.display()
+                    );
                     continue;
                 }
             }
@@ -666,7 +740,15 @@ impl ModpackInstaller {
         sort_by: Option<String>,
     ) -> Result<ModrinthSearchResponse, LauncherError> {
         self.modrinth_service
-            .search_modpacks(query, game_versions, loaders, categories, limit, offset, sort_by)
+            .search_modpacks(
+                query,
+                game_versions,
+                loaders,
+                categories,
+                limit,
+                offset,
+                sort_by,
+            )
             .await
     }
 
@@ -681,45 +763,4 @@ impl ModpackInstaller {
             .get_modpack_versions(project_id, game_versions, loaders)
             .await
     }
-}
-
-/// 带重试的单文件下载（独立函数，用于并发下载任务）
-async fn download_single_file(
-    client: &reqwest::Client,
-    url: &str,
-    dest: &std::path::Path,
-    max_retries: u32,
-) -> Result<(), LauncherError> {
-    let mut last_error = None;
-
-    for attempt in 0..max_retries {
-        if attempt > 0 {
-            tokio::time::sleep(std::time::Duration::from_secs(1 << attempt)).await;
-        }
-
-        match client.get(url).send().await {
-            Ok(response) => {
-                if response.status().is_success() {
-                    match response.bytes().await {
-                        Ok(bytes) => {
-                            fs::write(dest, &bytes)?;
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            last_error = Some(format!("读取响应失败: {}", e));
-                        }
-                    }
-                } else {
-                    last_error = Some(format!("HTTP {}", response.status()));
-                }
-            }
-            Err(e) => {
-                last_error = Some(format!("请求失败: {}", e));
-            }
-        }
-    }
-
-    Err(LauncherError::Custom(
-        last_error.unwrap_or_else(|| "下载失败".to_string()),
-    ))
 }

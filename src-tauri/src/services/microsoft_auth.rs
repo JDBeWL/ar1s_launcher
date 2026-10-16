@@ -9,8 +9,8 @@
 
 use crate::errors::LauncherError;
 use crate::services::http_client;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -28,6 +28,8 @@ const AUTH_SCOPES: &str = "XboxLive.signin offline_access";
 pub struct MicrosoftAuthResult {
     pub username: String,
     pub uuid: String,
+    /// 皮肤原图地址（整张 64×64，裁脸在前端做）
+    pub skin_url: Option<String>,
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at: i64,
@@ -81,6 +83,16 @@ struct MinecraftAuthResponse {
 struct MinecraftProfileResponse {
     id: String,
     name: String,
+    #[serde(default)]
+    skins: Vec<MinecraftProfileSkin>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MinecraftProfileSkin {
+    /// 默认皮肤条目是 "Mojang"（官方预设），用户上传的是 "Custom"。
+    /// 没上传过皮肤时数组里只有预设那条，所以不做区分，取第一条能用就行。
+    #[serde(default)]
+    url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,7 +166,9 @@ pub async fn poll_device_token(device_code: &str) -> Result<TokenResponse, Launc
             return Err(LauncherError::Custom("slow_down".to_string()));
         }
         if body.contains("expired_token") {
-            return Err(LauncherError::Custom("设备代码已过期，请重新登录".to_string()));
+            return Err(LauncherError::Custom(
+                "设备代码已过期，请重新登录".to_string(),
+            ));
         }
         if body.contains("declined") {
             return Err(LauncherError::Custom("用户拒绝了授权".to_string()));
@@ -230,8 +244,13 @@ async fn authenticate_xbox_live(microsoft_access_token: &str) -> Result<String, 
         )));
     }
 
-    let data: XboxLiveAuthResponse = serde_json::from_str(&body_text)
-        .map_err(|e| LauncherError::Custom(format!("解析 Xbox Live 响应失败: {} (body: {})", e, body_text.chars().take(500).collect::<String>())))?;
+    let data: XboxLiveAuthResponse = serde_json::from_str(&body_text).map_err(|e| {
+        LauncherError::Custom(format!(
+            "解析 Xbox Live 响应失败: {} (body: {})",
+            e,
+            body_text.chars().take(500).collect::<String>()
+        ))
+    })?;
 
     Ok(data.token)
 }
@@ -269,8 +288,13 @@ async fn authenticate_xsts(xbox_live_token: &str) -> Result<(String, String), La
         )));
     }
 
-    let data: XstsAuthResponse = serde_json::from_str(&body_text)
-        .map_err(|e| LauncherError::Custom(format!("解析 XSTS 响应失败: {} (body: {})", e, body_text.chars().take(500).collect::<String>())))?;
+    let data: XstsAuthResponse = serde_json::from_str(&body_text).map_err(|e| {
+        LauncherError::Custom(format!(
+            "解析 XSTS 响应失败: {} (body: {})",
+            e,
+            body_text.chars().take(500).collect::<String>()
+        ))
+    })?;
 
     let uhs = data
         .display_claims
@@ -283,10 +307,7 @@ async fn authenticate_xsts(xbox_live_token: &str) -> Result<(String, String), La
     Ok((data.token, uhs))
 }
 
-async fn authenticate_minecraft(
-    xsts_token: &str,
-    uhs: &str,
-) -> Result<String, LauncherError> {
+async fn authenticate_minecraft(xsts_token: &str, uhs: &str) -> Result<String, LauncherError> {
     let client = http_client::get_client();
     let body = serde_json::json!({
         "identityToken": format!("XBL3.0 x={};{}", uhs, xsts_token)
@@ -309,20 +330,28 @@ async fn authenticate_minecraft(
         )));
     }
 
-    let data: MinecraftAuthResponse = serde_json::from_str(&body_text)
-        .map_err(|e| LauncherError::Custom(format!("解析 Minecraft 认证响应失败: {} (body: {})", e, body_text.chars().take(500).collect::<String>())))?;
+    let data: MinecraftAuthResponse = serde_json::from_str(&body_text).map_err(|e| {
+        LauncherError::Custom(format!(
+            "解析 Minecraft 认证响应失败: {} (body: {})",
+            e,
+            body_text.chars().take(500).collect::<String>()
+        ))
+    })?;
 
     Ok(data.access_token)
 }
 
 async fn get_minecraft_profile(
     minecraft_access_token: &str,
-) -> Result<(String, String), LauncherError> {
+) -> Result<(String, String, Option<String>), LauncherError> {
     let client = http_client::get_client();
     let resp = client
         .get("https://api.minecraftservices.com/minecraft/profile")
         .timeout(AUTH_TIMEOUT)
-        .header("Authorization", format!("Bearer {}", minecraft_access_token))
+        .header(
+            "Authorization",
+            format!("Bearer {}", minecraft_access_token),
+        )
         .send()
         .await
         .map_err(|e| LauncherError::Custom(format!("获取 Minecraft 个人资料失败: {}", e)))?;
@@ -346,7 +375,23 @@ async fn get_minecraft_profile(
         .await
         .map_err(|e| LauncherError::Custom(format!("解析 Minecraft 个人资料失败: {}", e)))?;
 
-    Ok((data.name, data.id))
+    Ok((data.name, data.id, skin_url(&data.skins)))
+}
+
+/// Mojang 给的是 http://，而 CSP 的 img-src 只放行 https:，改写协议后前端才能直接当图片加载。
+fn skin_url(skins: &[MinecraftProfileSkin]) -> Option<String> {
+    skins
+        .iter()
+        .map(|s| s.url.trim())
+        .find(|u| !u.is_empty())
+        .map(|u| u.replacen("http://", "https://", 1).to_string())
+}
+
+/// 用已存的 Minecraft access_token 重新取一次皮肤地址。
+/// 换皮肤不会触发 token 刷新，所以启动时要单独问一次；接口 401 时调用方沿用旧值即可。
+pub async fn fetch_skin_url(minecraft_access_token: &str) -> Result<Option<String>, LauncherError> {
+    let (_, _, skin_url) = get_minecraft_profile(minecraft_access_token).await?;
+    Ok(skin_url)
 }
 
 pub async fn complete_microsoft_auth(
@@ -357,7 +402,7 @@ pub async fn complete_microsoft_auth(
     let xbox_live_token = authenticate_xbox_live(microsoft_access_token).await?;
     let (xsts_token, uhs) = authenticate_xsts(&xbox_live_token).await?;
     let mc_access_token = authenticate_minecraft(&xsts_token, &uhs).await?;
-    let (mc_username, mc_uuid) = get_minecraft_profile(&mc_access_token).await?;
+    let (mc_username, mc_uuid, mc_skin_url) = get_minecraft_profile(&mc_access_token).await?;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -367,6 +412,7 @@ pub async fn complete_microsoft_auth(
     Ok(MicrosoftAuthResult {
         username: mc_username,
         uuid: mc_uuid,
+        skin_url: mc_skin_url,
         access_token: mc_access_token,
         refresh_token: microsoft_refresh_token.to_string(),
         expires_at: now + expires_in as i64,
@@ -387,10 +433,7 @@ pub async fn refresh_and_authenticate(
     refresh_token: &str,
 ) -> Result<MicrosoftAuthResult, LauncherError> {
     let token_resp = refresh_microsoft_token(refresh_token).await?;
-    let new_refresh = token_resp
-        .refresh_token
-        .as_deref()
-        .unwrap_or(refresh_token);
+    let new_refresh = token_resp.refresh_token.as_deref().unwrap_or(refresh_token);
     let expires_in = token_resp.expires_in.unwrap_or(3600);
 
     complete_microsoft_auth(&token_resp.access_token, new_refresh, expires_in).await
@@ -492,8 +535,8 @@ pub async fn wait_for_auth_callback() -> Result<String, LauncherError> {
     let url_part = request_line.split_whitespace().nth(1).unwrap_or("");
     let query_str = url_part.split('?').nth(1).unwrap_or("");
 
-    let params: std::collections::HashMap<String, String> = serde_urlencoded::from_str(query_str)
-        .unwrap_or_default();
+    let params: std::collections::HashMap<String, String> =
+        serde_urlencoded::from_str(query_str).unwrap_or_default();
 
     let response_html = if params.contains_key("code") {
         r#"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!DOCTYPE html><html><head><meta charset="utf-8"><title>登录成功</title><style>*{margin:0;padding:0;box-sizing:border-box}body{display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#FEF7FF;color:#1D1B20}.card{background:#F3EDF7;border-radius:28px;padding:48px 40px;text-align:center;max-width:400px;width:90%;box-shadow:0 1px 3px rgba(0,0,0,.08),0 4px 8px rgba(0,0,0,.04)}h1{font-size:1.5rem;font-weight:500;color:#1D1B20;margin-bottom:8px;letter-spacing:.01em}p{font-size:.875rem;color:#49454F;line-height:1.4}.brand{position:fixed;left:24px;bottom:24px;font-size:40px;font-weight:300;color:#79747E;opacity:.35;letter-spacing:.05em;user-select:none}</style></head><body><div class="card"><h1>登录成功</h1><p>可以关闭此页面并返回启动器</p></div><div class="brand">AR1S LAUNCHER</div></body></html>"#
@@ -529,10 +572,7 @@ pub async fn complete_auth_code_flow(
     let code = wait_for_auth_callback().await?;
     let token_resp = exchange_auth_code(&code, code_verifier).await?;
 
-    let refresh = token_resp
-        .refresh_token
-        .clone()
-        .unwrap_or_default();
+    let refresh = token_resp.refresh_token.clone().unwrap_or_default();
     let expires_in = token_resp.expires_in.unwrap_or(3600);
 
     complete_microsoft_auth(&token_resp.access_token, &refresh, expires_in).await

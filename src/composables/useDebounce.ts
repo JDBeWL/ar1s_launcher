@@ -6,10 +6,7 @@ import type { Ref, WatchSource } from 'vue';
  * @param fn 要防抖的函数
  * @param delay 延迟时间（毫秒）
  */
-export function useDebounceFn<T extends (...args: never[]) => unknown>(
-  fn: T,
-  delay: number = 300
-) {
+export function useDebounceFn<T extends (...args: never[]) => unknown>(fn: T, delay: number = 300) {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   function debouncedFn(...args: Parameters<T>) {
@@ -43,7 +40,7 @@ export function useDebounceFn<T extends (...args: never[]) => unknown>(
     flush,
     get isPending() {
       return timeoutId !== null;
-    }
+    },
   };
 }
 
@@ -81,11 +78,7 @@ export function useDebouncedRef<T>(source: Ref<T>, delay: number = 300): Ref<T> 
  * @param callback 回调函数
  * @param delay 延迟时间（毫秒）
  */
-export function watchDebounced<T>(
-  source: WatchSource<T>,
-  callback: (value: T) => void,
-  delay: number = 300
-) {
+export function watchDebounced<T>(source: WatchSource<T>, callback: (value: T) => void, delay: number = 300) {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   const stopWatch = watch(source, (newValue) => {

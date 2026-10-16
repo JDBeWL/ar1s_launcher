@@ -21,7 +21,10 @@ pub fn extract_natives(
 
     // 如果 natives 目录已存在且非空，跳过解压（缓存复用）
     if natives_dir.exists() {
-        if fs::read_dir(&natives_dir).map(|mut d| d.next().is_some()).unwrap_or(false) {
+        if fs::read_dir(&natives_dir)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false)
+        {
             emit(
                 "log-debug",
                 "Natives目录已存在且非空，跳过解压（使用缓存）".to_string(),
