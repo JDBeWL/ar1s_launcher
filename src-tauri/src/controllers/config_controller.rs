@@ -8,7 +8,11 @@ use crate::services::config;
 
 #[tauri::command(rename = "get_config")]
 pub fn get_config() -> Result<GameConfig, LauncherError> {
-    Ok((*config::load_config()?).clone())
+    let mut config = (*config::load_config()?).clone();
+    // token 只给后端用；界面要登录态就查 get_auth_status
+    config.ms_access_token = None;
+    config.ms_refresh_token = None;
+    Ok(config)
 }
 
 #[tauri::command]

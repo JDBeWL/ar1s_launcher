@@ -15,6 +15,9 @@ const MICROSOFT_CLIENT_ID: &str = "907a248d-3eb5-4d01-99d2-ff72d79c5eb1";
 
 const AUTH_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// 浏览器里人工输密码的时间，不能套用 60s 的请求超时
+const CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
+
 const REDIRECT_URI: &str = "http://localhost:26669/relogin";
 
 const AUTH_SCOPES: &str = "XboxLive.signin offline_access";
@@ -438,9 +441,11 @@ pub async fn refresh_and_authenticate(
 pub struct AuthCodeFlowInfo {
     pub auth_url: String,
     pub code_verifier: String,
+    pub state: String,
 }
 
-fn generate_code_verifier() -> String {
+/// PKCE verifier 与 CSRF state 都只是 32 字节随机数的 URL-safe 编码
+fn random_url_safe_token() -> String {
     let bytes: [u8; 32] = rand::random();
     URL_SAFE_NO_PAD.encode(bytes)
 }
@@ -451,8 +456,9 @@ fn compute_code_challenge(code_verifier: &str) -> String {
 }
 
 pub fn start_auth_code_flow() -> Result<AuthCodeFlowInfo, LauncherError> {
-    let code_verifier = generate_code_verifier();
+    let code_verifier = random_url_safe_token();
     let code_challenge = compute_code_challenge(&code_verifier);
+    let state = random_url_safe_token();
 
     let auth_url = format!(
         "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize?{}",
@@ -463,6 +469,7 @@ pub fn start_auth_code_flow() -> Result<AuthCodeFlowInfo, LauncherError> {
             ("scope", AUTH_SCOPES.to_string()),
             ("code_challenge", code_challenge),
             ("code_challenge_method", "S256".to_string()),
+            ("state", state.clone()),
             ("prompt", "select_account".to_string()),
         ])
         .map_err(|e| LauncherError::Custom(format!("URL 编码失败: {}", e)))?
@@ -471,6 +478,7 @@ pub fn start_auth_code_flow() -> Result<AuthCodeFlowInfo, LauncherError> {
     Ok(AuthCodeFlowInfo {
         auth_url,
         code_verifier,
+        state,
     })
 }
 
@@ -508,21 +516,26 @@ pub async fn exchange_auth_code(
         .map_err(|e| LauncherError::Custom(format!("解析 Token 响应失败: {}", e)))
 }
 
-pub async fn wait_for_auth_callback() -> Result<String, LauncherError> {
+pub async fn wait_for_auth_callback(expected_state: &str) -> Result<String, LauncherError> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:26669")
         .await
         .map_err(|e| LauncherError::Custom(format!("无法启动本地回调服务器: {}", e)))?;
 
-    let (stream, _) = listener
-        .accept()
+    // 不带超时的话，用户关掉浏览器标签就会让这个 command 永久挂起并占住 26669
+    let (stream, _) = tokio::time::timeout(CALLBACK_TIMEOUT, listener.accept())
         .await
+        .map_err(|_| LauncherError::Custom("等待浏览器回调超时，请重新发起登录".to_string()))?
         .map_err(|e| LauncherError::Custom(format!("等待回调连接失败: {}", e)))?;
 
     let mut reader = tokio::io::BufReader::new(stream);
     let mut request_line = String::new();
-    tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut request_line)
-        .await
-        .map_err(|e| LauncherError::Custom(format!("读取回调请求失败: {}", e)))?;
+    tokio::time::timeout(
+        CALLBACK_TIMEOUT,
+        tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut request_line),
+    )
+    .await
+    .map_err(|_| LauncherError::Custom("读取回调请求超时".to_string()))?
+    .map_err(|e| LauncherError::Custom(format!("读取回调请求失败: {}", e)))?;
 
     let url_part = request_line.split_whitespace().nth(1).unwrap_or("");
     let query_str = url_part.split('?').nth(1).unwrap_or("");
@@ -530,7 +543,9 @@ pub async fn wait_for_auth_callback() -> Result<String, LauncherError> {
     let params: std::collections::HashMap<String, String> =
         serde_urlencoded::from_str(query_str).unwrap_or_default();
 
-    let response_html = if params.contains_key("code") {
+    let state_ok = params.get("state").map(String::as_str) == Some(expected_state);
+
+    let response_html = if params.contains_key("code") && state_ok {
         r#"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!DOCTYPE html><html><head><meta charset="utf-8"><title>登录成功</title><style>*{margin:0;padding:0;box-sizing:border-box}body{display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#FEF7FF;color:#1D1B20}.card{background:#F3EDF7;border-radius:28px;padding:48px 40px;text-align:center;max-width:400px;width:90%;box-shadow:0 1px 3px rgba(0,0,0,.08),0 4px 8px rgba(0,0,0,.04)}h1{font-size:1.5rem;font-weight:500;color:#1D1B20;margin-bottom:8px;letter-spacing:.01em}p{font-size:.875rem;color:#49454F;line-height:1.4}.brand{position:fixed;left:24px;bottom:24px;font-size:40px;font-weight:300;color:#79747E;opacity:.35;letter-spacing:.05em;user-select:none}</style></head><body><div class="card"><h1>登录成功</h1><p>可以关闭此页面并返回启动器</p></div><div class="brand">AR1S LAUNCHER</div></body></html>"#
     } else {
         r#"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!DOCTYPE html><html><head><meta charset="utf-8"><title>登录失败</title><style>*{margin:0;padding:0;box-sizing:border-box}body{display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#FEF7FF;color:#1D1B20}.card{background:#F3EDF7;border-radius:28px;padding:48px 40px;text-align:center;max-width:400px;width:90%;box-shadow:0 1px 3px rgba(0,0,0,.08),0 4px 8px rgba(0,0,0,.04)}h1{font-size:1.5rem;font-weight:500;color:#B3261E;margin-bottom:8px;letter-spacing:.01em}p{font-size:.875rem;color:#49454F;line-height:1.4}.brand{position:fixed;left:24px;bottom:24px;font-size:40px;font-weight:300;color:#79747E;opacity:.35;letter-spacing:.05em;user-select:none}</style></head><body><div class="card"><h1>登录失败</h1><p>请返回启动器重试</p></div><div class="brand">AR1S LAUNCHER</div></body></html>"#
@@ -552,6 +567,13 @@ pub async fn wait_for_auth_callback() -> Result<String, LauncherError> {
         )));
     }
 
+    // state 不是本次发起的，说明这个 code 是别的来源推过来的，直接丢弃
+    if !state_ok {
+        return Err(LauncherError::Custom(
+            "回调 state 校验失败，请重新发起登录".to_string(),
+        ));
+    }
+
     params
         .get("code")
         .cloned()
@@ -560,8 +582,9 @@ pub async fn wait_for_auth_callback() -> Result<String, LauncherError> {
 
 pub async fn complete_auth_code_flow(
     code_verifier: &str,
+    expected_state: &str,
 ) -> Result<MicrosoftAuthResult, LauncherError> {
-    let code = wait_for_auth_callback().await?;
+    let code = wait_for_auth_callback(expected_state).await?;
     let token_resp = exchange_auth_code(&code, code_verifier).await?;
 
     let refresh = token_resp.refresh_token.clone().unwrap_or_default();

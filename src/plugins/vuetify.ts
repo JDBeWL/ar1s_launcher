@@ -40,9 +40,12 @@ const menuProps = {
   offset: 4,
 };
 
+const cspNonce = [...document.querySelectorAll('style')].map((s) => s.nonce).find(Boolean);
+
 const vuetify = createVuetify({
   theme: {
     defaultTheme: 'dark-indigo',
+    cspNonce,
     themes: {
       'light-indigo': {
         dark: false,

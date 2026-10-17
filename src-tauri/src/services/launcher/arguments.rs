@@ -3,7 +3,7 @@
 //! 解析新旧两种参数格式并按 rules 与 features 过滤，替换 ${...} 占位符，补齐 --tweakClass
 
 use crate::models::{GameConfig, LaunchOptions};
-use crate::utils::minecraft::{evaluate_rules_for_arguments_with_features, FeatureSupport};
+use crate::utils::minecraft::{FeatureSupport, evaluate_rules_for_arguments_with_features};
 use std::path::Path;
 
 /// Minecraft 未指定自定义分辨率时的默认窗口尺寸

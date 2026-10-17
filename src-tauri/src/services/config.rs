@@ -1,8 +1,9 @@
 //! 配置文件读写模块
 //!
-//! 读写 exe 同目录的 ar1s.json 并带进程内缓存；解析失败时备份 .bak 再重建默认配置
+//! 读写 exe 同目录的 ar1s.json 并带进程内缓存；写入走临时文件 rename，解析失败时备份 .bak 再重建默认配置
 
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -207,7 +208,16 @@ pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
 
 fn save_config_internal(config: &GameConfig) -> Result<(), LauncherError> {
     let config_path = get_config_path()?;
-    fs::write(config_path, serde_json::to_string_pretty(config)?)?;
+    let dir = config_path
+        .parent()
+        .ok_or_else(|| LauncherError::Custom("配置文件没有父目录".to_string()))?;
+    let json = serde_json::to_string_pretty(config)?;
+
+    // 直接覆写会在崩溃时留下截断的 ar1s.json，先写临时文件再 rename
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    tmp.write_all(json.as_bytes())?;
+    tmp.flush()?;
+    tmp.persist(&config_path).map_err(|e| e.error)?;
     Ok(())
 }
 

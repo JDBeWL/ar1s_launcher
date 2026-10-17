@@ -37,6 +37,28 @@ enum LogStream {
 
 type LogItem = (LogStream, String);
 
+/// argv 里 --accessToken 后面跟的是真实的 Minecraft bearer token，进 IPC 之前必须掩掉
+fn redacted_args(args: &[String]) -> Vec<&str> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut mask_next = false;
+
+    for arg in args {
+        if mask_next {
+            out.push("***");
+            mask_next = false;
+        } else if arg == "--accessToken" {
+            out.push(arg);
+            mask_next = true;
+        } else if arg.starts_with("--accessToken=") {
+            out.push("--accessToken=***");
+        } else {
+            out.push(arg);
+        }
+    }
+
+    out
+}
+
 pub fn spawn_and_monitor_process(
     java_path: &str,
     final_args: Vec<String>,
@@ -53,8 +75,9 @@ pub fn spawn_and_monitor_process(
         command.creation_flags(0x08000000);
     }
 
-    let _ = window.emit("log-debug", format!("最终启动命令: {:?}", command));
-    window.emit("launch-command", format!("{:?}", command))?;
+    let display_command = format!("{} {}", java_path, redacted_args(&final_args).join(" "));
+    let _ = window.emit("log-debug", format!("最终启动命令: {}", display_command));
+    window.emit("launch-command", display_command)?;
 
     let child = command
         .stdout(Stdio::piped())
@@ -356,4 +379,46 @@ fn handle_process_exit(
         "minecraft-exited",
         format!("游戏已退出，状态码: {:?}", exit_code),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redacted_args;
+
+    fn args(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn test_redacted_args_masks_token_after_flag() {
+        let input = args(&[
+            "--username",
+            "Steve",
+            "--accessToken",
+            "SECRET",
+            "--version",
+            "1.20.4",
+        ]);
+        assert_eq!(
+            redacted_args(&input),
+            [
+                "--username",
+                "Steve",
+                "--accessToken",
+                "***",
+                "--version",
+                "1.20.4"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_redacted_args_masks_inline_token() {
+        let input = args(&["--accessToken=SECRET", "--gameDir", "dir"]);
+        assert_eq!(
+            redacted_args(&input),
+            ["--accessToken=***", "--gameDir", "dir"]
+        );
+        assert!(redacted_args(&Vec::new()).is_empty());
+    }
 }

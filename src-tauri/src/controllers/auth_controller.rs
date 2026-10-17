@@ -1,6 +1,6 @@
 //! 认证 command 模块
 //!
-//! 离线身份与 Microsoft 两种登录流程的 invoke 入口；待用的 device_code、code_verifier 存在进程内 Mutex
+//! 离线身份与 Microsoft 两种登录流程的 invoke 入口；待用的 device_code 与授权码流程参数（verifier + state）存在进程内 Mutex
 
 use crate::errors::LauncherError;
 use crate::models::AuthType;
@@ -10,7 +10,14 @@ use std::sync::Mutex;
 use tauri::Emitter;
 
 static PENDING_DEVICE_CODE: Mutex<Option<String>> = Mutex::new(None);
-static PENDING_CODE_VERIFIER: Mutex<Option<String>> = Mutex::new(None);
+
+/// verifier 和 state 必须同生同灭，拆成两个 static 会失同步
+struct PendingAuthCodeFlow {
+    code_verifier: String,
+    state: String,
+}
+
+static PENDING_AUTH_FLOW: Mutex<Option<PendingAuthCodeFlow>> = Mutex::new(None);
 
 #[tauri::command]
 pub fn get_saved_username() -> Result<Option<String>, LauncherError> {
@@ -254,10 +261,13 @@ pub fn start_microsoft_auth_code_login() -> Result<String, LauncherError> {
     let flow_info = microsoft_auth::start_auth_code_flow()?;
 
     {
-        let mut pending = PENDING_CODE_VERIFIER
+        let mut pending = PENDING_AUTH_FLOW
             .lock()
             .map_err(|e| LauncherError::Custom(format!("内部锁错误: {}", e)))?;
-        *pending = Some(flow_info.code_verifier);
+        *pending = Some(PendingAuthCodeFlow {
+            code_verifier: flow_info.code_verifier,
+            state: flow_info.state,
+        });
     }
 
     Ok(flow_info.auth_url)
@@ -265,8 +275,8 @@ pub fn start_microsoft_auth_code_login() -> Result<String, LauncherError> {
 
 #[tauri::command]
 pub async fn complete_microsoft_auth_code_login() -> Result<MicrosoftLoginResult, LauncherError> {
-    let code_verifier = {
-        let mut pending = PENDING_CODE_VERIFIER
+    let flow = {
+        let mut pending = PENDING_AUTH_FLOW
             .lock()
             .map_err(|e| LauncherError::Custom(format!("内部锁错误: {}", e)))?;
         pending
@@ -274,7 +284,8 @@ pub async fn complete_microsoft_auth_code_login() -> Result<MicrosoftLoginResult
             .ok_or_else(|| LauncherError::Custom("没有进行中的登录流程，请重新开始".to_string()))?
     };
 
-    let auth_result = microsoft_auth::complete_auth_code_flow(&code_verifier).await?;
+    let auth_result =
+        microsoft_auth::complete_auth_code_flow(&flow.code_verifier, &flow.state).await?;
 
     let mut config = (*load_config()?).clone();
     config.auth_type = AuthType::Microsoft;

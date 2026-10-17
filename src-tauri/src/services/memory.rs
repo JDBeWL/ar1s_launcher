@@ -478,7 +478,11 @@ mod tests {
     #[test]
     fn test_jvm_args_advanced_options_are_off_by_default() {
         let opts = JvmAdvancedOptions::default();
-        assert_eq!(opts.gc_strategy, GcStrategy::G1, "默认应为 G1，与官方启动器一致");
+        assert_eq!(
+            opts.gc_strategy,
+            GcStrategy::G1,
+            "默认应为 G1，与官方启动器一致"
+        );
         assert!(!opts.always_pre_touch);
         assert!(!opts.disable_explicit_gc);
         assert!(!opts.string_deduplication);
@@ -507,7 +511,10 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "-XX:+PerfDisableSharedMem"));
         assert!(args.iter().any(|arg| arg == "-XX:+UseStringDeduplication"));
         assert!(args.iter().any(|arg| arg == "-XX:MetaspaceSize=256m"));
-        assert!(args.iter().any(|arg| arg == "-XX:+HeapDumpOnOutOfMemoryError"));
+        assert!(
+            args.iter()
+                .any(|arg| arg == "-XX:+HeapDumpOnOutOfMemoryError")
+        );
     }
 
     #[test]
@@ -617,7 +624,11 @@ mod tests {
         };
         let args = optimize_jvm_memory_args(4096, Some(17), &opts);
         assert!(!args.iter().any(|arg| arg.starts_with("-XX:MetaspaceSize")));
-        assert!(!args.iter().any(|arg| arg.starts_with("-XX:MaxMetaspaceSize")));
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg.starts_with("-XX:MaxMetaspaceSize"))
+        );
     }
 
     #[test]
@@ -649,8 +660,9 @@ mod tests {
     #[test]
     fn test_jvm_args_extra_args_parsed_and_appended() {
         let opts = JvmAdvancedOptions {
-            extra_args: "# 我想试试 ZGC\n-XX:+UseZGC\n-XX:+ZGenerational\n\n  -Dfoo=bar -Dbar=baz \n"
-                .to_string(),
+            extra_args:
+                "# 我想试试 ZGC\n-XX:+UseZGC\n-XX:+ZGenerational\n\n  -Dfoo=bar -Dbar=baz \n"
+                    .to_string(),
             ..JvmAdvancedOptions::default()
         };
         let args = optimize_jvm_memory_args(4096, Some(21), &opts);
