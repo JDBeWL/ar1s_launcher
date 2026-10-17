@@ -15,6 +15,7 @@ const downloadThreads = ref(32);
 const isolateSaves = ref(true);
 const isolateResourcepacks = ref(true);
 const isolateLogs = ref(true);
+const isInitialized = ref(false);
 const appVersion = __APP_VERSION__;
 const themePalette = ref(getThemePalette());
 const themePalettes = [
@@ -115,11 +116,25 @@ async function saveIsolationSetting(key: string, value: boolean) {
   }
 }
 
-watch(versionIsolation, (v) => saveIsolationSetting('versionIsolation', v));
-watch(isolateSaves, (v) => saveIsolationSetting('isolateSaves', v));
-watch(isolateResourcepacks, (v) => saveIsolationSetting('isolateResourcepacks', v));
-watch(isolateLogs, (v) => saveIsolationSetting('isolateLogs', v));
+// onMounted 的 load 会给这些 ref 赋值，没有守卫就会一进页面把原值回写一遍
+watch(versionIsolation, (v) => {
+  if (!isInitialized.value) return;
+  saveIsolationSetting('versionIsolation', v);
+});
+watch(isolateSaves, (v) => {
+  if (!isInitialized.value) return;
+  saveIsolationSetting('isolateSaves', v);
+});
+watch(isolateResourcepacks, (v) => {
+  if (!isInitialized.value) return;
+  saveIsolationSetting('isolateResourcepacks', v);
+});
+watch(isolateLogs, (v) => {
+  if (!isInitialized.value) return;
+  saveIsolationSetting('isolateLogs', v);
+});
 watch(gameLanguage, async (v) => {
+  if (!isInitialized.value) return;
   try {
     await configApi.saveConfigKey('language', v);
   } catch (err) {
@@ -130,6 +145,7 @@ watch(gameLanguage, async (v) => {
 watch(
   () => settingsStore.downloadMirror,
   async () => {
+    if (!isInitialized.value) return;
     await settingsStore.saveDownloadMirror();
   },
 );
@@ -152,6 +168,8 @@ onMounted(async () => {
   } catch (err) {
     logError('Failed to load language', err, 'GeneralSettings');
   }
+
+  isInitialized.value = true;
 
   unlistenGameDirChanged = await listen('game-dir-changed', (event) => {
     gameDir.value = event.payload as string;

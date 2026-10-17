@@ -85,17 +85,14 @@ export const instanceApi = {
     loader?: { type: string; mc_version: string; loader_version: string },
   ): Promise<void> {
     await invoke('create_instance', { newInstanceName, baseVersionId, loader });
-    cache.deleteByPrefix(CacheKeys.INSTANCES);
   },
 
   async deleteInstance(instanceName: string): Promise<void> {
     await invoke('delete_instance', { instanceName });
-    cache.deleteByPrefix(CacheKeys.INSTANCES);
   },
 
   async renameInstance(oldName: string, newName: string): Promise<void> {
     await invoke('rename_instance', { oldName, newName });
-    cache.deleteByPrefix(CacheKeys.INSTANCES);
   },
 
   async openInstanceFolder(instanceName: string): Promise<void> {
@@ -110,17 +107,14 @@ export const instanceApi = {
   /** 启用/禁用模组（改名 *.jar <-> *.jar.disabled） */
   async setModEnabled(instanceName: string, fileName: string, enabled: boolean): Promise<void> {
     await invoke('set_mod_enabled', { instanceName, fileName, enabled });
-    cache.deleteByPrefix(CacheKeys.INSTANCES);
   },
 
   async deleteMod(instanceName: string, fileName: string): Promise<void> {
     await invoke('delete_instance_mod', { instanceName, fileName });
-    cache.deleteByPrefix(CacheKeys.INSTANCES);
   },
 
   async launchInstance(instanceName: string, overrideJavaPath?: string): Promise<void> {
     await invoke('launch_instance', { instanceName, overrideJavaPath });
-    cache.deleteByPrefix(CacheKeys.INSTANCES);
   },
 
   async validateInstanceName(name: string): Promise<InstanceNameValidation> {
@@ -175,8 +169,10 @@ export const javaApi = {
   },
 
   async refreshJavaInstallations(): Promise<string[]> {
+    const result = await invoke<string[]>('refresh_java_installations');
+    // 必须等后端刷完再失效，否则并发的 findJavaInstallations 会把旧列表写回缓存
     cache.delete(CacheKeys.JAVA);
-    return invoke<string[]>('refresh_java_installations');
+    return result;
   },
 
   async setJavaPath(path: string): Promise<void> {
@@ -218,8 +214,8 @@ export const configApi = {
   },
 
   async setGameDir(path: string): Promise<void> {
+    await invoke('set_game_dir', { path });
     cache.deleteByPrefix(`${CacheKeys.CONFIG}:game_dir_info`);
-    return invoke('set_game_dir', { path });
   },
 
   async getGameDirInfo(): Promise<GameDirInfo> {

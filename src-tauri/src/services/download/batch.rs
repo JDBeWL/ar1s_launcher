@@ -179,14 +179,19 @@ pub async fn download_all_files(
         handles.push(handle);
     }
 
+    let mut task_panics = 0usize;
     for handle in handles {
-        let _ = handle.await;
+        if let Err(e) = handle.await {
+            task_panics += 1;
+            warn!("下载任务异常终止: {}", e);
+        }
     }
 
     state.store(false, Ordering::Release);
-    reporter_handle.await?;
-    state_saver_handle.await?;
+    let reporter_result = reporter_handle.await;
+    let saver_result = state_saver_handle.await;
 
+    // 取消监听必须无条件执行，否则每失败一次就多留一个 cancel-download 监听
     window.unlisten(listener_id);
 
     {
@@ -198,9 +203,19 @@ pub async fn download_all_files(
         }
     }
 
+    reporter_result?;
+    saver_result?;
+
     if was_cancelled.load(Ordering::Acquire) {
         emit_cancelled_progress(window, bytes_downloaded.load(Ordering::Relaxed), total_size);
         return Err(LauncherError::Custom("下载已取消".to_string()));
+    }
+
+    if task_panics > 0 {
+        return Err(LauncherError::Custom(format!(
+            "{} 个下载任务异常终止",
+            task_panics
+        )));
     }
 
     let error_message = {

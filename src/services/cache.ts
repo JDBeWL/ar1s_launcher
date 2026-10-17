@@ -104,7 +104,6 @@ export const cache = new MemoryCache();
 
 export const CacheKeys = {
   VERSIONS: 'versions',
-  INSTANCES: 'instances',
   JAVA: 'java',
   LOADERS: 'loaders',
   CONFIG: 'config',

@@ -6,7 +6,8 @@
 const VALID_THEME_PALETTES = new Set(['indigo', 'emerald', 'rose']);
 
 const VALID_VIEW_MODES = new Set(['grid', 'list']);
-const VALID_SORT_BY = new Set(['lastPlayed', 'name', 'created']);
+// 必须与 InstanceManagerView 的 sortOptions 及排序 switch 的分支一致，否则选了就存不住
+const VALID_SORT_BY = new Set(['lastPlayed', 'name', 'version']);
 
 export function isValidThemePalette(value: string): boolean {
   return VALID_THEME_PALETTES.has(value);

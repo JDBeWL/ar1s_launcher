@@ -112,6 +112,18 @@ pub fn validate_instance_name_or_error(name: &str) -> Result<(), LauncherError> 
     Ok(())
 }
 
+/// mrpack 清单和 zip 条目的路径来自远端，拼到目标目录前先确认它是相对路径
+pub fn is_safe_relative_path(raw: &str) -> bool {
+    if raw.is_empty() || raw.contains("..") {
+        return false;
+    }
+    if raw.starts_with('/') || raw.starts_with('\\') {
+        return false;
+    }
+    // 第二个字符是冒号说明带了盘符（C:\ 或 C:/），Windows 下这是绝对路径
+    raw.chars().nth(1) != Some(':')
+}
+
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), std::io::Error> {
     fs::create_dir_all(&dst)?;
     for entry in fs::read_dir(src)? {
@@ -545,6 +557,18 @@ mod tests {
         let result = validate_instance_name("");
         assert!(!result.is_valid);
         assert!(result.error_message.unwrap().contains("不能为空"));
+    }
+
+    #[test]
+    fn test_is_safe_relative_path() {
+        let is_safe = super::is_safe_relative_path;
+        assert!(is_safe("mods/x.jar"));
+        assert!(is_safe("config/foo/bar.toml"));
+        assert!(!is_safe("mods/../../evil.jar"));
+        assert!(!is_safe("/etc/passwd"));
+        assert!(!is_safe("\\windows\\system32"));
+        assert!(!is_safe("C:\\evil\\x.jar"));
+        assert!(!is_safe(""));
     }
 
     #[test]

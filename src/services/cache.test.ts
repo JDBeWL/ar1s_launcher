@@ -171,7 +171,6 @@ describe('withCache', () => {
 describe('CacheKeys', () => {
   it('包含所有预定义的键前缀', () => {
     expect(CacheKeys.VERSIONS).toBe('versions');
-    expect(CacheKeys.INSTANCES).toBe('instances');
     expect(CacheKeys.JAVA).toBe('java');
     expect(CacheKeys.LOADERS).toBe('loaders');
     expect(CacheKeys.CONFIG).toBe('config');

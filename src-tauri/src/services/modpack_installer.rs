@@ -390,6 +390,17 @@ impl ModpackInstaller {
             return Ok(());
         }
 
+        // 清单里的 path 由远端给；出现遍历路径说明包本身有问题，整包拒绝而不是装一半
+        if let Some(bad) = files
+            .iter()
+            .find(|file| !file_utils::is_safe_relative_path(&file.path))
+        {
+            return Err(LauncherError::Custom(format!(
+                "整合包清单包含非法文件路径，已拒绝安装: {}",
+                bad.path
+            )));
+        }
+
         let dl_config = config::load_config()?;
         let max_concurrent = (dl_config.download_threads as usize).max(1);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
@@ -494,11 +505,22 @@ impl ModpackInstaller {
             handles.push(handle);
         }
 
+        let mut task_panics = 0usize;
         for handle in handles {
-            let _ = handle.await;
+            if let Err(e) = handle.await {
+                task_panics += 1;
+                error!("整合包下载任务异常终止: {}", e);
+            }
         }
 
         check_cancelled()?;
+
+        if task_panics > 0 {
+            return Err(LauncherError::Custom(format!(
+                "{} 个下载任务异常终止，整合包可能不完整",
+                task_panics
+            )));
+        }
 
         let failed = failed_files.lock().unwrap();
         if !failed.is_empty() {
@@ -644,15 +666,8 @@ impl ModpackInstaller {
             let mut file = archive.by_index(i)?;
             let file_name = file.name()?.to_string();
 
-            if file_name.contains("..") || file_name.starts_with('/') || file_name.starts_with('\\')
-            {
+            if !file_utils::is_safe_relative_path(&file_name) {
                 log::warn!("跳过可疑的 zip 条目: {}", file_name);
-                continue;
-            }
-
-            #[cfg(windows)]
-            if file_name.len() >= 2 && file_name.chars().nth(1) == Some(':') {
-                log::warn!("跳过可疑的 zip 条目 (绝对路径): {}", file_name);
                 continue;
             }
 

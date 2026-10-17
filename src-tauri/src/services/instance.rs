@@ -780,7 +780,10 @@ fn parse_mods_toml_name(text: &str) -> Option<String> {
         if line.starts_with('#') {
             continue;
         }
-        let (key, value) = line.split_once('=')?;
+        // mods.toml 里满是 [mods] 这类没有 '=' 的表头行，不能用 ? 退出整个函数
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         let value = value.trim().trim_matches('"').trim();
         if value.is_empty() {
             continue;
@@ -1341,4 +1344,27 @@ fn collect_download_jobs(
     }
 
     Ok(jobs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_mods_toml_name;
+
+    #[test]
+    fn test_mods_toml_name_survives_table_headers() {
+        let text = "modLoader=\"javafml\"\nloaderVersion=\"[47,)\"\nlicense=\"MIT\"\n\n[[mods]]\nmodId=\"examplemod\"\nversion=\"1.0\"\ndisplayName=\"示例模组\"\n";
+        assert_eq!(parse_mods_toml_name(text).as_deref(), Some("示例模组"));
+    }
+
+    #[test]
+    fn test_mods_toml_name_falls_back_to_mod_id() {
+        let text = "[[mods]]\nmodId=\"examplemod\"\n";
+        assert_eq!(parse_mods_toml_name(text).as_deref(), Some("examplemod"));
+    }
+
+    #[test]
+    fn test_mods_toml_name_skips_empty_display_name() {
+        let text = "[[mods]]\nmodId=\"examplemod\"\ndisplayName=\"\"\n";
+        assert_eq!(parse_mods_toml_name(text).as_deref(), Some("examplemod"));
+    }
 }

@@ -112,6 +112,9 @@ export const useNotificationStore = defineStore('notification', () => {
   }
 
   function confirm(title: string, content: string, type: NotificationType = 'warning'): Promise<boolean> {
+    // resolver 只有一个槽位，前一个没答的必须先按"取消"结算，否则它的 await 永远挂着
+    confirmResolve?.(false);
+
     confirmTitle.value = title;
     confirmContent.value = content;
     confirmType.value = type;
@@ -136,6 +139,8 @@ export const useNotificationStore = defineStore('notification', () => {
     options: ChoiceOption[],
     type: NotificationType = 'warning',
   ): Promise<string | null> {
+    choiceResolve?.(null);
+
     choiceTitle.value = title;
     choiceContent.value = content;
     choiceType.value = type;
