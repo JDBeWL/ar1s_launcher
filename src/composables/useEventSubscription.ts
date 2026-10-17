@@ -1,11 +1,11 @@
+/**
+ * Tauri 事件订阅工具
+ * 封装 listen 的订阅/退订，作用域销毁时自动退订，支持多事件批量注册
+ */
 import { onScopeDispose } from 'vue';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn, EventCallback } from '@tauri-apps/api/event';
 
-/**
- * 通用的 Tauri 事件订阅 composable
- * 自动处理订阅/取消订阅和作用域销毁时的清理
- */
 export function useEventSubscription<T>(eventName: string, handler: EventCallback<T>) {
   let unlisten: UnlistenFn | null = null;
   let isSubscribed = false;
@@ -25,7 +25,6 @@ export function useEventSubscription<T>(eventName: string, handler: EventCallbac
     isSubscribed = false;
   }
 
-  // 作用域销毁时自动清理
   onScopeDispose(unsubscribe);
 
   return {
@@ -37,10 +36,6 @@ export function useEventSubscription<T>(eventName: string, handler: EventCallbac
   };
 }
 
-/**
- * 多事件订阅管理器
- * 用于同时管理多个事件的订阅
- */
 interface SubscriptionHandle {
   subscribe: () => Promise<void>;
   unsubscribe: () => void;

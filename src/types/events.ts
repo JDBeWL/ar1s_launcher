@@ -1,3 +1,7 @@
+/**
+ * 前后端事件与命令载荷类型
+ * 字段命名按后端对应结构保持 snake_case 或 camelCase
+ */
 export type DownloadStatus = 'downloading' | 'completed' | 'cancelled' | 'error';
 
 export interface DownloadProgress {
@@ -16,7 +20,6 @@ export interface GameExitPayload {
 
 export type LaunchCommandPayload = string;
 
-// Minecraft 版本信息
 export interface MinecraftVersion {
   id: string;
   type: 'release' | 'snapshot' | 'old_beta' | 'old_alpha';
@@ -39,7 +42,7 @@ export interface VersionSizeInfo {
   total_size: number;
 }
 
-// 游戏实例 (对应后端 InstanceInfo，使用 camelCase)
+// 对应后端 InstanceInfo，camelCase
 export interface GameInstance {
   id: string;
   name: string;
@@ -51,11 +54,10 @@ export interface GameInstance {
   gameVersion?: string;
   lastPlayed?: number;
   modCount?: number;
-  /** 整合包自带封面；没有时回退到加载器图标 */
+  /** 整合包自带封面，没有时回退到加载器图标 */
   iconUrl?: string;
 }
 
-/** 实例 mods 目录里的一个模组文件 */
 export interface ModInfo {
   /** 磁盘上的实际文件名，禁用时带 .disabled 后缀 */
   fileName: string;
@@ -65,41 +67,36 @@ export interface ModInfo {
   size: number;
 }
 
-// 创建实例参数
 export interface CreateInstancePayload {
   newInstanceName: string;
   baseVersionId: string;
   loader?: LoaderPayload;
 }
 
-// 加载器参数（匹配后端 LoaderType）
+// 匹配后端 LoaderType
 export type LoaderPayload =
   | { type: 'forge'; mc_version: string; loader_version: string }
   | { type: 'fabric'; mc_version: string; loader_version: string }
   | { type: 'quilt'; mc_version: string; loader_version: string }
   | { type: 'neoforge'; mc_version: string; loader_version: string };
 
-// 安装进度事件
 export interface InstallProgressPayload {
   progress: number;
   message: string;
   indeterminate: boolean;
 }
 
-// Forge 版本信息
 export interface ForgeVersion {
   version: string;
   mcversion: string;
   build: number;
 }
 
-// 通用加载器版本信息
 export interface LoaderVersionInfo {
   version: string;
   stable?: boolean;
 }
 
-// 可用加载器信息
 export interface AvailableLoaders {
   forge: boolean;
   fabric: boolean;
@@ -107,23 +104,20 @@ export interface AvailableLoaders {
   neoforge: boolean;
 }
 
-// 加载器类型
 export type ModLoaderType = 'None' | 'Forge' | 'Fabric' | 'Quilt' | 'NeoForge';
 
-// 实例名称验证结果
 export interface InstanceNameValidation {
   is_valid: boolean;
   error_message: string | null;
 }
 
-// 游戏目录信息 (对应后端 GameDirInfo，使用 snake_case)
+// 对应后端 GameDirInfo，snake_case
 export interface GameDirInfo {
   path: string;
   versions: string[];
   total_size: number;
 }
 
-// Modrinth 整合包搜索结果条目
 export interface ModrinthModpack {
   slug: string;
   title: string;
@@ -139,13 +133,12 @@ export interface ModrinthModpack {
   categories: string[];
 }
 
-// Modrinth 整合包搜索结果
 export interface ModrinthSearchResult {
   hits: ModrinthModpack[];
   total_hits: number;
 }
 
-// Modrinth 整合包版本 (对应后端 ModrinthModpackVersion，使用 snake_case)
+// 对应后端 ModrinthModpackVersion，snake_case
 export interface ModrinthVersion {
   id: string;
   name: string;
@@ -176,17 +169,16 @@ export interface ModrinthDependency {
   dependency_type: string;
 }
 
-// 窗口设置
 export interface WindowSettings {
   width: number | null;
   height: number | null;
   fullscreen: boolean;
 }
 
-// 垃圾回收器策略 (对应后端 GcStrategy，lowercase)
+// 对应后端 GcStrategy，lowercase
 export type GcStrategy = 'g1' | 'default' | 'parallel' | 'serial' | 'z';
 
-// JVM 高级调优选项 (对应后端 JvmAdvancedOptions，camelCase)
+// 对应后端 JvmAdvancedOptions，camelCase
 export interface JvmAdvancedOptions {
   gcStrategy: GcStrategy;
   alwaysPreTouch: boolean;
@@ -199,14 +191,13 @@ export interface JvmAdvancedOptions {
   extraArgs: string;
 }
 
-// 自动内存配置 (对应后端 AutoMemoryConfig，使用 snake_case)
+// 对应后端 AutoMemoryConfig，snake_case
 export interface AutoMemoryConfig {
   enabled: boolean;
   max_limit_mb: number;
   safety_margin_percent: number;
 }
 
-// 认证状态
 export interface AuthStatus {
   authType: 'offline' | 'microsoft';
   loggedIn: boolean;
@@ -216,14 +207,14 @@ export interface AuthStatus {
   expiresAt: number | null;
 }
 
-// Microsoft 登录设备代码展示信息（不含敏感的 device_code）
+// 刻意不含敏感的 device_code
 export interface DeviceCodeDisplay {
   userCode: string;
   verificationUri: string;
   expiresIn: number;
 }
 
-// Microsoft 登录结果（不含 access_token 和 refresh_token）
+// 不含 access_token 和 refresh_token
 export interface MicrosoftLoginResult {
   username: string;
   uuid: string;
@@ -231,7 +222,6 @@ export interface MicrosoftLoginResult {
   expiresAt: number;
 }
 
-// Java 兼容性检查结果
 export interface JavaCompatibilityResult {
   compatible: boolean;
   currentJavaVersion: number | null;

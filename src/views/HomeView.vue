@@ -110,7 +110,6 @@ onMounted(async () => {
 
 <template>
   <v-container fluid class="page-container pa-4">
-    <!-- 加载骨架屏 -->
     <template v-if="pageLoading">
       <v-card color="surface-container" variant="flat" class="mb-4">
         <v-card-text class="pa-5">
@@ -152,7 +151,7 @@ onMounted(async () => {
     </template>
 
     <template v-else>
-      <!-- 主视觉：启动区整行铺开，卡片按内容高度走，不再用 h-100 撑出空洞 -->
+      <!-- 启动区卡片按内容高度，不要加 h-100 -->
       <v-card color="surface-container" variant="flat" class="mb-4">
         <v-card-text class="pa-5">
           <div class="d-flex align-center flex-wrap ga-5">
@@ -174,7 +173,7 @@ onMounted(async () => {
               </div>
             </div>
 
-            <!-- 操作栏：选择器和按钮并排，启动按钮不再被拉成整栏宽 -->
+            <!-- 操作栏选择器和按钮并排，启动按钮不要拉成整栏宽 -->
             <div class="hero-actions">
               <v-select
                 v-model="selectedInstance"
@@ -221,7 +220,6 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- 未就绪时的引导提示 -->
           <div v-if="!isReady" class="launch-guide mt-4">
             <v-stepper-vertical hide-actions flat>
               <v-stepper-vertical-item
@@ -250,7 +248,6 @@ onMounted(async () => {
       </v-card>
 
       <v-row>
-        <!-- 最近游玩：合并了原来的实例统计和快捷启动 -->
         <v-col cols="12" md="7">
           <div class="d-flex flex-column h-100">
             <v-card color="surface-container" variant="flat" class="d-flex flex-column flex-grow-1">
@@ -315,7 +312,6 @@ onMounted(async () => {
           </div>
         </v-col>
 
-        <!-- 快捷操作 -->
         <v-col cols="12" md="5">
           <div class="d-flex flex-column h-100">
             <v-card color="surface-container" variant="flat">
@@ -341,7 +337,6 @@ onMounted(async () => {
       </v-row>
     </template>
 
-    <!-- 修复进度对话框 -->
     <v-dialog :model-value="isRepairing" persistent max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">

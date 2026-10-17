@@ -1,4 +1,6 @@
-//! 版本下载逻辑
+//! 版本资源整合与下载
+//!
+//! 跟随 inheritsFrom 递归补基础版本，汇总成下载任务并按镜像改写地址
 
 use super::batch::download_all_files;
 use super::http::get_http_client;
@@ -10,7 +12,6 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{Emitter, Window};
 
-/// 处理并下载指定版本
 pub async fn process_and_download_version(
     version_id: String,
     mirror: Option<String>,
@@ -27,27 +28,24 @@ pub async fn process_and_download_version(
     let game_dir = PathBuf::from(&config.game_dir);
     let version_dir = game_dir.join("versions").join(&version_id);
 
-    // 记录目录是否在本次调用前已存在（用于失败清理判断）
+    // 记录目录本次调用前是否已存在，供失败清理判断
     let dir_existed_before = version_dir.exists();
 
-    // 创建版本目录
     fs::create_dir_all(&version_dir)?;
     let libraries_base_dir = game_dir.join("libraries");
     let assets_base_dir = game_dir.join("assets");
 
     let client = get_http_client();
 
-    // 检查是否是整合包/mod加载器版本（本地版本 JSON 存在且有 inheritsFrom）
+    // 整合包/mod 加载器版本：本地 JSON 存在且有 inheritsFrom
     let local_version_json_path = version_dir.join(format!("{}.json", version_id));
     let (actual_version_id, version_json, text) = if local_version_json_path.exists() {
         let local_text = fs::read_to_string(&local_version_json_path)?;
         let local_json: serde_json::Value = serde_json::from_str(&local_text)
             .map_err(|e| LauncherError::Custom(format!("解析本地版本JSON失败: {}", e)))?;
 
-        // 检查是否有 inheritsFrom 字段
         if let Some(inherits_from) = local_json["inheritsFrom"].as_str() {
             info!("版本 {} 继承自 {}", version_id, inherits_from);
-            // 递归下载基础版本
             Box::pin(process_and_download_version(
                 inherits_from.to_string(),
                 mirror.clone(),
@@ -55,8 +53,7 @@ pub async fn process_and_download_version(
             ))
             .await?;
 
-            // 返回，因为基础版本已经下载完成
-            // 整合包的库文件需要单独处理
+            // 基础版本已下载，整合包的库文件另行处理
             return download_modpack_libraries(
                 &local_json,
                 &libraries_base_dir,
@@ -69,7 +66,6 @@ pub async fn process_and_download_version(
 
         (version_id.clone(), local_json, local_text)
     } else {
-        // 从网络获取版本信息
         let manifest: VersionManifest = client
             .get(&format!("{}/mc/game/version_manifest.json", base_url))
             .send()
@@ -83,7 +79,6 @@ pub async fn process_and_download_version(
             .find(|v| v.id == version_id)
             .ok_or_else(|| LauncherError::Custom(format!("版本 {} 不存在", version_id)))?;
 
-        // 获取版本 JSON
         let version_json_url = if is_mirror {
             version
                 .url
@@ -101,10 +96,8 @@ pub async fn process_and_download_version(
         (version_id.clone(), version_json, text)
     };
 
-    // 收集下载任务
     let mut downloads = Vec::new();
 
-    // 添加客户端 JAR
     collect_client_jar(
         &version_json,
         &version_dir,
@@ -114,7 +107,6 @@ pub async fn process_and_download_version(
         &mut downloads,
     )?;
 
-    // 添加资源文件
     collect_assets(
         &client,
         &version_json,
@@ -125,7 +117,6 @@ pub async fn process_and_download_version(
     )
     .await?;
 
-    // 添加库文件
     collect_libraries(
         &version_json,
         &libraries_base_dir,
@@ -134,14 +125,12 @@ pub async fn process_and_download_version(
         &mut downloads,
     )?;
 
-    // 执行批量下载
     match download_all_files(downloads, window).await {
         Ok(_) => {
-            // 保存版本元数据文件
             let version_json_path = version_dir.join(format!("{}.json", actual_version_id));
             fs::write(version_json_path, text)?;
 
-            // 触发游戏目录变更事件，通知前端刷新版本列表
+            // 通知前端刷新版本列表
             if let Ok(game_dir_str) = config::get_game_dir() {
                 let _ = window.emit("game-dir-changed", &game_dir_str);
             }
@@ -161,7 +150,6 @@ pub async fn process_and_download_version(
     }
 }
 
-/// 下载整合包/mod加载器的库文件
 async fn download_modpack_libraries(
     version_json: &serde_json::Value,
     libraries_base_dir: &PathBuf,
@@ -171,7 +159,6 @@ async fn download_modpack_libraries(
 ) -> Result<(), LauncherError> {
     let mut downloads = Vec::new();
 
-    // 收集库文件
     collect_libraries(
         version_json,
         libraries_base_dir,
@@ -186,11 +173,9 @@ async fn download_modpack_libraries(
 
     info!("下载整合包库文件: {} 个", downloads.len());
 
-    // 执行批量下载
     download_all_files(downloads, window).await
 }
 
-/// 收集客户端 JAR 下载任务
 fn collect_client_jar(
     version_json: &serde_json::Value,
     version_dir: &PathBuf,
@@ -228,7 +213,6 @@ fn collect_client_jar(
     Ok(())
 }
 
-/// 收集资源文件下载任务
 async fn collect_assets(
     client: &reqwest::Client,
     version_json: &serde_json::Value,
@@ -301,7 +285,6 @@ async fn collect_assets(
     Ok(())
 }
 
-/// 收集库文件下载任务
 fn collect_libraries(
     version_json: &serde_json::Value,
     libraries_base_dir: &PathBuf,
@@ -320,14 +303,13 @@ fn collect_libraries(
             continue;
         }
 
-        // 处理普通库
         if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
             if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url)
             {
                 downloads.push(job);
             }
         } else {
-            // 没有 downloads.artifact，尝试从 name 构建下载任务 (Forge 库常见情况)
+            // 无 downloads.artifact（Forge 库常见），从 name 构建任务
             if let Some(job) =
                 create_library_job_from_name(lib, libraries_base_dir, is_mirror, base_url)
             {
@@ -335,7 +317,6 @@ fn collect_libraries(
             }
         }
 
-        // 处理 natives 库
         collect_natives_library(lib, libraries_base_dir, is_mirror, base_url, downloads);
     }
 
@@ -344,7 +325,6 @@ fn collect_libraries(
 
 use crate::utils::minecraft::maven_name_to_path;
 
-/// 从库名称创建下载任务 (用于没有 downloads.artifact 的 Forge 库)
 fn create_library_job_from_name(
     lib: &serde_json::Value,
     libraries_base_dir: &PathBuf,
@@ -356,15 +336,12 @@ fn create_library_job_from_name(
 
     let target_path = libraries_base_dir.join(&maven_path);
 
-    // 如果文件已存在，跳过
     if target_path.exists() {
         return None;
     }
 
-    // 获取库的 URL 基础路径
     let lib_url = lib.get("url").and_then(|u| u.as_str());
 
-    // 构建下载 URL，优先使用 BMCLAPI 镜像
     let download_url = if is_mirror {
         format!("{}/maven/{}", base_url, maven_path)
     } else if let Some(url) = lib_url {
@@ -375,11 +352,9 @@ fn create_library_job_from_name(
         };
         format!("{}{}", base, maven_path)
     } else {
-        // 默认使用 Maven Central
         format!("https://repo1.maven.org/maven2/{}", maven_path)
     };
 
-    // 构建 fallback URL
     let fallback_url = if is_mirror {
         if let Some(url) = lib_url {
             let base = if url.ends_with('/') {
@@ -392,7 +367,6 @@ fn create_library_job_from_name(
             Some(format!("https://repo1.maven.org/maven2/{}", maven_path))
         }
     } else {
-        // 非镜像模式，使用 BMCLAPI 作为 fallback
         Some(format!(
             "https://bmclapi2.bangbang93.com/maven/{}",
             maven_path
@@ -408,9 +382,8 @@ fn create_library_job_from_name(
     })
 }
 
-/// 检查是否应该下载库（使用共享的 rules 评估逻辑）
 fn should_download_library(lib: &serde_json::Value) -> bool {
-    // LWJGL natives 特殊处理：始终下载
+    // LWJGL natives 无视 rules 评估，始终下载
     if lib["name"]
         .as_str()
         .map_or(false, |name| name.contains("lwjgl"))
@@ -422,7 +395,6 @@ fn should_download_library(lib: &serde_json::Value) -> bool {
     crate::utils::minecraft::evaluate_rules(lib.get("rules"))
 }
 
-/// 创建库下载任务
 fn create_library_job(
     artifact: &serde_json::Value,
     libraries_base_dir: &PathBuf,
@@ -435,7 +407,6 @@ fn create_library_job(
     let hash = artifact["sha1"].as_str().map(|h| h.to_string());
 
     let download_url = if is_mirror {
-        // 替换各种库源为镜像
         url.replace(
             "https://libraries.minecraft.net",
             &format!("{}/libraries", base_url),
@@ -465,7 +436,6 @@ fn create_library_job(
     })
 }
 
-/// 收集 natives 库下载任务
 fn collect_natives_library(
     lib: &serde_json::Value,
     libraries_base_dir: &PathBuf,
@@ -501,7 +471,6 @@ fn collect_natives_library(
             continue;
         }
 
-        // 尝试从 downloads.classifiers 获取
         if let Some(artifact) = lib
             .get("downloads")
             .and_then(|d| d.get("classifiers"))
@@ -514,7 +483,6 @@ fn collect_natives_library(
             }
         }
 
-        // 尝试从 classifiers 获取
         if let Some(artifact) = lib.get("classifiers").and_then(|c| c.get(os_classifier)) {
             if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url)
             {
@@ -523,7 +491,6 @@ fn collect_natives_library(
             }
         }
 
-        // 回退：根据 maven 坐标构建路径
         if let Some(job) = create_natives_job_from_name(
             lib,
             os_classifier,
@@ -536,7 +503,6 @@ fn collect_natives_library(
     }
 }
 
-/// 从库名称创建 natives 下载任务
 fn create_natives_job_from_name(
     lib: &serde_json::Value,
     os_classifier: &str,

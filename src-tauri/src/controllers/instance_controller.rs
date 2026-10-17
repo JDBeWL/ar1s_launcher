@@ -1,16 +1,19 @@
+//! 实例 command 模块
+//!
+//! 实例增删改查、启动与实例内 Mod 管理的 invoke 入口
+
 use crate::errors::LauncherError;
 use crate::models::InstanceInfo;
 use crate::services::instance::{self, ModInfo};
 use crate::services::loaders::LoaderType;
 use crate::utils::file_utils::{InstanceNameValidation, validate_instance_name};
 
-/// 验证实例名称是否有效
 #[tauri::command]
 pub fn validate_instance_name_cmd(name: String) -> InstanceNameValidation {
     validate_instance_name(&name)
 }
 
-/// 检查实例名称是否可用（验证格式并检查是否已存在）
+/// 除格式外还要判断同名实例是否已存在
 #[tauri::command]
 pub fn check_instance_name_available(name: String) -> InstanceNameValidation {
     instance::check_instance_name_available(&name)

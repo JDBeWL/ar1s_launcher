@@ -1,3 +1,7 @@
+/**
+ * 设置存储
+ * 缓存内存、下载镜像与 Java 相关设置，经 configApi 读入并按 key 写回
+ */
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { configApi, javaApi } from '../services';

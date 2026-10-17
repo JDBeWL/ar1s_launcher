@@ -33,7 +33,7 @@ const emit = defineEmits(['update:modelValue', 'cancel']);
 const progressPercentage = computed(() => {
   if (props.total === 0) return 0;
   const percentage = (props.progress / props.total) * 100;
-  return Math.min(percentage, 100); // 限制最大值为 100%
+  return Math.min(percentage, 100);
 });
 
 const formattedSpeed = computed(() => {
@@ -72,12 +72,10 @@ const progressText = computed(() => {
   return `${formatBytes(props.progress)} / ${formatBytes(props.total)}`;
 });
 
-// 处理关闭通知
 function hideNotification() {
   emit('update:modelValue', false);
 }
 
-// 处理取消下载
 function handleCancel() {
   emit('cancel');
 }

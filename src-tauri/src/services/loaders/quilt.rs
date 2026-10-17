@@ -1,4 +1,6 @@
 //! Quilt 加载器安装
+//!
+//! 从 meta.quiltmc.org v3 取 profile JSON，改写 id 为实例名后写入 versions 目录
 
 use crate::errors::LauncherError;
 use crate::services::http_client;
@@ -7,10 +9,8 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-/// Quilt Meta API 基础 URL
 const QUILT_META_URL: &str = "https://meta.quiltmc.org/v3";
 
-/// 安装 Quilt 加载器
 pub async fn install_quilt(
     mc_version: &str,
     quilt_version: &str,
@@ -24,7 +24,6 @@ pub async fn install_quilt(
 
     let client = http_client::get_client();
 
-    // 从 Quilt Meta API 获取版本 JSON
     let profile_url = format!(
         "{}/versions/loader/{}/{}/profile/json",
         QUILT_META_URL, mc_version, quilt_version
@@ -50,12 +49,10 @@ pub async fn install_quilt(
         .await
         .map_err(|e| LauncherError::Custom(format!("解析 Quilt JSON 失败: {}", e)))?;
 
-    // 修改版本 ID 为实例名称
     if let Some(obj) = version_json.as_object_mut() {
         obj.insert("id".to_string(), serde_json::json!(instance_name));
     }
 
-    // 保存版本 JSON
     let version_dir = game_dir.join("versions").join(instance_name);
     fs::create_dir_all(&version_dir)?;
 
@@ -67,7 +64,6 @@ pub async fn install_quilt(
     Ok(())
 }
 
-/// 获取 Quilt 加载器版本列表
 pub async fn get_quilt_versions(
     mc_version: &str,
 ) -> Result<Vec<QuiltLoaderVersion>, LauncherError> {
@@ -100,7 +96,6 @@ pub async fn get_quilt_versions(
         .collect())
 }
 
-/// 获取支持 Quilt 的 Minecraft 版本列表
 pub async fn get_quilt_game_versions() -> Result<Vec<String>, LauncherError> {
     let client = http_client::get_client();
     let url = format!("{}/versions/game", QUILT_META_URL);
@@ -126,8 +121,6 @@ pub async fn get_quilt_game_versions() -> Result<Vec<String>, LauncherError> {
     Ok(versions.into_iter().map(|v| v.version).collect())
 }
 
-// --- 内部数据结构 ---
-
 #[derive(serde::Deserialize)]
 struct QuiltLoaderInfo {
     loader: QuiltLoader,
@@ -143,7 +136,6 @@ struct QuiltGameVersion {
     version: String,
 }
 
-/// Quilt 加载器版本信息
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct QuiltLoaderVersion {
     pub version: String,

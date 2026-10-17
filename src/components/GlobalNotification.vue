@@ -79,7 +79,6 @@ const choiceColor = computed(() => store.choiceType);
 </script>
 
 <template>
-  <!-- Snackbar 通知 -->
   <v-snackbar
     :model-value="hasNotification"
     :color="snackbarColor"
@@ -102,7 +101,6 @@ const choiceColor = computed(() => store.choiceType);
     </template>
   </v-snackbar>
 
-  <!-- 详情 Dialog -->
   <v-dialog v-model="store.dialogVisible" max-width="520">
     <v-card>
       <v-card-title :class="`text-${dialogColor}`">
@@ -119,7 +117,6 @@ const choiceColor = computed(() => store.choiceType);
     </v-card>
   </v-dialog>
 
-  <!-- 确认 Dialog -->
   <v-dialog v-model="store.confirmVisible" max-width="420" persistent>
     <v-card>
       <v-card-title :class="`text-${confirmColor}`">
@@ -137,7 +134,6 @@ const choiceColor = computed(() => store.choiceType);
     </v-card>
   </v-dialog>
 
-  <!-- 选择 Dialog -->
   <v-dialog v-model="store.choiceVisible" max-width="560" persistent>
     <v-card>
       <v-card-title class="d-flex align-center justify-space-between py-3 px-4">

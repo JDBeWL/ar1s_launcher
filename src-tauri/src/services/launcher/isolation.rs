@@ -1,11 +1,12 @@
 //! 版本隔离目录准备
+//!
+//! 按隔离开关在版本目录下建 saves、resourcepacks、logs，并复制根目录的 options.txt
 
 use crate::models::GameConfig;
 use std::fs;
 use std::io;
 use std::path::Path;
 
-/// 准备版本隔离目录
 pub fn prepare_isolated_version_directory(
     config: &GameConfig,
     game_dir: &Path,
@@ -28,7 +29,6 @@ pub fn prepare_isolated_version_directory(
         }
     }
 
-    // 复制 options.txt
     let options_src = game_dir.join("options.txt");
     let options_dst = version_dir.join("options.txt");
     if options_src.exists() && !options_dst.exists() {

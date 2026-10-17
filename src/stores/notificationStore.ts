@@ -1,3 +1,7 @@
+/**
+ * 通知与对话框存储
+ * 维护最多 5 条自动消失的 snackbar，另提供返回 Promise 的 confirm 与 choice
+ */
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 
@@ -67,7 +71,7 @@ export const useNotificationStore = defineStore('notification', () => {
 
   function error(title: string, message?: string, showDialog = false) {
     if (showDialog && message) {
-      // 显示详情对话框时，不再显示 snackbar 通知
+      // 走详情对话框时不再叠加 snackbar
       showErrorDialog(title, message);
       return -1;
     }
@@ -107,7 +111,6 @@ export const useNotificationStore = defineStore('notification', () => {
     dialogVisible.value = false;
   }
 
-  // 确认对话框
   function confirm(title: string, content: string, type: NotificationType = 'warning'): Promise<boolean> {
     confirmTitle.value = title;
     confirmContent.value = content;

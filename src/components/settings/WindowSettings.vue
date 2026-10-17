@@ -73,7 +73,6 @@ onMounted(() => {
 
 <template>
   <div class="settings-group">
-    <!-- 全屏模式 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between">
@@ -95,7 +94,6 @@ onMounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 窗口大小 -->
     <v-card variant="flat" v-if="!fullscreen" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -103,7 +101,6 @@ onMounted(() => {
           <span class="text-title-medium">窗口大小</span>
         </div>
 
-        <!-- 预设选择 -->
         <div class="mb-4">
           <div class="text-body-medium text-on-surface-variant mb-3">快捷预设</div>
           <div class="d-flex flex-wrap ga-2">
@@ -126,7 +123,6 @@ onMounted(() => {
           </div>
         </div>
 
-        <!-- 自定义大小 -->
         <v-expand-transition>
           <div v-if="useCustomSize">
             <v-divider class="my-4" />
@@ -171,7 +167,6 @@ onMounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 提示 -->
     <v-alert color="secondary-container" class="tip-alert">
       <template #prepend>
         <v-icon size="20" color="on-secondary-container">mdi-information-outline</v-icon>

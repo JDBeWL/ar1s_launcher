@@ -1,3 +1,7 @@
+/**
+ * 创建实例流程
+ * 版本列表的搜索过滤排序、按版本取可用加载器、防抖校验实例名与安装进度订阅
+ */
 import { ref, computed, watch } from 'vue';
 import { api } from '../services';
 import { useNotificationStore } from '../stores/notificationStore';
@@ -32,7 +36,6 @@ export function useInstanceCreation() {
   const progressIndeterminate = ref(false);
   const progressText = ref('');
 
-  // 加载器相关
   const availableLoaders = ref<AvailableLoaders | null>(null);
   const loadingAvailableLoaders = ref(false);
   const selectedModLoaderType = ref<ModLoaderType>('None');
@@ -40,7 +43,6 @@ export function useInstanceCreation() {
   const loadingModLoaderVersions = ref(false);
   const selectedModLoaderVersion = ref<ForgeVersion | LoaderVersionInfo | null>(null);
 
-  // 动态计算可用的加载器类型
   const modLoaderTypes = computed<{ title: string; value: ModLoaderType; disabled: boolean }[]>(() => {
     const loaders = availableLoaders.value;
     return [
@@ -52,7 +54,7 @@ export function useInstanceCreation() {
     ];
   });
 
-  // 先过滤版本（只依赖 versions, versionTypeFilter, searchVersion）
+  // 过滤与排序拆成两个 computed，让排序不依赖 versions 原始数组
   const filteredVersionsUnsorted = computed(() => {
     return versions.value.filter((version) => {
       const typeMatch = versionTypeFilter.value === 'all' || version.type === versionTypeFilter.value;
@@ -61,7 +63,6 @@ export function useInstanceCreation() {
     });
   });
 
-  // 再排序（只依赖 filteredVersionsUnsorted 和 sortOrder）
   const filteredVersions = computed(() => {
     if (sortOrder.value === 'newest' || sortOrder.value === 'oldest') {
       return sortVersionsByReleaseTime(filteredVersionsUnsorted.value, sortOrder.value);
@@ -103,7 +104,6 @@ export function useInstanceCreation() {
       const loaders = await api.loader.getAvailableLoaders(selectedVersion.value.id);
       availableLoaders.value = loaders;
 
-      // 如果当前选择的加载器不可用，重置为 None
       if (selectedModLoaderType.value !== 'None') {
         const loaderKey = selectedModLoaderType.value.toLowerCase() as keyof AvailableLoaders;
         if (!loaders[loaderKey]) {
@@ -160,7 +160,6 @@ export function useInstanceCreation() {
     }
   }
 
-  // 当选择的 MC 版本变化时，获取可用加载器
   watch(selectedVersion, () => {
     selectedModLoaderType.value = 'None';
     modLoaderVersions.value = [];
@@ -168,12 +167,10 @@ export function useInstanceCreation() {
     fetchAvailableLoaders();
   });
 
-  // 当选择的加载器类型变化时，获取加载器版本
   watch(selectedModLoaderType, () => {
     fetchModLoaderVersions();
   });
 
-  // 验证实例名称
   async function validateInstanceName(name: string): Promise<boolean> {
     if (!name) {
       instanceNameError.value = null;
@@ -195,7 +192,6 @@ export function useInstanceCreation() {
     }
   }
 
-  // 当实例名称变化时验证（防抖）
   const debouncedValidate = useDebounceFn((name: string) => {
     validateInstanceName(name);
   }, 300);
@@ -204,7 +200,6 @@ export function useInstanceCreation() {
     debouncedValidate.call(newName);
   });
 
-  // 使用统一的事件订阅管理
   const installProgressSub = useEventSubscription<InstallProgressPayload>('instance-install-progress', (event) => {
     const progressData = event.payload;
     progressValue.value = progressData.progress;
@@ -226,7 +221,6 @@ export function useInstanceCreation() {
       return;
     }
 
-    // 验证实例名称
     const isValid = await validateInstanceName(finalInstanceName);
     if (!isValid) {
       notificationStore.warning('实例名称无效', instanceNameError.value || '请检查实例名称');
@@ -251,7 +245,6 @@ export function useInstanceCreation() {
         baseVersionId: selectedVersion.value.id,
       };
 
-      // 根据加载器类型设置对应的版本
       if (selectedModLoaderVersion.value && selectedModLoaderType.value !== 'None') {
         const mcVersion = selectedVersion.value.id;
         // ForgeVersion 和 LoaderVersionInfo 都有 version 字段

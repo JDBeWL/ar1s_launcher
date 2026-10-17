@@ -216,7 +216,6 @@ onMounted(async () => {
 
 <template>
   <div class="settings-group">
-    <!-- Java 路径选择 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-4">
@@ -236,7 +235,6 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- 路径输入框 -->
         <v-text-field
           v-model="inputJavaPath"
           density="compact"
@@ -262,7 +260,6 @@ onMounted(async () => {
           </template>
         </v-text-field>
 
-        <!-- 路径本身已经在上面的输入框里，这里只补版本和无效告警 -->
         <div v-if="javaPath" class="d-flex align-center mb-4">
           <v-icon size="16" :color="isJavaPathValid ? 'success' : 'error'" class="mr-2">
             {{ isJavaPathValid ? 'mdi-check-circle' : 'mdi-alert-circle' }}
@@ -273,7 +270,6 @@ onMounted(async () => {
           <span v-else class="text-body-small text-error">路径无效，无法执行</span>
         </div>
 
-        <!-- 已检测到的 Java -->
         <div v-if="settingsStore.javaInstallations.length > 0" class="mb-2">
           <div class="text-body-medium text-on-surface-variant mb-2">检测到的 Java 安装：</div>
           <v-list density="compact" lines="two" class="java-list" bg-color="surface-container-high">
@@ -298,7 +294,6 @@ onMounted(async () => {
           </v-list>
         </div>
 
-        <!-- 未选择提示 -->
         <v-alert v-if="!javaPath" color="warning-container" density="compact">
           <template #prepend>
             <v-icon color="on-warning-container">mdi-alert-outline</v-icon>
@@ -308,7 +303,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 自定义 Java 路径管理 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-4">
@@ -358,7 +352,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 自动匹配 Java -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between">
@@ -393,7 +386,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- Java 提示 -->
     <v-alert color="secondary-container" class="tip-alert">
       <template #prepend>
         <v-icon size="20" color="on-secondary-container">mdi-information-outline</v-icon>

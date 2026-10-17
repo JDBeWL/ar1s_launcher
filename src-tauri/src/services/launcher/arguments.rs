@@ -1,4 +1,6 @@
 //! JVM 和游戏参数构建逻辑
+//!
+//! 解析新旧两种参数格式并按 rules 与 features 过滤，替换 ${...} 占位符，补齐 --tweakClass
 
 use crate::models::{GameConfig, LaunchOptions};
 use crate::utils::minecraft::{evaluate_rules_for_arguments_with_features, FeatureSupport};
@@ -8,24 +10,18 @@ use std::path::Path;
 const DEFAULT_WINDOW_WIDTH: u32 = 854;
 const DEFAULT_WINDOW_HEIGHT: u32 = 480;
 
-/// 从版本 JSON 中获取基础 Minecraft 版本名
-/// 用于 Forge 的 ignoreList 参数（需要原版 MC jar 文件名）
+/// 用于 Forge 的 ignoreList 参数，需要原版 MC jar 文件名
 fn get_base_minecraft_version(version_json: &serde_json::Value, fallback: &str) -> String {
-    // 1. 优先使用 jar 字段（直接指定了使用哪个 jar）
     if let Some(jar) = version_json.get("jar").and_then(|j| j.as_str()) {
         return jar.to_string();
     }
 
-    // 2. 从 inheritsFrom 链中查找基础 MC 版本
-    // Forge 版本格式通常是 "1.20.2-forge-48.0.48"，我们需要提取 "1.20.2"
     if let Some(inherits) = version_json.get("inheritsFrom").and_then(|i| i.as_str()) {
-        // 如果 inheritsFrom 包含 "forge"，提取前面的 MC 版本
         if inherits.contains("-forge") || inherits.contains("-neoforge") {
             if let Some(mc_ver) = inherits.split('-').next() {
                 return mc_ver.to_string();
             }
         }
-        // 如果 inheritsFrom 看起来像纯 MC 版本号（如 "1.20.2"）
         if inherits
             .chars()
             .next()
@@ -37,18 +33,15 @@ fn get_base_minecraft_version(version_json: &serde_json::Value, fallback: &str) 
         }
     }
 
-    // 3. 从当前版本 ID 尝试提取
     if fallback.contains("-forge") {
         if let Some(mc_ver) = fallback.split("-forge").next() {
             return mc_ver.to_string();
         }
     }
 
-    // 4. 回退到传入的版本名
     fallback.to_string()
 }
 
-/// 构建 JVM 和游戏参数
 pub fn build_arguments(
     version_json: &serde_json::Value,
     config: &GameConfig,
@@ -64,18 +57,14 @@ pub fn build_arguments(
     let libraries_dir = game_dir.join("libraries");
     let classpath_separator = if cfg!(windows) { ";" } else { ":" };
 
-    // 获取原版 Minecraft 版本名（用于 Forge 的 ignoreList）
-    // 优先使用 jar 字段，其次从 inheritsFrom 链中查找基础 MC 版本
     let base_mc_version = get_base_minecraft_version(version_json, &options.version);
 
-    // 用户自定义分辨率（未设置的一侧回落到 Minecraft 默认窗口尺寸）
     let custom_width = options.window_width.or(config.window_width);
     let custom_height = options.window_height.or(config.window_height);
     let resolution_width = custom_width.unwrap_or(DEFAULT_WINDOW_WIDTH).to_string();
     let resolution_height = custom_height.unwrap_or(DEFAULT_WINDOW_HEIGHT).to_string();
 
-    // has_custom_resolution 只有在用户真的设置了分辨率时才放行，
-    // 否则会把未替换的 ${resolution_width} 占位符丢给游戏
+    // 仅当用户真的设置了分辨率才启用 has_custom_resolution，否则未替换的 ${resolution_width} 占位符会丢给游戏
     let feature_support = FeatureSupport {
         custom_resolution: custom_width.is_some() || custom_height.is_some(),
     };
@@ -117,7 +106,6 @@ pub fn build_arguments(
             .replace("${user_type}", user_type)
             .replace("${version_type}", version_type)
             .replace("${user_properties}", "{}")
-            // 自定义分辨率占位符（vanilla 1.13+ 的 has_custom_resolution 特性）
             .replace("${resolution_width}", &resolution_width)
             .replace("${resolution_height}", &resolution_height)
             // 新版 Forge (1.13+) 需要的占位符
@@ -138,13 +126,11 @@ pub fn build_arguments(
         game_args_vec = mc_args.split(' ').map(&replace_placeholders).collect();
     }
 
-    // 自动补齐 tweakClass
     auto_add_tweak_class(version_json, options, classpath, &mut game_args_vec, emit);
 
     (jvm_args, game_args_vec)
 }
 
-/// 解析 JVM 参数
 fn parse_jvm_arguments(
     arguments: &serde_json::Value,
     replace_placeholders: &impl Fn(&str) -> String,
@@ -179,7 +165,6 @@ fn parse_jvm_arguments(
     jvm_args
 }
 
-/// 解析游戏参数
 fn parse_game_arguments(
     arguments: &serde_json::Value,
     replace_placeholders: &impl Fn(&str) -> String,
@@ -227,7 +212,6 @@ fn auto_add_tweak_class(
         return;
     }
 
-    // 检测是否存在 Forge/FML 相关库
     let forge_in_libraries = version_json
         .get("libraries")
         .and_then(|v| v.as_array())
@@ -257,7 +241,6 @@ fn auto_add_tweak_class(
         return;
     }
 
-    // 从版本 id 推断基础 MC 版本
     let base_ver = options
         .version
         .split("-forge")
@@ -272,7 +255,6 @@ fn auto_add_tweak_class(
 
     emit("log-debug", format!("自动补齐 tweakClass: {}", tweaker));
 
-    // 插入到参数最前
     game_args.insert(0, tweaker.to_string());
     game_args.insert(0, "--tweakClass".to_string());
 }

@@ -1,5 +1,6 @@
 /**
- * 简单的内存缓存，用于缓存 API 响应
+ * 前端内存缓存模块
+ * 基于 Map 的 TTL 缓存，超限淘汰最旧条目，提供 withCache 读穿与按前缀删除
  */
 import { logDebug } from '../utils/logger';
 
@@ -9,7 +10,7 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-/** 缓存未命中的哨兵值。用符号而不是 null，才能让「缓存了 null」和「没缓存」区分开。 */
+/** 未命中哨兵；用符号而非 null，才能区分「缓存了 null」和「没缓存」 */
 export const CACHE_MISS = Symbol('CACHE_MISS');
 
 class MemoryCache {
@@ -48,12 +49,7 @@ class MemoryCache {
     return entry.data as T;
   }
 
-  /**
-   * 设置缓存
-   * @param key 缓存键
-   * @param data 数据
-   * @param ttl 过期时间（毫秒），默认 5 分钟
-   */
+  /** 未传 ttl 时默认 5 分钟 */
   set<T>(key: string, data: T, ttl?: number): void {
     if (this.cache.size >= this.maxSize) {
       this.evictOldest();
@@ -66,16 +62,10 @@ class MemoryCache {
     });
   }
 
-  /**
-   * 删除缓存
-   */
   delete(key: string): boolean {
     return this.cache.delete(key);
   }
 
-  /**
-   * 删除匹配前缀的所有缓存
-   */
   deleteByPrefix(prefix: string): number {
     let count = 0;
     for (const key of this.cache.keys()) {
@@ -87,16 +77,10 @@ class MemoryCache {
     return count;
   }
 
-  /**
-   * 清除所有缓存
-   */
   clear(): void {
     this.cache.clear();
   }
 
-  /**
-   * 清除过期缓存
-   */
   cleanup(): number {
     const now = Date.now();
     let count = 0;
@@ -111,18 +95,13 @@ class MemoryCache {
     return count;
   }
 
-  /**
-   * 获取缓存大小
-   */
   get size(): number {
     return this.cache.size;
   }
 }
 
-// 全局缓存实例
 export const cache = new MemoryCache();
 
-// 缓存键前缀常量
 export const CacheKeys = {
   VERSIONS: 'versions',
   INSTANCES: 'instances',
@@ -131,9 +110,6 @@ export const CacheKeys = {
   CONFIG: 'config',
 } as const;
 
-/**
- * 带缓存的异步函数包装器
- */
 export async function withCache<T>(key: string, fetcher: () => Promise<T>, ttl?: number): Promise<T> {
   const cached = cache.get<T>(key);
   if (cached !== CACHE_MISS) {
@@ -146,7 +122,6 @@ export async function withCache<T>(key: string, fetcher: () => Promise<T>, ttl?:
   return data;
 }
 
-// 定期清理过期缓存（每 5 分钟）
 if (typeof window !== 'undefined') {
   setInterval(
     () => {

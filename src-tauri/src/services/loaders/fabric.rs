@@ -1,4 +1,6 @@
 //! Fabric 加载器安装
+//!
+//! 从 meta.fabricmc.net v2 取 profile JSON，改写 id 为实例名后写入 versions 目录
 
 use crate::errors::LauncherError;
 use crate::services::http_client;
@@ -7,10 +9,8 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-/// Fabric Meta API 基础 URL
 const FABRIC_META_URL: &str = "https://meta.fabricmc.net/v2";
 
-/// 安装 Fabric 加载器
 pub async fn install_fabric(
     mc_version: &str,
     fabric_version: &str,
@@ -24,7 +24,6 @@ pub async fn install_fabric(
 
     let client = http_client::get_client();
 
-    // 从 Fabric Meta API 获取版本 JSON
     let profile_url = format!(
         "{}/versions/loader/{}/{}/profile/json",
         FABRIC_META_URL, mc_version, fabric_version
@@ -50,12 +49,10 @@ pub async fn install_fabric(
         .await
         .map_err(|e| LauncherError::Custom(format!("解析 Fabric JSON 失败: {}", e)))?;
 
-    // 修改版本 ID 为实例名称
     if let Some(obj) = version_json.as_object_mut() {
         obj.insert("id".to_string(), serde_json::json!(instance_name));
     }
 
-    // 保存版本 JSON
     let version_dir = game_dir.join("versions").join(instance_name);
     fs::create_dir_all(&version_dir)?;
 
@@ -67,7 +64,6 @@ pub async fn install_fabric(
     Ok(())
 }
 
-/// 获取 Fabric 加载器版本列表
 pub async fn get_fabric_versions(
     mc_version: &str,
 ) -> Result<Vec<FabricLoaderVersion>, LauncherError> {
@@ -101,7 +97,6 @@ pub async fn get_fabric_versions(
         .collect())
 }
 
-/// 获取支持 Fabric 的 Minecraft 版本列表
 pub async fn get_fabric_game_versions() -> Result<Vec<String>, LauncherError> {
     let client = http_client::get_client();
     let url = format!("{}/versions/game", FABRIC_META_URL);
@@ -127,8 +122,6 @@ pub async fn get_fabric_game_versions() -> Result<Vec<String>, LauncherError> {
     Ok(versions.into_iter().map(|v| v.version).collect())
 }
 
-// --- 内部数据结构 ---
-
 #[derive(serde::Deserialize)]
 struct FabricLoaderInfo {
     loader: FabricLoader,
@@ -145,7 +138,6 @@ struct FabricGameVersion {
     version: String,
 }
 
-/// Fabric 加载器版本信息
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FabricLoaderVersion {
     pub version: String,

@@ -1,6 +1,6 @@
 //! Forge 加载器安装
 //!
-//! 支持旧版 (1.12.2-) 和新版 (1.13+) Forge 的安装
+//! 先跑官方安装器，失败时按 MC 1.13 分界转手动安装，最后改写 id 落到实例版本目录
 
 use crate::errors::LauncherError;
 use crate::services::config;
@@ -21,14 +21,12 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-// 镜像源常量
 const BMCL_API_BASE_URL: &str = "https://bmclapi2.bangbang93.com";
 const BMCL_LIBRARIES_URL: &str = "https://bmclapi2.bangbang93.com/libraries";
 const MAVEN_FORGE: &str = "https://maven.minecraftforge.net";
 const MAVEN_CENTRAL: &str = "https://repo1.maven.org/maven2";
 const MAVEN_MINECRAFT: &str = "https://libraries.minecraft.net";
 
-/// Forge 版本信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForgeVersion {
     pub version: String,
@@ -37,7 +35,6 @@ pub struct ForgeVersion {
     pub build: i32,
 }
 
-/// 安装 Forge 加载器（统一入口）
 pub async fn install_forge(
     mc_version: &str,
     forge_version: &str,
@@ -61,11 +58,10 @@ pub async fn install_forge(
         build: 0,
     };
 
-    // 下载安装器
     let installer_temp = download_forge_installer(&forge_ver).await?;
     let installer_path = installer_temp.as_ref();
 
-    // 预下载必要库 (旧版 Forge)
+    // 旧版安装器不会自动取这三个库，需预先落入 libraries
     if !is_new_forge(mc_version) {
         let libs_dir = game_dir.join("libraries");
         let _ = download_launchwrapper_library(&libs_dir, mc_version).await;
@@ -73,13 +69,12 @@ pub async fn install_forge(
         let _ = download_lzma_library(&libs_dir, mc_version).await;
     }
 
-    // 准备 launcher_profiles.json
+    // 官方安装器缺这个文件会直接失败，先造个空骨架
     let profiles_path = game_dir.join("launcher_profiles.json");
     if !profiles_path.exists() {
         fs::write(&profiles_path, r#"{"profiles":{}}"#).ok();
     }
 
-    // 尝试使用官方安装器
     info!("Forge: 尝试官方安装器");
     let install_result = run_official_installer(installer_path, game_dir, &java_path).await;
 
@@ -102,29 +97,24 @@ pub async fn install_forge(
 
     drop(installer_temp);
 
-    // 重命名/复制版本 JSON 到实例名称
     let versions_dir = game_dir.join("versions");
     let forge_dir = versions_dir.join(&forge_version_id);
     let instance_dir = versions_dir.join(instance_name);
 
     if forge_dir.exists() && forge_dir != instance_dir {
-        // 读取 Forge 版本 JSON
         let forge_json_path = forge_dir.join(format!("{}.json", forge_version_id));
         if forge_json_path.exists() {
             let content = fs::read_to_string(&forge_json_path)?;
             let mut json: Value = serde_json::from_str(&content)?;
 
-            // 修改 ID 为实例名称
             if let Some(obj) = json.as_object_mut() {
                 obj.insert("id".to_string(), serde_json::json!(instance_name));
             }
 
-            // 创建实例目录并保存
             fs::create_dir_all(&instance_dir)?;
             let instance_json_path = instance_dir.join(format!("{}.json", instance_name));
             fs::write(&instance_json_path, serde_json::to_string_pretty(&json)?)?;
 
-            // 删除原 Forge 目录
             let _ = fs::remove_dir_all(&forge_dir);
         }
     }
@@ -133,7 +123,6 @@ pub async fn install_forge(
     Ok(())
 }
 
-/// 获取 Forge 版本列表
 pub async fn get_forge_versions(mc_version: &str) -> Result<Vec<ForgeVersion>, LauncherError> {
     let client = http_client::get_client();
     let url = format!("{}/forge/minecraft/{}", BMCL_API_BASE_URL, mc_version);
@@ -150,25 +139,22 @@ pub async fn get_forge_versions(mc_version: &str) -> Result<Vec<ForgeVersion>, L
 
     let mut versions: Vec<ForgeVersion> = response.json().await?;
 
-    // 排序：最新版本在前
+    // 最新版本在前
     versions.sort_by(|a, b| compare_forge_versions(&b.version, &a.version));
 
     Ok(versions)
 }
-
-// ============ 内部辅助函数 ============
 
 fn is_new_forge(mc_version: &str) -> bool {
     crate::utils::minecraft::parse_mc_version(mc_version)
         .map_or(false, |(major, minor)| major == 1 && minor >= 13)
 }
 
-/// 生成标准的 Forge 版本 ID
+/// 安装器写入 versions 目录的 id，后续目录重命名依赖它
 fn get_forge_version_id(mc_version: &str, forge_version: &str) -> String {
     format!("{}-forge-{}", mc_version, forge_version)
 }
 
-/// 比较 Forge 版本号
 fn compare_forge_versions(a: &str, b: &str) -> std::cmp::Ordering {
     let parse = |s: &str| -> Vec<u32> { s.split('.').filter_map(|p| p.parse().ok()).collect() };
 
@@ -186,7 +172,6 @@ fn compare_forge_versions(a: &str, b: &str) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
-/// 下载 Forge 安装器
 async fn download_forge_installer(
     forge_version: &ForgeVersion,
 ) -> Result<tempfile::TempPath, LauncherError> {
@@ -262,7 +247,6 @@ async fn download_forge_installer(
     Err(LauncherError::Custom("安装器下载失败".to_string()))
 }
 
-/// 运行官方安装器
 async fn run_official_installer(
     installer_path: &Path,
     game_dir: &Path,
@@ -314,7 +298,6 @@ async fn run_official_installer(
     Ok(())
 }
 
-/// 通用下载函数，支持重试
 async fn download_with_retry(
     url: &str,
     client: &Client,
@@ -350,7 +333,6 @@ async fn download_with_retry(
     )))
 }
 
-/// 下载库文件
 async fn download_library(
     libraries_dir: &Path,
     rel_path: &str,
@@ -450,11 +432,8 @@ async fn download_lzma_library(
     .await
 }
 
-// ============ 手动安装逻辑 ============
-
 use crate::utils::minecraft::maven_name_to_path;
 
-/// 从 install_profile 下载库
 async fn download_library_from_profile(
     library: &Value,
     libraries_dir: &Path,
@@ -469,7 +448,6 @@ async fn download_library_from_profile(
         return Ok(());
     }
 
-    // 优先使用 downloads.artifact
     if let Some(artifact) = library.get("downloads").and_then(|d| d.get("artifact")) {
         if let Some(path) = artifact.get("path").and_then(|p| p.as_str()) {
             let target_path = libraries_dir.join(path);
@@ -510,7 +488,6 @@ async fn download_library_from_profile(
         }
     }
 
-    // 回退到从 name 构建路径
     if let Some(maven_path) = maven_name_to_path(name, None, "jar") {
         let target_path = libraries_dir.join(&maven_path);
         if target_path.exists() {
@@ -542,7 +519,6 @@ async fn download_library_from_profile(
     Ok(())
 }
 
-/// 手动安装旧版 Forge (1.12.2-)
 async fn manual_install_old_forge(
     installer_path: &Path,
     game_dir: &Path,
@@ -565,7 +541,6 @@ async fn manual_install_old_forge(
     let libraries_dir = game_dir.join("libraries");
     let client = http_client::get_client();
 
-    // 下载库文件
     if let Some(libs) = profile
         .get("versionInfo")
         .and_then(|v| v.get("libraries"))
@@ -576,7 +551,6 @@ async fn manual_install_old_forge(
         }
     }
 
-    // 创建版本 JSON
     let version_id = get_forge_version_id(&forge_version.mcversion, &forge_version.version);
     let version_dir = game_dir.join("versions").join(&version_id);
     fs::create_dir_all(&version_dir)?;
@@ -604,7 +578,6 @@ async fn manual_install_old_forge(
         serde_json::to_string_pretty(&version_info)?,
     )?;
 
-    // 提取 maven 和 universal.jar
     let file = fs::File::open(installer_path)?;
     let mut archive = ZipArchive::new(file)?;
 
@@ -615,7 +588,6 @@ async fn manual_install_old_forge(
         };
         let name = file.name()?.to_string();
 
-        // 安全检查：防止路径遍历攻击
         if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
             log::warn!("跳过可疑的 zip 条目: {}", name);
             continue;
@@ -623,7 +595,6 @@ async fn manual_install_old_forge(
 
         if name.starts_with("maven/") && !name.ends_with('/') {
             if let Some(rel) = name.strip_prefix("maven/") {
-                // 再次检查相对路径
                 if rel.contains("..") {
                     log::warn!("跳过可疑的 maven 路径: {}", name);
                     continue;
@@ -658,7 +629,6 @@ async fn manual_install_old_forge(
     Ok(())
 }
 
-/// 手动安装新版 Forge (1.13+)
 async fn manual_install_new_forge(
     installer_path: &Path,
     game_dir: &Path,
@@ -694,7 +664,6 @@ async fn manual_install_new_forge(
     let libraries_dir = game_dir.join("libraries");
     let client = http_client::get_client();
 
-    // 下载库
     if let Some(libs) = profile.get("libraries").and_then(|l| l.as_array()) {
         for lib in libs {
             let _ = download_library_from_profile(lib, &libraries_dir, &client).await;
@@ -706,7 +675,6 @@ async fn manual_install_new_forge(
         }
     }
 
-    // 提取 maven 文件
     let file = fs::File::open(installer_path)?;
     let mut archive = ZipArchive::new(file)?;
 
@@ -717,7 +685,6 @@ async fn manual_install_new_forge(
         };
         let name = file.name()?.to_string();
 
-        // 安全检查：防止路径遍历攻击
         if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
             log::warn!("跳过可疑的 zip 条目: {}", name);
             continue;
@@ -725,7 +692,6 @@ async fn manual_install_new_forge(
 
         if name.starts_with("maven/") && !name.ends_with('/') {
             if let Some(rel) = name.strip_prefix("maven/") {
-                // 再次检查相对路径
                 if rel.contains("..") {
                     log::warn!("跳过可疑的 maven 路径: {}", name);
                     continue;
@@ -741,7 +707,6 @@ async fn manual_install_new_forge(
             }
         } else if name.starts_with("data/") && !name.ends_with('/') {
             if let Some(rel) = name.strip_prefix("data/") {
-                // 再次检查相对路径
                 if rel.contains("..") {
                     log::warn!("跳过可疑的 data 路径: {}", name);
                     continue;
@@ -764,7 +729,6 @@ async fn manual_install_new_forge(
         }
     }
 
-    // 执行 processors
     run_forge_processors(
         &profile,
         game_dir,
@@ -774,7 +738,6 @@ async fn manual_install_new_forge(
     )
     .await?;
 
-    // 创建版本 JSON
     let version_id = get_forge_version_id(&forge_version.mcversion, &forge_version.version);
     let version_dir = game_dir.join("versions").join(&version_id);
     fs::create_dir_all(&version_dir)?;
@@ -798,7 +761,6 @@ async fn manual_install_new_forge(
     Ok(())
 }
 
-/// 执行 Forge processors
 async fn run_forge_processors(
     profile: &Value,
     game_dir: &Path,

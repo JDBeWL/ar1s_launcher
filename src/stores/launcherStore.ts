@@ -1,3 +1,7 @@
+/**
+ * 游戏进程事件存储
+ * 把 launched / exited / error 三个后端事件转成通知
+ */
 import { defineStore } from 'pinia';
 import { useMultiEventSubscription } from '../composables/useEventSubscription';
 import { useNotificationStore } from './notificationStore';

@@ -8,7 +8,6 @@ const host = process.env.TAURI_DEV_HOST;
 
 const pkgVersion = JSON.parse(readFileSync(path.resolve(import.meta.dirname, 'package.json'), 'utf-8')).version;
 
-// https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [vue(), vuetify({ autoImport: true })],
   define: {
@@ -20,18 +19,14 @@ export default defineConfig(async () => ({
     },
   },
 
-  // Vitest 配置
   test: {
     globals: true,
     environment: 'node',
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
+  // Tauri 要求固定端口，端口被占用时必须直接失败
   server: {
     port: 1420,
     strictPort: true,
@@ -44,7 +39,7 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
+      // src-tauri 由 Rust 侧编译，不能让 Vite watch 它
       ignored: ['**/src-tauri/**'],
     },
   },

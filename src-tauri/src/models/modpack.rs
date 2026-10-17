@@ -1,6 +1,9 @@
+//! 整合包数据模型
+//!
+//! Modrinth 接口的项目、版本、文件与搜索响应，加前端提交的本机安装参数
+
 use serde::{Deserialize, Serialize};
 
-// Modrinth整合包信息
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModrinthModpack {
     pub slug: String,
@@ -17,7 +20,6 @@ pub struct ModrinthModpack {
     pub categories: Vec<String>,
 }
 
-// Modrinth整合包版本信息
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModrinthModpackVersion {
     pub id: String,
@@ -32,7 +34,6 @@ pub struct ModrinthModpackVersion {
     pub dependencies: Vec<ModrinthDependency>,
 }
 
-// Modrinth文件信息
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModrinthFile {
     pub url: String,
@@ -42,14 +43,12 @@ pub struct ModrinthFile {
     pub hashes: ModrinthHashes,
 }
 
-// Modrinth文件哈希值
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModrinthHashes {
     pub sha1: String,
     pub sha512: String,
 }
 
-// Modrinth依赖关系
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModrinthDependency {
     pub version_id: Option<String>,
@@ -57,7 +56,6 @@ pub struct ModrinthDependency {
     pub dependency_type: String,
 }
 
-// Modrinth搜索参数
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModrinthSearchParams {
     pub query: Option<String>,
@@ -68,14 +66,12 @@ pub struct ModrinthSearchParams {
     pub offset: Option<u32>,
 }
 
-// Modrinth搜索响应
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModrinthSearchResponse {
     pub hits: Vec<ModrinthModpack>,
     pub total_hits: u32,
 }
 
-// 整合包安装选项
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModpackInstallOptions {
     pub modpack_id: String,

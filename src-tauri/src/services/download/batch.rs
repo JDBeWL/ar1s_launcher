@@ -1,4 +1,6 @@
-//! 批量下载逻辑（支持断点续传）
+//! 批量下载调度
+//!
+//! 按配置线程数限并发，跳过 .download_state 里已完成项，退避重试并响应取消
 
 use super::file::download_file;
 use super::http::get_http_client;
@@ -14,10 +16,9 @@ use tauri::async_runtime;
 use tauri::{Emitter, Listener, Window};
 use tokio::sync::Mutex;
 
-/// 全局取消标志，用于跨下载会话的取消控制
+/// 取消标志跨下载会话保留，不会随单次下载结束销毁
 static CANCEL_FLAG: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
 
-/// 获取或初始化全局取消标志
 fn get_cancel_flag() -> Arc<AtomicBool> {
     CANCEL_FLAG
         .get_or_init(|| Arc::new(AtomicBool::new(false)))
@@ -31,12 +32,10 @@ pub fn reset_cancel_flag() {
     }
 }
 
-/// 设置取消标志（在取消下载时调用）
 pub fn set_cancel_flag() {
     get_cancel_flag().store(true, Ordering::Release);
 }
 
-/// 批量下载所有文件（支持断点续传）
 pub async fn download_all_files(
     jobs: Vec<DownloadJob>,
     window: &Window,
@@ -46,7 +45,6 @@ pub async fn download_all_files(
 
     let http = get_http_client();
 
-    // 获取版本 ID
     let version_id = jobs
         .first()
         .and_then(|j| j.path.parent())
@@ -54,28 +52,24 @@ pub async fn download_all_files(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "unknown".to_string());
 
-    // 创建状态文件路径（存储在游戏目录下，避免被其他程序访问）
+    // 状态文件放在游戏目录下，避免被其他程序访问
     let game_dir = std::path::PathBuf::from(&config.game_dir);
     let state_dir = game_dir.join(".download_state");
     std::fs::create_dir_all(&state_dir)?;
     let state_file = state_dir.join(format!("{}.json", version_id));
 
-    // 尝试从状态文件恢复（断点续传）
     let download_state = Arc::new(Mutex::new(
         DownloadState::load_from_file(&state_file).unwrap_or_else(DownloadState::new),
     ));
 
-    // 过滤已完成的任务（同时验证文件是否真的存在于磁盘上）
     let filtered_jobs: Vec<DownloadJob> = {
         let mut state = download_state.lock().await;
         jobs.iter()
             .filter(|job| {
                 if state.is_completed(&job.url) {
-                    // 验证文件是否真的存在于磁盘上
                     if job.path.exists() {
-                        false // 已完成且文件存在，跳过
+                        false
                     } else {
-                        // 文件不存在，清除已完成状态，需要重新下载
                         warn!(
                             "File marked as completed but missing on disk: {}, re-downloading",
                             job.path.display()
@@ -85,29 +79,26 @@ pub async fn download_all_files(
                         true
                     }
                 } else {
-                    true // 未完成，需要下载
+                    true
                 }
             })
             .cloned()
             .collect()
     };
 
-    // 计算已完成的文件和已下载的字节数（在过滤之后，以反映真实状态）
+    // 必须在过滤之后统计，才能反映真实状态
     let (completed_count, resumed_bytes) = {
         let state = download_state.lock().await;
         let completed = state.completed_files.len() as u64;
-        // 计算已完成文件的总大小
         let completed_bytes: u64 = jobs
             .iter()
             .filter(|j| state.is_completed(&j.url))
             .map(|j| j.size)
             .sum();
-        // 加上部分下载的字节数
         let partial_bytes: u64 = state.partial_downloads.values().sum();
         (completed, completed_bytes + partial_bytes)
     };
 
-    // 计算总大小（包括已完成的）
     let total_size: u64 = jobs.iter().map(|j| j.size).sum();
 
     if filtered_jobs.is_empty() {
@@ -123,11 +114,9 @@ pub async fn download_all_files(
         resumed_bytes
     );
 
-    // 重置全局取消标志
     reset_cancel_flag();
     let global_cancel = get_cancel_flag();
 
-    // 创建共享状态
     let files_downloaded = Arc::new(AtomicU64::new(completed_count));
     let bytes_downloaded = Arc::new(AtomicU64::new(resumed_bytes));
     let bytes_since_last = Arc::new(AtomicU64::new(0));
@@ -135,21 +124,18 @@ pub async fn download_all_files(
     let was_cancelled = Arc::new(AtomicBool::new(false));
     let error_occurred = Arc::new(tokio::sync::Mutex::new(None::<String>));
 
-    // 监听取消下载事件（使用 listen 而非 once，以支持多次取消尝试）
+    // 用 listen 而非 once，以支持多次取消尝试
     let state_clone = state.clone();
     let was_cancelled_clone = was_cancelled.clone();
     let download_state_clone = download_state.clone();
     let state_file_clone = state_file.clone();
     let listener_id = window.listen("cancel-download", move |_| {
-        // 检查是否已经取消，避免重复处理
         if state_clone.swap(false, Ordering::AcqRel) {
             was_cancelled_clone.store(true, Ordering::Release);
-            // 取消时异步保存状态以便下次续传
+            // 取消时立即保存状态，供下次续传
             let download_state = download_state_clone.clone();
             let state_file = state_file_clone.clone();
-            // 使用 spawn_blocking 来处理可能阻塞的操作
             std::thread::spawn(move || {
-                // 尝试获取锁并保存状态
                 if let Ok(mut state) = download_state.try_lock() {
                     let _ = state.save_to_file(&state_file);
                 }
@@ -157,7 +143,6 @@ pub async fn download_all_files(
         }
     });
 
-    // 创建进度报告器
     let reporter_handle = spawn_progress_reporter(
         bytes_downloaded.clone(),
         bytes_since_last.clone(),
@@ -166,16 +151,13 @@ pub async fn download_all_files(
         total_size,
     );
 
-    // 定期保存状态（每 30 秒）
     let state_saver_handle =
         spawn_state_saver(download_state.clone(), state_file.clone(), state.clone());
 
-    // 执行并发下载
     let semaphore = Arc::new(tokio::sync::Semaphore::new(threads));
     let mut handles = vec![];
 
     for job in filtered_jobs {
-        // 检查本地状态和全局取消标志
         if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
             break;
         }
@@ -197,20 +179,16 @@ pub async fn download_all_files(
         handles.push(handle);
     }
 
-    // 等待所有任务完成
     for handle in handles {
         let _ = handle.await;
     }
 
-    // 停止进度报告器和状态保存器
     state.store(false, Ordering::Release);
     reporter_handle.await?;
     state_saver_handle.await?;
 
-    // 取消监听器
     window.unlisten(listener_id);
 
-    // 保存最终状态
     {
         let mut state = download_state.lock().await;
         if state.dirty {
@@ -220,13 +198,11 @@ pub async fn download_all_files(
         }
     }
 
-    // 处理取消
     if was_cancelled.load(Ordering::Acquire) {
         emit_cancelled_progress(window, bytes_downloaded.load(Ordering::Relaxed), total_size);
         return Err(LauncherError::Custom("下载已取消".to_string()));
     }
 
-    // 检查错误
     let error_message = {
         let error_guard = error_occurred.lock().await;
         error_guard.clone()
@@ -242,7 +218,6 @@ pub async fn download_all_files(
         return Err(LauncherError::Custom(error_msg));
     }
 
-    // 发送部分失败摘要
     let failed_list: Vec<String> = {
         let state = download_state.lock().await;
         state.failed_files.iter().cloned().collect()
@@ -258,10 +233,8 @@ pub async fn download_all_files(
         );
     }
 
-    // 下载完成，删除状态文件
     if failed_list.is_empty() {
         let _ = std::fs::remove_file(&state_file);
-        // 如果状态目录为空，也删除它
         if let Ok(entries) = std::fs::read_dir(&state_dir) {
             if entries.count() == 0 {
                 let _ = std::fs::remove_dir(&state_dir);
@@ -269,7 +242,6 @@ pub async fn download_all_files(
         }
     }
 
-    // 发送完成事件
     emit_completed_progress(window, bytes_downloaded.load(Ordering::Relaxed), total_size);
 
     Ok(())
@@ -318,7 +290,6 @@ fn spawn_progress_reporter(
     })
 }
 
-/// 启动状态保存器（定期保存状态以支持断点续传）
 fn spawn_state_saver(
     download_state: Arc<Mutex<DownloadState>>,
     state_file: std::path::PathBuf,
@@ -345,7 +316,6 @@ fn spawn_state_saver(
     })
 }
 
-/// 启动单个下载任务
 fn spawn_download_task(
     job: DownloadJob,
     http: &'static reqwest::Client,
@@ -359,13 +329,11 @@ fn spawn_download_task(
     permit: tokio::sync::OwnedSemaphorePermit,
 ) -> tauri::async_runtime::JoinHandle<Result<(), LauncherError>> {
     async_runtime::spawn(async move {
-        // 在开始前再次检查取消状态
         if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
             drop(permit);
             return Ok::<(), LauncherError>(());
         }
 
-        // 记录正在进行的下载
         {
             let mut state = download_state.lock().await;
             state.start_download(job.url.clone(), job.path.clone());
@@ -376,12 +344,11 @@ fn spawn_download_task(
 
         const MAX_JOB_RETRIES: usize = 5;
         for retry in 0..MAX_JOB_RETRIES {
-            // 在每次重试前检查取消状态
             if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
                 break;
             }
 
-            // 在重试时尝试切换到官方源
+            // 重试 2 次后改用官方源 fallback_url
             let current_url = if retry >= 2 && job.url.contains("bmclapi2.bangbang93.com") {
                 job.fallback_url.as_deref().unwrap_or(&job.url)
             } else {
@@ -413,7 +380,6 @@ fn spawn_download_task(
                     break;
                 }
                 Err(e) => {
-                    // 如果是取消导致的错误，不需要重试
                     if e.to_string().contains("cancelled") {
                         break;
                     }
@@ -428,7 +394,6 @@ fn spawn_download_task(
             }
         }
 
-        // 更新下载状态
         {
             let mut state = download_state.lock().await;
             if job_succeeded {
@@ -450,7 +415,6 @@ fn spawn_download_task(
     })
 }
 
-/// 发送取消进度事件
 fn emit_cancelled_progress(window: &Window, bytes: u64, total: u64) {
     let percent = if total > 0 {
         (bytes as f64 / total as f64 * 100.0).round() as u8
@@ -471,7 +435,6 @@ fn emit_cancelled_progress(window: &Window, bytes: u64, total: u64) {
     );
 }
 
-/// 发送错误进度事件
 fn emit_error_progress(window: &Window, bytes: u64, total: u64, error_msg: &str) {
     let percent = if total > 0 {
         (bytes as f64 / total as f64 * 100.0).round() as u8
@@ -492,7 +455,6 @@ fn emit_error_progress(window: &Window, bytes: u64, total: u64, error_msg: &str)
     );
 }
 
-/// 发送完成进度事件
 fn emit_completed_progress(window: &Window, bytes: u64, total: u64) {
     let _ = window.emit(
         "download-progress",

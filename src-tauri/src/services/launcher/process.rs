@@ -1,4 +1,6 @@
 //! 游戏进程启动和监控逻辑
+//!
+//! 派生隐藏控制台的 Java 子进程，日志经有界队列批量转发，退出时回显日志尾巴与 hs_err_pid
 
 use crate::errors::LauncherError;
 use std::collections::VecDeque;
@@ -13,28 +15,20 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 
-/// 游戏进程最大运行时间（24 小时）
 const MAX_GAME_RUNTIME: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// 收集的最近日志（含 stdout）最大行数，用于崩溃/异常退出时回显
+/// 崩溃/异常退出时回显给前端的最近日志行数（含 stdout）
 const MAX_LOG_TAIL_LINES: usize = 100;
 
-/// 日志转发队列容量
-///
-/// 队列满时**直接丢弃**，绝不让读取线程阻塞：
-/// 一旦这里堵住，管道缓冲区会被写满，游戏里写日志的线程就会卡住，表现为周期性掉帧。
+/// 队列满时直接丢弃，绝不阻塞读取线程——堵住会让管道写满，游戏日志线程卡住，表现为周期性掉帧
 const LOG_QUEUE_CAPACITY: usize = 4096;
 
-/// 单批最多转发多少行
 const LOG_FLUSH_MAX_LINES: usize = 200;
 
-/// 日志合并转发间隔
 const LOG_FLUSH_INTERVAL: Duration = Duration::from_millis(200);
 
-/// 退出后等待日志刷完的最长时间
 const LOG_FLUSH_WAIT: Duration = Duration::from_secs(2);
 
-/// 日志来源
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LogStream {
     Stdout,
@@ -43,7 +37,6 @@ enum LogStream {
 
 type LogItem = (LogStream, String);
 
-/// 启动并监控游戏进程
 pub fn spawn_and_monitor_process(
     java_path: &str,
     final_args: Vec<String>,
@@ -54,18 +47,15 @@ pub fn spawn_and_monitor_process(
     command.args(&final_args);
     command.current_dir(working_dir);
 
-    // 在 Windows 上隐藏命令行窗口
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW = 0x08000000
         command.creation_flags(0x08000000);
     }
 
     let _ = window.emit("log-debug", format!("最终启动命令: {:?}", command));
     window.emit("launch-command", format!("{:?}", command))?;
 
-    // 启动游戏进程
     let child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -74,16 +64,13 @@ pub fn spawn_and_monitor_process(
     let pid = child.id();
     let _ = window.emit("log-debug", format!("游戏已启动，PID: {}", pid));
 
-    // 发送游戏启动成功的事件到前端
     window.emit("minecraft-launched", format!("游戏已启动，PID: {}", pid))?;
 
-    // 在后台线程中监控游戏进程（带超时）
     spawn_monitor_thread(child, window, pid, working_dir.to_path_buf());
 
     Ok(())
 }
 
-/// 启动监控线程（带超时机制）
 fn spawn_monitor_thread(
     mut child: Child,
     window: tauri::Window,
@@ -96,10 +83,9 @@ fn spawn_monitor_thread(
     let is_running = Arc::new(AtomicBool::new(true));
     let stderr_lines: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
 
-    // 有界队列：满了就丢，读取线程永不被 IPC 拖慢
     let (log_tx, log_rx) = mpsc::sync_channel::<LogItem>(LOG_QUEUE_CAPACITY);
 
-    // stdout 读取线程：只读不发送，避免每行一次 IPC
+    // 读取线程只入队，不做逐行 IPC
     let tx_stdout: SyncSender<LogItem> = log_tx.clone();
     let is_running_stdout = is_running.clone();
     let tail_stdout = stderr_lines.clone();
@@ -119,7 +105,6 @@ fn spawn_monitor_thread(
         }
     });
 
-    // stderr 读取线程
     let tx_stderr: SyncSender<LogItem> = log_tx;
     let is_running_stderr = is_running.clone();
     let tail_stderr = stderr_lines.clone();
@@ -139,7 +124,6 @@ fn spawn_monitor_thread(
         }
     });
 
-    // 转发线程：批量合并后再发给前端，把事件数量压到每秒 5 次左右
     let forwarder_done = Arc::new(AtomicBool::new(false));
     let forwarder_done_flag = forwarder_done.clone();
     let window_forwarder = window.clone();
@@ -152,7 +136,6 @@ fn spawn_monitor_thread(
         let start_time = Instant::now();
         let is_running_main = is_running.clone();
 
-        // 启动超时检查线程
         let is_running_timeout = is_running.clone();
         let window_timeout = window.clone();
         let timeout_thread = std::thread::spawn(move || {
@@ -177,11 +160,9 @@ fn spawn_monitor_thread(
             }
         });
 
-        // 等待进程结束
         match wait_for_process_with_timeout(&mut child, MAX_GAME_RUNTIME) {
             Ok(Some(status)) => {
                 is_running_main.store(false, Ordering::SeqCst);
-                // 等转发线程把队列里剩余的日志刷完（最多 LOG_FLUSH_WAIT）
                 wait_log_flushed(&forwarder_done);
                 if forwarder_done.load(Ordering::SeqCst) {
                     let _ = forwarder.join();
@@ -217,7 +198,7 @@ fn spawn_monitor_thread(
     });
 }
 
-/// 把一行日志追加到环形缓冲（保留最近 MAX_LOG_TAIL_LINES 行）
+/// 追加一行到环形缓冲（保留最近 MAX_LOG_TAIL_LINES 行）
 fn push_tail(tail: &Mutex<VecDeque<String>>, line: &str) {
     if let Ok(mut buf) = tail.lock() {
         if buf.len() >= MAX_LOG_TAIL_LINES {
@@ -227,7 +208,6 @@ fn push_tail(tail: &Mutex<VecDeque<String>>, line: &str) {
     }
 }
 
-/// 等待日志转发线程刷完剩余内容
 fn wait_log_flushed(forwarder_done: &AtomicBool) {
     let deadline = Instant::now() + LOG_FLUSH_WAIT;
     while !forwarder_done.load(Ordering::SeqCst) && Instant::now() < deadline {
@@ -235,10 +215,7 @@ fn wait_log_flushed(forwarder_done: &AtomicBool) {
     }
 }
 
-/// 持续消费日志队列，按固定节奏批量转发给前端
-///
-/// 关键点：合并成批量事件后，IPC 次数从「每行一次」降到「每秒约 5 次」，
-/// 既不会拖慢读取线程，也不会让 WebView 被大量事件淹没。
+/// 按固定节奏批量转发日志到前端，避免逐行事件淹没 WebView
 fn forward_game_logs(rx: Receiver<LogItem>, window: &tauri::Window) {
     let mut batch: Vec<LogItem> = Vec::with_capacity(LOG_FLUSH_MAX_LINES);
 
@@ -246,7 +223,6 @@ fn forward_game_logs(rx: Receiver<LogItem>, window: &tauri::Window) {
         match rx.recv_timeout(LOG_FLUSH_INTERVAL) {
             Ok(item) => {
                 batch.push(item);
-                // 顺手把队列里已经攒下的行一次性带走
                 while batch.len() < LOG_FLUSH_MAX_LINES {
                     match rx.try_recv() {
                         Ok(item) => batch.push(item),
@@ -264,7 +240,6 @@ fn forward_game_logs(rx: Receiver<LogItem>, window: &tauri::Window) {
     flush_log_batch(&batch, window);
 }
 
-/// 把一批日志按来源合并成两条事件发出
 fn flush_log_batch(batch: &[LogItem], window: &tauri::Window) {
     if batch.is_empty() {
         return;
@@ -289,7 +264,6 @@ fn flush_log_batch(batch: &[LogItem], window: &tauri::Window) {
     }
 }
 
-/// 等待进程结束（带超时）
 fn wait_for_process_with_timeout(
     child: &mut Child,
     timeout: Duration,
@@ -309,7 +283,6 @@ fn wait_for_process_with_timeout(
     }
 }
 
-/// 查找 JVM 崩溃日志文件 (hs_err_pid*.log)
 fn find_hs_err_log(working_dir: &Path) -> Option<String> {
     if let Ok(entries) = fs::read_dir(working_dir) {
         let mut latest: Option<(std::time::SystemTime, String)> = None;
@@ -333,7 +306,6 @@ fn find_hs_err_log(working_dir: &Path) -> Option<String> {
     None
 }
 
-/// 处理进程退出
 fn handle_process_exit(
     status: ExitStatus,
     window: &tauri::Window,
@@ -346,7 +318,6 @@ fn handle_process_exit(
         format!("游戏进程退出，状态码: {:?}", exit_code),
     );
 
-    // 如果游戏以非零退出码退出，发送错误事件
     if exit_code.unwrap_or(-1) != 0 {
         let mut error_msg = format!("游戏以非零状态码退出: {:?}", exit_code);
 
@@ -358,7 +329,6 @@ fn handle_process_exit(
             }
         }
 
-        // 尝试读取 JVM 崩溃日志
         if let Some(hs_err) = find_hs_err_log(working_dir) {
             error_msg.push_str("\n--- JVM 崩溃日志 (hs_err_pid) ---\n");
             // 只取前 30 行，避免消息过长
@@ -382,7 +352,6 @@ fn handle_process_exit(
         let _ = window.emit("minecraft-error", error_msg);
     }
 
-    // 发送游戏退出事件
     let _ = window.emit(
         "minecraft-exited",
         format!("游戏已退出，状态码: {:?}", exit_code),

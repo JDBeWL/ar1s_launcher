@@ -1,3 +1,7 @@
+//! 文件校验与修复模块
+//!
+//! 按 sha1 与大小校验版本文件，损坏时备份 .bak 后重下，批量校验与修复限 64 并发
+
 use crate::errors::LauncherError;
 use crate::models::DownloadJob;
 use crate::services::config::load_config;
@@ -20,7 +24,6 @@ pub struct FileVerificationResult {
     pub hash_match: bool,
 }
 
-/// 验证单个文件的完整性
 pub async fn verify_single_file(
     job: &DownloadJob,
     _client: &Client,
@@ -49,7 +52,6 @@ pub async fn verify_single_file(
     })
 }
 
-/// 批量验证文件完整性
 pub async fn batch_verify_files(
     jobs: &[DownloadJob],
     client: &Client,
@@ -87,7 +89,6 @@ pub async fn batch_verify_files(
     Ok(results)
 }
 
-/// 修复损坏的文件
 pub async fn repair_corrupted_file(
     job: &DownloadJob,
     client: &Client,
@@ -95,7 +96,6 @@ pub async fn repair_corrupted_file(
     file_utils::verify_and_repair_file(job, client).await
 }
 
-/// 批量修复损坏的文件
 pub async fn batch_repair_files(
     jobs: &[DownloadJob],
     client: &Client,
@@ -175,7 +175,6 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
     let jar_version = find_jar_version(&version_json, &game_dir)?;
     debug!("JAR 版本: {}", jar_version);
 
-    // 主游戏 JAR 文件路径
     let main_game_jar_path = game_dir
         .join("versions")
         .join(&jar_version)
@@ -189,7 +188,6 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
         ));
     }
 
-    // 递归验证整个继承链的版本 JSON 文件，并检查所有库
     let mut versions_to_check = vec![version_json.clone()];
     let mut current_json = version_json.clone();
 
@@ -212,14 +210,13 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
             break;
         }
 
-        // 读取父版本 JSON 继续检查
         let parent_str = fs::read_to_string(&base_version_json_path)?;
         let parent_json: serde_json::Value = serde_json::from_str(&parent_str)?;
         versions_to_check.push(parent_json.clone());
         current_json = parent_json;
     }
 
-    // 检查所有版本（包括继承链）中声明的库
+    // 继承链上所有版本声明的库都要检查
     for ver_json in &versions_to_check {
         let ver_id = ver_json["id"].as_str().unwrap_or("unknown");
         if let Some(libraries) = ver_json["libraries"].as_array() {
@@ -240,7 +237,6 @@ use crate::utils::minecraft::{
     evaluate_rules, find_jar_version, get_mc_os_name, maven_name_to_path,
 };
 
-/// 检查单个库文件是否存在
 fn check_library(
     lib: &serde_json::Value,
     libraries_base_dir: &PathBuf,
@@ -276,7 +272,6 @@ fn check_library(
             }
         }
     } else {
-        // 使用共享的 rules 评估逻辑
         if !evaluate_rules(lib.get("rules")) {
             return;
         }

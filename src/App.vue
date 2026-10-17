@@ -12,7 +12,6 @@ import { logError } from './utils/logger';
 import GlobalDownloadStatus from './components/GlobalDownloadStatus.vue';
 import GlobalNotification from './components/GlobalNotification.vue';
 
-// 窗口控制
 const appWindow = Window.getCurrent();
 const isMaximized = ref(false);
 let unlistenResized: UnlistenFn | null = null;
@@ -30,7 +29,7 @@ async function syncMaximized() {
   isMaximized.value = await appWindow.isMaximized();
 }
 
-// 导航栏控制：宽窗口默认展开，窄窗口默认收成图标栏
+// 用户手动切过之后，窗口宽窄变化不再覆盖 rail 状态
 const display = useDisplay();
 const rail = ref(!display.lgAndUp.value);
 let railToggledByUser = false;
@@ -47,7 +46,6 @@ function toggleRail() {
   rail.value = !rail.value;
 }
 
-// 主题控制
 const theme = useTheme();
 const isDarkMode = ref(getTheme() === 'dark');
 const themePalette = ref(getThemePalette());
@@ -119,7 +117,6 @@ async function persistTheme() {
   }
 }
 
-// 切换主题模式
 function toggleTheme() {
   isDarkMode.value = !isDarkMode.value;
   applyTheme();
@@ -147,7 +144,6 @@ const shortcuts = [
   { keys: 'Ctrl + /', description: '快捷键帮助' },
 ];
 
-// 初始化下载监听器和主题
 onMounted(async () => {
   // 主题放最前面，配置文件读到的是真值，localStorage 只用来抢首屏
   await loadThemeFromConfig();
@@ -166,7 +162,6 @@ onMounted(async () => {
   await syncMaximized();
 });
 
-// 清理监听器防止内存泄漏
 onUnmounted(() => {
   launcherStore.unsubscribe();
   downloadStore.cleanup();
@@ -223,7 +218,6 @@ onUnmounted(() => {
       <v-app-bar-title class="font-weight-bold">Ar1s Launcher</v-app-bar-title>
       <v-spacer />
 
-      <!-- 主题切换按钮 -->
       <v-btn
         icon
         data-tauri-no-drag
@@ -238,7 +232,6 @@ onUnmounted(() => {
         </v-tooltip>
       </v-btn>
 
-      <!-- 窗口控制按钮 -->
       <v-btn
         icon
         aria-label="最小化窗口"
@@ -277,12 +270,9 @@ onUnmounted(() => {
       </router-view>
     </v-main>
 
-    <!-- 全局下载状态组件 -->
     <GlobalDownloadStatus />
-    <!-- 全局通知组件 -->
     <GlobalNotification />
 
-    <!-- 快捷键帮助面板 -->
     <v-dialog v-model="shortcutHelpVisible" max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
@@ -320,7 +310,6 @@ onUnmounted(() => {
   overflow-x: hidden;
 }
 
-/* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -339,7 +328,6 @@ onUnmounted(() => {
   background: rgba(var(--v-theme-on-surface), 0.35);
 }
 
-/* Titlebar styles */
 .titlebar .v-toolbar__content {
   pointer-events: none;
 }
@@ -349,12 +337,10 @@ onUnmounted(() => {
   pointer-events: auto;
 }
 
-/* Navigation list */
 .nav-list {
   padding: 8px;
 }
 
-/* Navigation item */
 .v-list-item.nav-item {
   --v-list-prepend-gap: 0;
   padding: 0 12px;
@@ -376,12 +362,11 @@ onUnmounted(() => {
   color: rgb(var(--v-theme-on-secondary-container));
 }
 
-/* Rail mode: 只需隐藏文字，布局与展开模式完全一致 */
+/* rail 模式只隐藏文字，布局与展开模式完全一致 */
 .v-navigation-drawer--rail .nav-item > .v-list-item__content {
   display: none;
 }
 
-/* Theme toggle animation */
 .theme-toggle-btn {
   transform: rotate(0deg);
 }
@@ -390,18 +375,15 @@ onUnmounted(() => {
   transform: rotate(30deg);
 }
 
-/* Close button hover */
 .titlebar .close-btn:hover {
   background-color: rgb(var(--v-theme-error));
   color: rgb(var(--v-theme-on-error));
 }
 
-/* Window control button hover */
 .titlebar .window-control-btn:hover {
   background-color: rgba(var(--v-theme-on-surface), 0.08);
 }
 
-/* MD3 Surface tones */
 .v-app .surface-container {
   background-color: rgb(var(--v-theme-surface-container));
 }
@@ -414,7 +396,6 @@ onUnmounted(() => {
   background-color: rgb(var(--v-theme-surface-container-highest));
 }
 
-/* Shortcut key styles */
 .shortcut-key {
   display: inline-block;
   padding: 1px 5px;

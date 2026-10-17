@@ -1,4 +1,6 @@
-//! 版本清单获取逻辑
+//! 版本清单与体积估算
+//!
+//! 依次从 BMCLAPI 与官方源拉 version_manifest，汇总 jar、库与资源的下载体积
 
 use crate::errors::LauncherError;
 use crate::models::VersionManifest;
@@ -13,7 +15,6 @@ pub struct VersionSizeInfo {
     pub total_size: u64,
 }
 
-/// 获取 Minecraft 版本列表
 pub async fn get_versions() -> Result<VersionManifest, LauncherError> {
     let client = http_client::get_client();
 
@@ -43,7 +44,6 @@ pub async fn get_versions() -> Result<VersionManifest, LauncherError> {
     ))
 }
 
-/// 从指定 URL 获取版本清单
 async fn fetch_versions(
     client: &reqwest::Client,
     url: &str,
@@ -66,7 +66,6 @@ async fn fetch_versions(
     Ok(manifest)
 }
 
-/// 获取指定版本的文件大小信息
 pub async fn get_version_size(
     version_id: String,
     mirror: Option<String>,

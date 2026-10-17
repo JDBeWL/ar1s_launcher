@@ -1,30 +1,22 @@
-//! Minecraft 通用工具函数
+//! Minecraft 版本与规则解析工具
 //!
-//! 提供多个模块共享的 Minecraft 相关工具函数，避免代码重复。
+//! 版本号解析与新旧分档、Maven 坐标转路径、版本 JSON 的 rules 与 features 求值
 
-/// 判断 Minecraft 版本是否为"新版本"（1.17+，含 26.x.x 新格式）
-///
-/// 使用数值解析而非字符串前缀匹配，避免 `1.21.1` 等版本误判。
-/// 支持带 Forge/Fabric 后缀的版本号（如 `1.20.2-forge-48.0.48`），
-/// 会先提取基础 MC 版本再进行比较。
-/// 同时支持 2025 年起的新格式 `26.x.x`（主版本号 > 1 一律视为新版本）。
+/// 1.17+ 或 26.x 新格式视为新版本；用数值解析而非字符串前缀匹配，`1.21.1` 才不会误判
 pub fn is_new_version(version: &str) -> bool {
     parse_mc_version(version).map_or(false, |(major, minor)| {
         major > 1 || (major == 1 && minor >= 17)
     })
 }
 
-/// 判断 Minecraft 版本是否为"中等版本"（1.12 ~ 1.16.x）
+/// 1.12 ~ 1.16.x 视为中等版本
 pub fn is_mid_version(version: &str) -> bool {
     parse_mc_version(version).map_or(false, |(major, minor)| {
         major == 1 && (12..=16).contains(&minor)
     })
 }
 
-/// 从版本字符串中解析主版本号和次版本号
-///
-/// 例如：`"1.20.4"` → `Some((1, 20))`，`"1.16.5-forge-36.2.39"` → `Some((1, 16))`，
-/// `"26.1.0"` → `Some((26, 1))`
+/// 只取前两段数字，忽略 patch 和 `-forge-` 之类后缀；不足两段返回 None
 pub fn parse_mc_version(version: &str) -> Option<(u32, u32)> {
     let base = version.split('-').next()?;
     let parts: Vec<&str> = base.split('.').collect();
@@ -36,13 +28,7 @@ pub fn parse_mc_version(version: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
-/// 将 Maven 坐标转换为文件路径
-///
-/// 例如: `"net.minecraftforge:forge:1.20.2-48.0.48"` → `"net/minecraftforge/forge/1.20.2-48.0.48/forge-1.20.2-48.0.48.jar"`
-///
-/// 支持可选的 classifier 和 extension 参数：
-/// - `classifier`: Maven 坐标中的第四部分（如 `natives-windows`）
-/// - `extension`: 文件扩展名，默认为 `"jar"`
+/// 坐标不足三段返回 None；classifier 缺省时取坐标的第四段
 pub fn maven_name_to_path(name: &str, classifier: Option<&str>, extension: &str) -> Option<String> {
     let parts: Vec<&str> = name.split(':').collect();
     if parts.len() < 3 {
@@ -63,9 +49,7 @@ pub fn maven_name_to_path(name: &str, classifier: Option<&str>, extension: &str)
     Some(format!("{}/{}/{}/{}", group, artifact, version, filename))
 }
 
-/// 获取当前 OS 的 Minecraft 名称
-///
-/// Minecraft 版本 JSON 使用 `"osx"` 而非 Rust 的 `"macos"`。
+/// Minecraft 版本 JSON 用 `osx` 而非 Rust 的 `macos`
 pub fn get_mc_os_name() -> &'static str {
     if std::env::consts::OS == "macos" {
         "osx"
@@ -74,35 +58,19 @@ pub fn get_mc_os_name() -> &'static str {
     }
 }
 
-/// 评估 Minecraft 版本 JSON 中的 rules 规则（库模式）
-///
-/// 用于判断库是否需要下载/包含。
-/// 规则逻辑：
-/// - 无 rules → 默认允许
-/// - 有 rules → 默认禁止，按顺序评估每条规则：
-///   - 无条件规则(无 os 字段)：无条件应用 action
-///   - 有条件规则(有 os 字段)：仅当条件匹配时应用 action
+/// 库规则：无 rules 默认允许，有 rules 默认禁止，按顺序评估取最后命中项
 pub fn evaluate_rules(rules: Option<&serde_json::Value>) -> bool {
-    // 库规则不使用 features 上下文，传入默认（全部不支持）即可
+    // 库规则不看 features，传默认上下文即可
     evaluate_rules_impl(rules, RuleDefault::Deny, &FeatureSupport::default())
 }
 
-/// 评估 Minecraft 版本 JSON 中的 rules 规则（参数模式）
-///
-/// 用于判断 JVM/游戏参数是否应该包含。
-/// 与 `evaluate_rules` 的区别：
-/// - 有 rules 时默认**允许**（黑名单模式），只有被 disallow 才排除
-/// - 支持 features 条件检查（Minecraft 1.20+ 的可选参数）
-///
-/// 该重载不携带 features 上下文，任何 features 条件都判定为「不支持」。
+/// 参数规则是相反的黑名单：有 rules 也默认允许，只有被 disallow 才排除
+/// 本重载不带 features 上下文，任何 features 条件都判为不支持
 pub fn evaluate_rules_for_arguments(rules: Option<&serde_json::Value>) -> bool {
     evaluate_rules_for_arguments_with_features(rules, &FeatureSupport::default())
 }
 
-/// 带 features 上下文的参数规则评估
-///
-/// `has_custom_resolution` 这类可选参数只有在上下文真正支持时才应放行，
-/// 否则会把未替换的 `${resolution_width}` 占位符直接塞给游戏。
+/// features 条件不满足时不许放行，否则未替换的 `${resolution_width}` 会直接进游戏
 pub fn evaluate_rules_for_arguments_with_features(
     rules: Option<&serde_json::Value>,
     support: &FeatureSupport,
@@ -110,25 +78,18 @@ pub fn evaluate_rules_for_arguments_with_features(
     evaluate_rules_impl(rules, RuleDefault::Allow, support)
 }
 
-/// 启动器当前支持的可选 features 集合
-///
-/// Minecraft 1.13+ 版本 JSON 通过 features 控制可选参数，例如：
-/// `{"action":"allow","features":{"has_custom_resolution":true}}`
-/// 会引入 `--width ${resolution_width} --height ${resolution_height}`，
-/// 其中的占位符必须由启动器替换成真实数值。
+/// Minecraft 1.13+ 用 features 控制可选参数，这些字段决定带占位符的参数能否放行
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FeatureSupport {
     /// 用户在设置中指定了自定义窗口分辨率
     pub custom_resolution: bool,
 }
 
-/// 规则评估的默认行为
 enum RuleDefault {
     Allow,
     Deny,
 }
 
-/// 统一的规则评估实现
 fn evaluate_rules_impl(
     rules: Option<&serde_json::Value>,
     default: RuleDefault,
@@ -150,12 +111,9 @@ fn evaluate_rules_impl(
 
         if let Some(features) = rule.get("features") {
             if check_features(features, support) {
-                // 启动器支持所有请求的 features，应用 action
                 allowed = action_is_allow;
             } else {
-                // 启动器不支持请求的 features，这条规则的条件不满足
-                // 对于 allow 规则：条件不满足 = 不允许
-                // 对于 disallow 规则：条件不满足 = 不禁止（保持默认）
+                // 条件不满足时只撤销 allow；disallow 命中不了就保持默认
                 if action_is_allow {
                     allowed = false;
                 }
@@ -178,10 +136,7 @@ fn evaluate_rules_impl(
     allowed
 }
 
-/// 检查启动器是否支持指定的 features
-///
-/// 只有当所有请求的 features 在当前启动上下文中都成立时才返回 true。
-/// 未知 feature 一律视为不支持（例如 `is_demo_user` 演示模式）。
+/// 所有请求的 features 都成立才 true；未知 feature 一律视为不支持
 pub fn check_features(features: &serde_json::Value, support: &FeatureSupport) -> bool {
     if let Some(obj) = features.as_object() {
         for (key, value) in obj {
@@ -193,25 +148,15 @@ pub fn check_features(features: &serde_json::Value, support: &FeatureSupport) ->
     true
 }
 
-/// 单个 feature 在当前启动上下文中是否成立
 fn is_feature_supported(name: &str, support: &FeatureSupport) -> bool {
     match name {
-        // 只有用户确实配置了自定义分辨率才启用，否则版本的占位符无法替换
+        // 用户没配自定义分辨率时不能放行，否则版本 JSON 的占位符替换不了
         "has_custom_resolution" => support.custom_resolution,
         _ => false,
     }
 }
 
-/// 递归查找最终的 JAR 版本（处理多层继承链）
-///
-/// Minecraft 的版本 JSON 可能通过 `jar` 字段或 `inheritsFrom` 字段
-/// 引用另一个版本的 JAR 文件。此函数递归查找继承链，
-/// 返回最终应该使用的 JAR 版本名称。
-///
-/// 查找优先级：
-/// 1. `jar` 字段（直接指定使用哪个 JAR）
-/// 2. `inheritsFrom` 字段（递归查找父版本）
-/// 3. 版本 JSON 的 `id` 字段（兜底）
+/// 优先级 `jar` > `inheritsFrom`（递归）> `id`；父版本 JSON 缺失时直接返回 `inheritsFrom`
 pub fn find_jar_version(
     version_json: &serde_json::Value,
     game_dir: &std::path::Path,
@@ -244,7 +189,6 @@ pub fn find_jar_version(
     ))
 }
 
-/// 修改 options.txt 设置游戏语言
 pub fn set_game_language(instance_dir: &std::path::Path, lang: &str) -> std::io::Result<()> {
     let options_path = instance_dir.join("options.txt");
     let content = if options_path.exists() {
@@ -386,19 +330,17 @@ mod tests {
     fn test_evaluate_rules_os_conditional() {
         let current_mc_os = get_mc_os_name();
 
-        // 允许当前 OS
         let rules = serde_json::json!([
             {"action": "allow", "os": {"name": current_mc_os}}
         ]);
         assert!(evaluate_rules(Some(&rules)));
 
-        // 禁止当前 OS
         let rules = serde_json::json!([
             {"action": "disallow", "os": {"name": current_mc_os}}
         ]);
         assert!(!evaluate_rules(Some(&rules)));
 
-        // 允许其他 OS（当前 OS 不匹配，保持默认禁止）
+        // 其他 OS 的 allow 命中不了，保持默认禁止
         let other_os = if current_mc_os == "windows" {
             "osx"
         } else {
@@ -545,7 +487,6 @@ mod tests {
 
     #[test]
     fn test_evaluate_rules_for_arguments_features_unsupported() {
-        // 不支持的 features 应该返回 false，参数不应该被添加
         let rules = serde_json::json!([
             {"action": "allow", "features": {"is_demo_user": true}}
         ]);
@@ -598,7 +539,6 @@ mod tests {
             custom_resolution: true,
         };
         assert!(check_features(&features, &support));
-        // 未开启自定义分辨率时应判定为不支持
         assert!(!check_features(&features, &FeatureSupport::default()));
     }
 

@@ -1,11 +1,7 @@
 //! Microsoft / Minecraft 正版登录模块
 //!
-//! 实现完整的 Microsoft OAuth → Xbox Live → XSTS → Minecraft 认证链：
-//! 1. Microsoft OAuth 2.0 授权（Authorization Code Flow + PKCE 或设备代码流）
-//! 2. Xbox Live 认证
-//! 3. XSTS 认证
-//! 4. Minecraft 认证
-//! 5. Minecraft Profile 获取
+//! 实现完整的 OAuth → Xbox Live → XSTS（提供 uhs 声明）→ Minecraft token 认证链
+//! 设备代码轮询与授权码 + PKCE 两种入口，另有 token 刷新、profile 与皮肤地址
 
 use crate::errors::LauncherError;
 use crate::services::http_client;
@@ -89,8 +85,7 @@ struct MinecraftProfileResponse {
 
 #[derive(Debug, Deserialize)]
 struct MinecraftProfileSkin {
-    /// 默认皮肤条目是 "Mojang"（官方预设），用户上传的是 "Custom"。
-    /// 没上传过皮肤时数组里只有预设那条，所以不做区分，取第一条能用就行。
+    /// 皮肤条目可能是 Mojang 预设或用户上传的 Custom，不做区分，取第一个非空 url
     #[serde(default)]
     url: String,
 }
@@ -387,8 +382,7 @@ fn skin_url(skins: &[MinecraftProfileSkin]) -> Option<String> {
         .map(|u| u.replacen("http://", "https://", 1).to_string())
 }
 
-/// 用已存的 Minecraft access_token 重新取一次皮肤地址。
-/// 换皮肤不会触发 token 刷新，所以启动时要单独问一次；接口 401 时调用方沿用旧值即可。
+/// 换皮肤不触发 token 刷新，所以启动时要单独问一次；401 时调用方沿用旧值
 pub async fn fetch_skin_url(minecraft_access_token: &str) -> Result<Option<String>, LauncherError> {
     let (_, _, skin_url) = get_minecraft_profile(minecraft_access_token).await?;
     Ok(skin_url)
@@ -438,8 +432,6 @@ pub async fn refresh_and_authenticate(
 
     complete_microsoft_auth(&token_resp.access_token, new_refresh, expires_in).await
 }
-
-// ============ Authorization Code Flow + PKCE ============
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

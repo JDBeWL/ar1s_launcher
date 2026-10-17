@@ -144,7 +144,6 @@ onMounted(async () => {
 
 <template>
   <div class="settings-group">
-    <!-- 垃圾回收 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-1">
@@ -171,7 +170,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 其他稳定性选项 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-3">
@@ -275,7 +273,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- Metaspace -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-1">
@@ -359,7 +356,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 自定义参数 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-1">
@@ -384,7 +380,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 最终参数预览 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-3">
@@ -412,7 +407,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 提示 -->
     <v-alert color="warning-container" density="compact" class="tip-alert mb-4">
       <template #prepend>
         <v-icon size="20" color="on-warning-container">mdi-alert-outline</v-icon>

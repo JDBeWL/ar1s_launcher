@@ -1,4 +1,6 @@
-//! Mod 加载器控制器
+//! Mod 加载器 command 模块
+//!
+//! 四种加载器版本查询的 invoke 入口，Fabric/Quilt/NeoForge 收敛成统一的 LoaderVersionInfo
 
 use crate::errors::LauncherError;
 use crate::services::loaders::{
@@ -8,7 +10,7 @@ use crate::services::loaders::{
 };
 use serde::Serialize;
 
-/// 通用加载器版本信息（用于前端统一处理）
+/// 四种加载器统一成这一种结构返回
 #[derive(Debug, Clone, Serialize)]
 pub struct LoaderVersionInfo {
     pub version: String,
@@ -16,7 +18,6 @@ pub struct LoaderVersionInfo {
     pub stable: Option<bool>,
 }
 
-/// 可用加载器信息
 #[derive(Debug, Clone, Serialize)]
 pub struct AvailableLoaders {
     pub forge: bool,
@@ -74,12 +75,10 @@ pub async fn get_neoforge_versions(
         .collect())
 }
 
-/// 检查指定 MC 版本支持哪些加载器
 #[tauri::command]
 pub async fn get_available_loaders(
     minecraft_version: String,
 ) -> Result<AvailableLoaders, LauncherError> {
-    // 并行检查所有加载器
     let (forge_result, fabric_result, quilt_result, neoforge_result) = tokio::join!(
         check_forge_available(&minecraft_version),
         check_fabric_available(&minecraft_version),

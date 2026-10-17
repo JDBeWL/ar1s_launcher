@@ -1,3 +1,7 @@
+/**
+ * Modrinth 整合包搜索
+ * 搜索词与版本、加载器、分类、排序联动加分页，输入变化 300ms 防抖
+ */
 import { ref, computed, watch } from 'vue';
 import { api } from '../services';
 import { useDebounceFn } from './useDebounce';
@@ -22,9 +26,8 @@ export function useModrinth() {
 
   const gameVersions = ref<string[]>([]);
   const loaders = ['fabric', 'forge', 'quilt', 'neoforge'];
-  // value 是 Modrinth 的英文分类 id，title 只用于界面展示。
-  // 这里只能用整合包分类（/v2/tag/category 里 project_type=modpack 的那一组），
-  // 模组分类（decoration、worldgen 之类）拿去筛整合包基本查不出东西。
+  // value 是 Modrinth 的英文分类 id，title 只用于界面展示
+  // 只能用 project_type=modpack 的那一组分类，模组分类（decoration、worldgen 之类）拿去筛整合包查不出东西
   const categoryOptions = [
     { title: '冒险', value: 'adventure' },
     { title: '高难度', value: 'challenging' },
@@ -85,7 +88,6 @@ export function useModrinth() {
     }
   }
 
-  // 防抖搜索（300ms）
   const debouncedSearch = useDebounceFn(searchModpacksInternal, 300);
 
   // 立即搜索（用于分页、筛选器变化等）
@@ -98,7 +100,6 @@ export function useModrinth() {
     debouncedSearch.call();
   }
 
-  // 监听搜索关键词变化，自动防抖搜索
   watch(modpackSearchQuery, () => {
     if (!modpackInitialLoad.value) {
       modpackCurrentPage.value = 1;
@@ -106,7 +107,6 @@ export function useModrinth() {
     }
   });
 
-  // 监听筛选器变化，立即搜索
   watch([selectedGameVersion, selectedLoader, selectedCategory, sortBy], () => {
     if (!modpackInitialLoad.value) {
       modpackCurrentPage.value = 1;

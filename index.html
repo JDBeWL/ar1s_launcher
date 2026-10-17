@@ -3,14 +3,8 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <!--
-      锁定 Vuetify 的 @layer 级联顺序，必须最先解析。
-      @layer 的优先级由层名「首次出现」的先后顺序决定，与选择器权重无关。
-      构建时 Vuetify 组件样式会被打进共享 chunk（如 forwardRefs.css），
-      而声明层顺序的 main.css 落在入口 chunk，后者在 HTML 中反而后加载 ——
-      若不在这里预先声明，层顺序就被颠倒成 components < core.reset，
-      于是 reset 里的 button { font: inherit } 会盖掉按钮的字号与字重。
-    -->
+    <!-- 必须最先声明 @layer 顺序：组件样式进共享 chunk、main.css 进入口 chunk 反而后加载，缺这里层序会颠倒成 components < core.reset，
+         reset 的 button { font: inherit } 就盖掉按钮字号 -->
     <style>
       @layer vuetify-core {
         @layer reset, base;

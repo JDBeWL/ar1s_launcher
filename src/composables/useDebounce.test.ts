@@ -91,7 +91,7 @@ describe('useDebouncedRef', () => {
 
     source.value = 'updated';
     await nextTick();
-    expect(debounced.value).toBe('initial'); // 还没更新
+    expect(debounced.value).toBe('initial');
 
     vi.advanceTimersByTime(300);
     await nextTick();

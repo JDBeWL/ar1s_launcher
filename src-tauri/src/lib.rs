@@ -1,3 +1,7 @@
+//! Ar1s Launcher 的 Tauri 后端
+//!
+//! crate 根：声明命令层与业务层，并把各 controller 注册成 Tauri command
+
 pub mod controllers;
 mod errors;
 mod models;
@@ -11,7 +15,6 @@ use utils::logger::setup_logger;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 初始化日志记录器
     if let Err(e) = setup_logger() {
         eprintln!("Error setting up logger: {}", e);
     }
@@ -96,12 +99,11 @@ pub fn run() {
         .setup(|_| {
             log::info!("[DEBUG] Tauri应用初始化完成");
 
-            // 预加载配置文件
             if let Err(e) = services::config::preload_config() {
                 log::error!("配置预加载失败: {}", e);
             }
 
-            // 后台预热 Java 检测缓存（使用 Tauri 异步运行时，不阻塞启动）
+            // 预热 Java 检测缓存，放后台跑以免阻塞启动
             tauri::async_runtime::spawn(async {
                 log::info!("后台预热 Java 检测缓存...");
                 if let Err(e) = services::java::find_java_installations_command().await {

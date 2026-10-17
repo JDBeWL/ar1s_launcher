@@ -1,3 +1,7 @@
+/**
+ * localStorage 偏好读取
+ * 主题、视图模式与排序键的读取，全部按白名单校验、非法值回退默认
+ */
 // 必须是 plugins/vuetify.ts 里真实注册过的配色，否则会被回退成默认值
 const VALID_THEME_PALETTES = new Set(['indigo', 'emerald', 'rose']);
 

@@ -1,9 +1,12 @@
+/**
+ * Vuetify 主题插件
+ * 三套配色各 light/dark 共六个主题，注入不随主题变化的品牌色与组件默认值
+ */
 import 'vuetify/styles';
 import '@mdi/font/css/materialdesignicons.css';
 import { createVuetify } from 'vuetify';
 
-// 告警色阶与加载器品牌色（Forge/Fabric/Quilt/NeoForge）的容器色。
-// 品牌色不随主题方案（紫/青/玫瑰）变化，故集中定义后注入每个主题。
+// 加载器品牌色与告警色阶的容器色不随主题方案变化，集中定义后注入每个主题
 const toneLight = {
   'warning-container': '#FFDBC8',
   'on-warning-container': '#3E2600',
@@ -26,7 +29,6 @@ const toneDark = {
   'grey-container': '#49454F',
 };
 
-// Material Design 3 主题配置
 const vuetify = createVuetify({
   theme: {
     defaultTheme: 'dark-indigo',
@@ -107,7 +109,6 @@ const vuetify = createVuetify({
           ...toneDark,
         },
       },
-      // MD3 清新青
       'light-emerald': {
         dark: false,
         colors: {
@@ -184,7 +185,6 @@ const vuetify = createVuetify({
           ...toneDark,
         },
       },
-      // MD3 玫瑰
       'light-rose': {
         dark: false,
         colors: {

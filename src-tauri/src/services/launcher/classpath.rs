@@ -1,12 +1,13 @@
 //! Classpath 构建和库预检逻辑
+//!
+//! 按 rules 挑库、优先 downloads.artifact.path 定位 jar，LaunchWrapper 主类下递归补依赖
 
 use crate::errors::LauncherError;
 use crate::utils::minecraft::{evaluate_rules, find_jar_version};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 通用库文件查找函数
-/// 递归扫描指定目录，查找匹配指定模式的JAR文件
+/// 递归扫描目录，查找匹配模式的 JAR 文件
 pub fn find_library_jar(dir: &Path, patterns: &[&str]) -> Option<PathBuf> {
     let read_dir = fs::read_dir(dir).ok()?;
 
@@ -31,8 +32,6 @@ pub fn find_library_jar(dir: &Path, patterns: &[&str]) -> Option<PathBuf> {
     None
 }
 
-/// 预检并修复缺失的库
-/// 如果找到或已存在返回 true, 否则返回 false
 pub fn precheck_and_heal_library(
     classpath: &mut Vec<PathBuf>,
     libraries_base_dir: &Path,
@@ -47,7 +46,7 @@ pub fn precheck_and_heal_library(
     });
 
     if !is_missing {
-        return true; // 库已存在
+        return true;
     }
 
     emit(
@@ -78,7 +77,6 @@ pub fn precheck_and_heal_library(
     }
 }
 
-/// 构建 Classpath
 pub fn build_classpath(
     version_json: &serde_json::Value,
     libraries_base_dir: &Path,
@@ -105,7 +103,6 @@ pub fn build_classpath(
         }
     }
 
-    // 确定主游戏 JAR 的版本（递归查找继承链）
     let versions_dir = version_dir
         .parent()
         .ok_or_else(|| LauncherError::Custom("无法获取 versions 目录".to_string()))?;
@@ -114,7 +111,6 @@ pub fn build_classpath(
         .ok_or_else(|| LauncherError::Custom("无法获取游戏根目录".to_string()))?;
     let jar_version = find_jar_version(version_json, game_dir)?;
 
-    // 主游戏 JAR 路径
     let main_game_jar_path = if jar_version != version {
         versions_dir
             .join(&jar_version)
@@ -147,13 +143,11 @@ pub fn build_classpath(
     Ok(classpath)
 }
 
-/// 解析库文件路径
 fn resolve_library_path(
     lib: &serde_json::Value,
     libraries_base_dir: &Path,
     emit: &impl Fn(&str, String),
 ) -> Option<PathBuf> {
-    // 优先使用 downloads.artifact.path
     if let Some(path) = lib["downloads"]
         .get("artifact")
         .and_then(|a| a.get("path"))
@@ -219,13 +213,11 @@ fn resolve_library_path(
     }
 }
 
-/// 执行 LaunchWrapper 相关的库预检
 pub fn precheck_launchwrapper_libraries(
     classpath: &mut Vec<PathBuf>,
     libraries_base_dir: &Path,
     emit: &impl Fn(&str, String),
 ) -> Result<(), LauncherError> {
-    // 预检 LaunchWrapper
     if !precheck_and_heal_library(
         classpath,
         libraries_base_dir,

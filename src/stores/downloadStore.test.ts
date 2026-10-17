@@ -3,7 +3,6 @@ import { setActivePinia, createPinia } from 'pinia';
 import { useDownloadStore } from './downloadStore';
 import * as api from '../services/api';
 
-// Mock API
 vi.mock('../services/api', () => ({
   api: {
     version: {
@@ -13,14 +12,12 @@ vi.mock('../services/api', () => ({
   },
 }));
 
-// Mock notification store
 vi.mock('./notificationStore', () => ({
   useNotificationStore: () => ({
     error: vi.fn(),
   }),
 }));
 
-// Mock event listener
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
   emit: vi.fn(() => Promise.resolve()),

@@ -13,8 +13,7 @@ html {
   color-scheme: dark;
 }
 
-/* 页头标题与说明的间距：Vuetify 的 text-* 工具类只改字号行高，不清 UA margin，
-   裸 <h1> 的上下边距都会漏进来（UA 默认 h1 上边距 0.67em、<p> 上下 1em） */
+/* Vuetify 的 text-* 工具类只改字号行高、不清 UA margin，裸标题的上下边距会漏进来 */
 h1,
 h2,
 h3,
@@ -32,26 +31,8 @@ h4 + p {
   margin-block-start: 0.25rem;
 }
 
-/* 强等宽读数：给“每秒都在变的数字”用。
-
-   本项目没有引入任何 Web 字体，Vuetify 声明的 Roboto 在本机不存在，
-   拉丁数字一路回退到系统无衬线字体（Arial / 微软雅黑），它们的数字是**比例宽度**：
-   「1」比「8」窄、「.」更窄。于是 "9.87 MB/s" 与 "10.21 MB/s" 宽度不等，
-   读数每刷新一次就重排一次 —— 居中的数值（内存概览）左右抖动，
-   justify-space-between 的行里两侧文字互相挤动，看起来就是「数字在跳」。
-
-   这里直接钉死等宽字体栈，让每个字符占宽固定：刷新时只有字形变化，没有任何位移。
-   字体栈首位是 'Consolas Synced' —— 那不是新字体，就是本文件里用 local() 引用的系统
-   Consolas 再套上同一组度量覆盖（见下方 @font-face），字形取自 Consolas、度量与全站一致；
-   后面依次兜底 Cascadia Mono / Noto Sans Mono CJK。
-   中文（如「剩余:」）在等宽栈里没有字形，会回退到系统 CJK 字体，这只是取字形，
-   行盒的行高与基线仍由等宽字体（列表首个可用字体）决定，因此**同一元素内中英混排
-   仍然共用一条基线**。
-
-   注意用法：请把 .num-mono 加在「整行」容器上，而不是行内某一个 <span> 上。
-   行内的两个元素若一个用等宽字体、一个用比例字体，两者的字体度量不同（等宽字体
-   的 ascent/descent 更小，在固定 line-height 下半个行距更大），基线会差约 1px；
-   把整行都设为等宽字体后，两个元素的度量一致，基线自动对齐。 */
+/* 回退字体的拉丁数字是比例宽度，实时读数每刷新一次就重排一次；钉死等宽栈后只有字形变化、没有位移
+   必须加在「整行」容器上：行内混用等宽与比例字体时两套度量不同，基线会差约 1px */
 .num-mono {
   font-family: 'Consolas Synced', Consolas, 'Cascadia Mono', 'Noto Sans Mono CJK SC', 'DejaVu Sans Mono', monospace;
   font-variant-numeric: tabular-nums;
@@ -66,38 +47,9 @@ h4 + p {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── 自托管 Roboto（拉丁/数字）──────────────────────────────────────────────
-   桌面端不能靠系统字体，拉丁字面也要随包走。这里不用 @fontsource 自带的 CSS 入口，
-   而是自己写 @font-face，只有一个原因：要加度量覆盖（见下）。
-
-   ## 为什么必须加度量覆盖
-
-   字体决定了「基线在行盒里的位置」，公式是
-
-       baseline = (line-height − 内容高) / 2 + ascent        内容高 = ascent + descent
-
-   换字体就换基线。实测（无头 Chrome，与 WebView2 同为 Blink + DirectWrite）：
-   12px 字号、line-height:1.5（18px 行盒）下，
-     · 改动前的回退字体 Segoe UI Variable（Windows 11 的 sans-serif）→ 基线 14px
-     · 自托管 Roboto                                                  → 基线 13px
-   16px 下差距更大（19px vs 17px）。Roboto 的 typo/win 度量都只有 1.0–1.2em 内容高，
-   而 Segoe UI Variable 是 1.33em，两者在同一个居中行盒里必然错位 1–2px ——
-   表现就是「字整体偏上、不再垂直居中」（v-chip 的「正式版」最明显）。
-
-   覆盖值取 Segoe UI Variable 的声明度量（SegUIVar.ttf：winAscent 2210/2048、
-   winDescent 514/2048）。这样基线回到改动前的位置，style.css 里那些按当时实测
-   写死的 translateY 亚像素补偿继续有效。注意：
-
-     · 只有 (ascent − descent) 决定基线（在定值行高下）。覆盖后 (A−D) 与旧回退字体
-       完全一致，12/14/20/24px 的基线逐档吻合；
-     · 16px 那档旧字体是 19px、覆盖后是 18px，差 1px —— 这是旧回退字体自身的
-       光学尺寸（opsz）漂移（它的内容高在 12→24px 之间从 1.42em 涨到 1.46em），
-       任何单一覆盖值都无法复现，且这正是「靠系统字体」的不确定性本身。
-     · 中文子集的字体不用覆盖：行盒度量由「字体栈里首个可用字体」决定，也就是这里的
-       Roboto，中文只是取字形。
-
-   font-display 用 block 而不是 swap：字体是本地文件，加载在毫秒级；
-   swap 会让首帧先画回退字体再跳一次，block 则保证任何一帧都是最终度量。 */
+/* 自托管 Roboto：桌面端拉丁字形也要随包走；手写 @font-face 而不复用 @fontsource 的 CSS，只为加度量覆盖
+   必须带 ascent/descent-override：基线位置由字体度量决定，覆盖值取自旧的 Windows 回退字体声明度量，基线才不会整体上移
+   font-display: block —— 本地文件毫秒级加载，swap 会让首帧先画回退字体再跳一次 */
 @font-face {
   font-family: 'Roboto';
   src: url('@fontsource/roboto/files/roboto-latin-400-normal.woff2') format('woff2');
@@ -131,13 +83,8 @@ h4 + p {
   line-gap-override: 0%;
 }
 
-/* 等宽读数的 Consolas 也要同步度量。
-   Consolas 是系统字体，直接写 font-family: Consolas 会带来另一套字体度量
-   （内容高 1.153em），而本文件里 Roboto 覆盖后是 1.329em —— 在固定行高下
-   两者的基线相差 (Δascent − Δdescent)/2 ≈ 1.2px，同一个卡片里
-   「下载速度」那行会比上方的标题明显高一截。
-   用 local() 引用系统 Consolas 再套上同一组覆盖：字形还是 Consolas，度量与全站一致。
-   装不到 Consolas 的平台（非 Windows）会自然回退到 .num-mono 里后面的字体。 */
+/* 系统 Consolas 自带另一套度量，直接引用会和覆盖后的 Roboto 基线错位
+   用 local() 引用它再套同一组覆盖：字形仍是 Consolas，度量与全站一致；非 Windows 装不到时自然回退 */
 @font-face {
   font-family: 'Consolas Synced';
   src: local('Consolas');
@@ -148,15 +95,9 @@ h4 + p {
   line-gap-override: 0%;
 }
 
-/* 中文子集：自托管 Noto Sans SC（OFL-1.1），用可变字体裁剪，
-   一个文件覆盖 100–900 全部字重（界面用到 400/500/700），体积 1.94 MB。
-   字符集 = 界面源码实际用字 ∪ GB2312 一级+二级汉字（6763）∪ 拉丁基本区 ∪ 中文标点，
-   共 7623 字：实例名、整合包标题、后端报错这些动态中文文本基本都落在里面，
-   偶发生僻字由系统 CJK 字体逐字兜底（unicode-range 之外的字符不会触发本文件下载）。
-   重新生成：python scripts/build-cjk-subset.py
-
-   放在 public/fonts/ 而不是走 Vite 的 assets 处理，是因为 OFL-1.1 要求分发时附带授权文本：
-   public/ 里的文件会被原样拷进 dist，随安装包一起发出去（见同目录 NotoSansSC-OFL.txt）。 */
+/* 中文子集：自托管 Noto Sans SC（OFL-1.1）可变字体裁剪，一个文件覆盖全部字重
+   字符集 = 界面源码实际用字 ∪ GB2312 一二级汉字 ∪ 拉丁基本区 ∪ 中文标点；重新生成：python scripts/build-cjk-subset.py
+   放 public/fonts/ 而不是走 Vite assets：OFL-1.1 要求分发时附带授权文本，public/ 会原样拷进 dist */
 @font-face {
   font-family: 'Noto Sans SC Subset';
   src: url('/fonts/noto-sans-sc-subset.woff2') format('woff2');
@@ -166,9 +107,7 @@ h4 + p {
   unicode-range: U+2E80-2EFF, U+3000-303F, U+3400-4DBF, U+4E00-9FFF, U+FE30-FE4F, U+FF00-FFEF, U+2000-206F;
 }
 
-/* Vuetify 给 on-* 主题色只生成 .on-X 类，而组件的 color 属性拼的是 .text-X 类，
-   所以 color="on-surface-variant" 这类写法全部静默失效。补别名让两种写法都能落地。
-   直接写类名时用 .on-X 即可，那是 Vuetify 原生生成的。 */
+/* Vuetify 给 on-* 色只生成 .on-X 类，组件 color 属性拼的是 .text-X，所以 color="on-surface-variant" 静默失效；这里补别名 */
 .text-on-surface {
   color: rgb(var(--v-theme-on-surface));
 }
@@ -188,14 +127,12 @@ h4 + p {
   color: rgb(var(--v-theme-on-warning-container));
 }
 
-/* Vuetify 4 把 v-avatar 的默认 border-radius: 50% 删掉了（组件也不再读全局 defaults），
-   升级后全站 44 处头像都变成了直角方块。这里把圆形补回来。 */
+/* Vuetify 4 不再给 v-avatar 生成默认 border-radius: 50%，组件也不读全局 defaults，这里补回圆形 */
 .v-avatar {
   border-radius: 50%;
 }
 
-/* Vuetify 4 给前置/后置「图标」留 32px，给「头像」却留 16px，
-   菜单里图标和文字因此明显脱节。图标行统一收到 MD3 菜单的 12px。 */
+/* Vuetify 4 给前置/后置图标留 32px、给头像只留 16px，菜单里图标与文字脱节；统一收到 MD3 菜单的 12px */
 .v-list-item__prepend > .v-badge ~ .v-list-item__spacer,
 .v-list-item__prepend > .v-icon ~ .v-list-item__spacer,
 .v-list-item__prepend > .v-tooltip ~ .v-list-item__spacer,
@@ -205,47 +142,30 @@ h4 + p {
   width: 12px;
 }
 
-/* flex 工具类兜底：.d-flex / .align-center 位于 vuetify-utilities.helpers 层。
-   @layer 的优先级只由层名首次出现的先后决定，一旦构建分块把层序打乱（原因见 index.html
-   顶部说明），这两个类会静默失效：本应居中的行退回 align-items: stretch —— 行内文字被
-   拉伸框顶到行上方，而旁边固定高度的按钮仍停在顶部，两者错开 2px。
-   两个类都没有 !important，在未分层样式里重新声明即可彻底摆脱对层序的依赖。 */
+/* .d-flex / .align-center 在 vuetify-utilities.helpers 层，构建分块把 @layer 层序打乱时（原因见 index.html 顶部说明）会静默失效
+   两个类都没有 !important，在未分层样式里重新声明即可摆脱对层序的依赖 —— 无层样式优先于任何层 */
 .d-flex.align-center {
   align-items: center;
 }
 
-/* 按钮字号：Vuetify 的 size="x-small" 只有 10px，中文下偏小且与界面其他文字脱节。
-   size="small" 本来就是 12px，不受影响。 */
+/* Vuetify 的 size="x-small" 字号中文偏小且与界面其他文字脱节 */
 .v-btn--size-x-small {
   font-size: 0.75rem;
 }
 
-/* 按钮文字的行盒：组件层给的是 line-height: normal，它随系统回退字体漂移 ——
-   同一句 12px 中文，Noto Sans SC 下算成 17px，微软雅黑下算成 16px。
-   行盒一旦比字形内容高 1px，汉字基线就被压低约 1px：与同一行里的 mdi 图标
-   （图标字形居中于自身盒子）错开 1px 以上，看起来就是「图标对、文字偏低」。
-   钉成 1rem 后按钮文字与 .text-body-small 共用同一行盒：
-   Noto Sans SC 下 「▶ 启动」的图标/文字墨迹差从 1.25px 收敛到 0.25px，
-   微软雅黑下为 0.75px（两者都已是亚像素级）。
-   本文件是未分层样式，优先级高于所有 @layer，因此能覆盖组件层的定义。 */
+/* 组件层给的是 line-height: normal，它随系统回退字体漂移：行盒一旦高于字形内容，汉字基线就被压低，与同行 mdi 图标错开
+   钉成 1rem 后与 .text-body-small 共用行盒；本文件未分层，优先级高于组件层 */
 .v-btn--size-x-small,
 .v-btn--size-small {
   line-height: 1rem;
 }
 
-/* mdi 图标字体的字形重心比 em box 几何中心偏上约 0.5px（实测），
-   与 CJK 文字按钮并排时（如列表行右侧的「⋮」菜单 vs「▶ 启动」）视觉可感。
-   这里做半像素校正。 */
+/* mdi 字形重心比 em box 几何中心偏上，与 CJK 文字并排时视觉可感，做半像素校正 */
 .v-list-item__append > .v-btn--icon .v-icon {
   transform: translateY(0.5px);
 }
 
-/* 「最近游玩」卡片头部的亚像素光学校正。
-   图标字形的墨迹重心不在盒子中心，汉字墨迹重心也不在行盒中心，两者差多少 CSS 算不出来，
-   只能实测后补偿。在 Noto Sans SC 与微软雅黑下实测（相对行内容中心，4x 像素级）：
-     历史图标(20px) −0.62px（偏高）  最近游玩(16px) +0.25px
-     4 个实例(12px) +0.75px（偏低）  管理(12px)     +0.25px
-   校正后四者收敛到同一视觉线（±0.15px）。 */
+/* 「最近游玩」卡片头部的光学校正：图标与汉字的墨迹重心都不在盒子几何中心，CSS 算不出来，只能实测后补偿 */
 .card-head-row .v-icon {
   transform: translateY(0.75px);
 }
@@ -254,19 +174,13 @@ h4 + p {
   transform: translateY(-0.5px);
 }
 
-/* 这一行的居中不再依赖 utilities 层的 .align-center：逐个子项声明 align-self，
-   即使容器自身的 align-items 被层序问题改坏（退回 stretch），子项也不会被拉高 ——
-   否则「4 个实例」的文字会贴到拉伸框顶部、与旁边的「管理」错开 2px。
-   align-items 正常时它与容器声明等价，属于零影响。 */
+/* 居中不依赖 utilities 层的 .align-center：容器 align-items 被层序问题改坏（退回 stretch）时，逐个子项声明仍能居中 */
 .card-head-row > * {
   align-self: center;
 }
 
-/* 分段按钮（v-btn-toggle）：全局 defaults 给每个 VBtn 塞了 rounded: 'xl'，
-   而 .rounded-xl 在 @layer vuetify-utilities，层序晚于组件层里 VBtnGroup 自己的
-   .v-btn-group .v-btn { border-radius: 0 }，层与层之间不看选择器权重，所以后者永远输——
-   分段控件被拆成一串独立药丸，divided 的竖线也悬在半空。
-   无层声明优先于任何层，这里把每一段压平，只留容器一个外框。 */
+/* 全局 defaults 给每个 VBtn 塞了 rounded: 'xl'，而 .rounded-xl 在 utilities 层、层序晚于组件层 VBtnGroup 自己的 border-radius: 0，
+   层与层之间不看选择器权重，分段控件会被拆成一串独立药丸。无层声明优先于任何层，这里把每段压平、只留容器外框 */
 .v-btn-toggle > .v-btn {
   border-radius: 0;
 }
@@ -331,15 +245,13 @@ h4 + p {
   outline-offset: 2px;
 }
 
-/* 焦点环统一交给控件外框表达。Vuetify 复合控件内部聚焦的元素不一定是 .v-field__input
-   （v-select 就不是），所以这里按后代匹配，否则会在药丸里画出方框 */
+/* 焦点环统一交给控件外框表达；复合控件内部聚焦的元素不一定是 .v-field__input（v-select 就不是），所以按后代匹配 */
 .v-field :focus-visible,
 .v-selection-control :focus-visible {
   outline: none;
 }
 
-/* 用 Vuetify 自己的 outline 元素加粗，它会正确处理圆角和标签缺口，
-   不会像额外 outline 那样压到浮起的标签上 */
+/* 用 Vuetify 自己的 outline 元素加粗：它会正确处理圆角和标签缺口，额外 outline 会压到浮起的标签上 */
 .v-field:has(:focus-visible) .v-field__outline {
   --v-field-border-width: 2px !important;
 }
@@ -361,21 +273,16 @@ h4 + p {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
-  /* 全站数字统一按等宽数字排版（不换字体，只锁字宽）。
-     多数比例字体的数字宽度不一致，实例数、模组数、游玩次数这类「数字 + 文字」
-     的标签一旦数值变化就会整体位移。tabular-nums 只对支持该特性的字体生效，
-     回退字体不支持时也不会更糟；需要绝对稳定的实时读数仍用 .num-mono 换字体。 */
+  /* 全站数字锁成等宽字宽：比例字体下「数字 + 文字」标签一变数值就整体位移；不换字体，特性不支持时也不会更糟
+     需要绝对稳定的实时读数仍用 .num-mono 换字体 */
   font-variant-numeric: tabular-nums;
 
-  /* Vuetify 的字体入口就是这个 CSS 变量（组件层写的是 var(--v-font-body, "Roboto", sans-serif)），
-     无需改 SCSS。拉丁走自托管的 Roboto，中文走自托管子集，两者都没有的字符才落到系统字体。
-     子集必须排在 Roboto 之后、sans-serif 之前：Roboto 优先取拉丁字形，中文才轮到子集。
-     另外，行盒的行高与基线始终由「列表里首个可用字体」决定 —— 也就是 Roboto ——
-     所以中文换用子集不会改变任何盒模型尺寸，只有中文字形的墨迹位置会变。 */
+  /* Vuetify 的字体入口就是这个变量（组件层写 var(--v-font-body, "Roboto", sans-serif)），无需改 SCSS
+     子集要排在 Roboto 之后、sans-serif 之前；行盒度量只由首个可用字体决定，换中文子集不改盒模型 */
   --v-font-body: 'Roboto', 'Noto Sans SC Subset', sans-serif;
 }
 
-/* 全局禁用所有过渡和动画，确保界面响应迅速 */
+/* 全局禁用所有过渡和动画；下面几块只恢复功能性动画 */
 *,
 *::before,
 *::after {
@@ -386,7 +293,6 @@ h4 + p {
   animation-duration: 0s !important;
 }
 
-/* 显式禁用 Vuetify 的内置过渡类 */
 .v-expand-transition-enter-active,
 .v-expand-transition-leave-active,
 .v-fade-transition-enter-active,
@@ -403,7 +309,6 @@ h4 + p {
   transition-duration: 0s !important;
 }
 
-/* 禁用 Vuetify 组件默认的交互过渡（如按钮点击、列表悬停） */
 .v-btn,
 .v-card,
 .v-list-item,
@@ -419,7 +324,6 @@ h4 + p {
   transition-duration: 0s !important;
 }
 
-/* 侧边栏抽屉动画例外 - 显式恢复伸缩动画所需属性 */
 .v-navigation-drawer,
 .v-main,
 .v-application {
@@ -427,14 +331,12 @@ h4 + p {
   transition-duration: 0s !important;
 }
 
-/* 侧边栏内容不应该有延迟 */
 .v-navigation-drawer * {
   transition: none !important;
   transition-duration: 0s !important;
 }
 
-/* 进度条动画例外 - 这些是功能性动画，需要保留 */
-/* 使用更加具体的选择器确保 Vuetify 内部样式能生效 */
+/* 进度条动画例外：功能性动画要保留，用 inherit 绕开上面的全局禁用 */
 .v-progress-linear__determinate,
 .v-progress-linear__indeterminate,
 .v-progress-linear__background,
@@ -473,7 +375,7 @@ h4 + p {
   transform: rotate(-90deg) !important;
 }
 
-/* v-select 下拉菜单样式 - MD3 浮层菜单风格，向上/向下均美观 */
+/* v-select 下拉菜单：MD3 浮层菜单风格 */
 
 .v-select--active-menu .v-field__outline,
 .v-select.v-field--focused .v-field__outline {
@@ -502,7 +404,6 @@ h4 + p {
   margin: 0;
 }
 
-/* 通用页面容器 - 统一最大宽度和居中 */
 .page-container {
   max-width: 1200px;
   margin: 0 auto;

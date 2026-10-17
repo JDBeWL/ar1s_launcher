@@ -1,3 +1,7 @@
+//! 整合包 command 模块
+//!
+//! Modrinth 搜索、版本列表、安装与取消安装的 invoke 入口
+
 use crate::errors::LauncherError;
 use crate::models::modpack::*;
 use crate::services::modpack_installer;
@@ -15,7 +19,6 @@ pub async fn search_modrinth_modpacks(
     offset: Option<u32>,
     sort_by: Option<String>,
 ) -> Result<ModrinthSearchResponse, LauncherError> {
-    // 合并不同来源的版本参数
     let merged_versions = game_versions
         .or(versions)
         .or_else(|| game_version.map(|single| vec![single]));
@@ -54,7 +57,6 @@ pub async fn install_modrinth_modpack(
         .await
 }
 
-/// 取消整合包安装
 #[tauri::command]
 pub fn cancel_modpack_install() -> Result<(), LauncherError> {
     modpack_installer::set_modpack_cancel_flag();

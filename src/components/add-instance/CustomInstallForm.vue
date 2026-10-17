@@ -31,17 +31,15 @@ const {
   createInstance,
 } = useInstanceCreation();
 
-// 类型守卫：检查是否为 LoaderVersionInfo（有 stable 属性）
+// 类型守卫：有 stable 属性即为 LoaderVersionInfo
 function hasStableProperty(item: ForgeVersion | LoaderVersionInfo): item is LoaderVersionInfo {
   return 'stable' in item;
 }
 
-// 计算实际使用的实例名称
 const effectiveInstanceName = computed(() => {
   return instanceName.value.trim() || defaultInstanceName.value;
 });
 
-// 计算是否可以创建
 const canCreate = computed(() => {
   return (
     selectedVersion.value &&
@@ -52,7 +50,6 @@ const canCreate = computed(() => {
   );
 });
 
-// 获取加载器版本显示文本
 function getLoaderVersionText(item: ForgeVersion | LoaderVersionInfo | null | undefined): string {
   if (!item) return '';
   if ('version' in item) {
@@ -60,7 +57,6 @@ function getLoaderVersionText(item: ForgeVersion | LoaderVersionInfo | null | un
     if ('mcversion' in item) {
       return item.version;
     }
-    // LoaderVersionInfo 有 stable 字段
     const stableText =
       'stable' in item && item.stable === true ? ' (稳定)' : 'stable' in item && item.stable === false ? ' (测试)' : '';
     return item.version + stableText;
@@ -68,7 +64,6 @@ function getLoaderVersionText(item: ForgeVersion | LoaderVersionInfo | null | un
   return String(item);
 }
 
-// 创建实例后跳转
 async function handleCreate() {
   await createInstance();
   if (!installing.value && !showProgress.value) {
@@ -83,7 +78,6 @@ onMounted(() => {
 
 <template>
   <div>
-    <!-- 游戏版本选择 -->
     <v-card color="surface-container" variant="flat" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-4">
@@ -159,7 +153,6 @@ onMounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- Mod 加载器选择 -->
     <v-card color="surface-container" variant="flat" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -172,7 +165,6 @@ onMounted(() => {
           </v-fade-transition>
         </div>
 
-        <!-- 加载器类型选择 -->
         <v-btn-toggle
           v-model="selectedModLoaderType"
           mandatory
@@ -198,7 +190,6 @@ onMounted(() => {
           </v-btn>
         </v-btn-toggle>
 
-        <!-- 加载器版本选择 -->
         <v-expand-transition>
           <div v-if="selectedModLoaderType !== 'None'">
             <v-select
@@ -258,14 +249,12 @@ onMounted(() => {
           </div>
         </v-expand-transition>
 
-        <!-- 未选择版本提示 -->
         <v-alert v-if="!selectedVersion" type="info" variant="tonal" density="compact" class="mt-2">
           请先选择游戏版本以查看可用的加载器
         </v-alert>
       </v-card-text>
     </v-card>
 
-    <!-- 实例名称 -->
     <v-card color="surface-container" variant="flat" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -299,7 +288,6 @@ onMounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 安装进度 -->
     <v-expand-transition>
       <v-card v-if="showProgress" color="surface-container-high" variant="flat" class="mb-4">
         <v-card-text class="pa-4">
@@ -330,7 +318,6 @@ onMounted(() => {
       </v-card>
     </v-expand-transition>
 
-    <!-- 配置预览和操作按钮 -->
     <v-card v-if="selectedVersion && !showProgress" color="primary-container" variant="flat" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between">
@@ -369,7 +356,6 @@ onMounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 未选择版本时的按钮 -->
     <div v-else-if="!showProgress" class="d-flex justify-end">
       <v-btn color="primary" size="large" disabled>
         <v-icon start>mdi-download</v-icon>

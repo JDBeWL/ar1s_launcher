@@ -1,3 +1,7 @@
+/**
+ * 游戏启动流程
+ * 唯一启动入口：登录态与 Java 兼容性前置校验，文件缺失可触发修复，最终交给 launch_instance
+ */
 import { ref } from 'vue';
 import { useEventSubscription } from './useEventSubscription';
 import { versionApi, instanceApi, javaApi } from '../services';
@@ -128,10 +132,7 @@ export function useGameLaunch() {
     }
   }
 
-  /**
-   * 唯一的启动入口：认证校验、Java 兼容性、文件完整性检查都在这里，
-   * 实际启动交给后端的 launch_instance，由它读取配置里的认证与内存设置。
-   */
+  // 唯一启动入口；认证与内存设置由后端 launch_instance 从配置读取，这里只做前置校验
   async function launchInstance(instanceName: string): Promise<boolean> {
     if (!instanceName) {
       notificationStore.warning('请先选择一个实例');

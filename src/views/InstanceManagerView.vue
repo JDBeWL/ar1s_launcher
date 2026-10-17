@@ -41,7 +41,6 @@ const sortOptions = [
   { title: '游戏版本', value: 'version' },
 ];
 
-// 过滤和排序后的实例列表
 const filteredInstances = computed(() => {
   let result = instances.value;
 
@@ -79,7 +78,6 @@ async function loadInstances() {
   }
 }
 
-// 列表行的次要信息：加载器 + 游戏版本 + Mod 数
 function instanceMeta(instance: GameInstance): string {
   const loader = instance.loaderType && instance.loaderType !== 'None' ? instance.loaderType : '';
   const version = instance.gameVersion || instance.version || '';
@@ -161,7 +159,6 @@ async function deleteInstance() {
   }
 }
 
-/** 打开某个实例的 Mod 管理对话框 */
 async function openModDialog(instance: GameInstance) {
   currentInstance.value = instance;
   mods.value = [];
@@ -225,12 +222,10 @@ function formatModSize(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-// 持久化用户偏好
 watch(viewMode, (v) => localStorage.setItem('instanceViewMode', v));
 watch(sortBy, (v) => localStorage.setItem('instanceSortBy', v));
 
 onMounted(() => {
-  // 从路由参数中读取搜索关键词
   const searchParam = route.query.search;
   if (searchParam && typeof searchParam === 'string') {
     searchQuery.value = searchParam;
@@ -241,7 +236,6 @@ onMounted(() => {
 
 <template>
   <v-container fluid class="page-container pa-4">
-    <!-- 搜索和筛选工具栏 -->
     <div class="d-flex align-center justify-space-between mb-4">
       <div class="d-flex align-center flex-grow-1 mr-4">
         <v-text-field
@@ -314,7 +308,6 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 加载状态 - 骨架屏 -->
     <template v-if="loading">
       <v-row density="compact">
         <v-col v-for="i in 6" :key="i" cols="12" sm="6" md="4">
@@ -335,7 +328,6 @@ onMounted(() => {
       </v-row>
     </template>
 
-    <!-- 空状态 -->
     <div v-else-if="instances.length === 0" class="text-center py-12">
       <v-avatar size="80" color="surface-container-high" class="mb-4">
         <v-icon size="40" color="on-surface-variant">mdi-cube-outline</v-icon>
@@ -348,7 +340,6 @@ onMounted(() => {
       </v-btn>
     </div>
 
-    <!-- 搜索无结果 -->
     <div v-else-if="filteredInstances.length === 0" class="text-center py-12">
       <v-avatar size="64" color="surface-container-high" class="mb-3">
         <v-icon size="32" color="on-surface-variant">mdi-magnify-close</v-icon>
@@ -357,7 +348,6 @@ onMounted(() => {
       <div class="text-body-medium text-on-surface-variant">尝试其他搜索词</div>
     </div>
 
-    <!-- 网格视图 -->
     <v-row v-else-if="viewMode === 'grid'" density="compact">
       <v-col v-for="instance in filteredInstances" :key="instance.name" cols="12" sm="6" md="4">
         <InstanceCard
@@ -372,7 +362,6 @@ onMounted(() => {
       </v-col>
     </v-row>
 
-    <!-- 列表视图 -->
     <v-card v-else color="surface-container" variant="flat">
       <v-list lines="two" bg-color="transparent">
         <v-list-item v-for="instance in filteredInstances" :key="instance.name" class="py-3">
@@ -442,7 +431,6 @@ onMounted(() => {
       </v-list>
     </v-card>
 
-    <!-- 统计信息 -->
     <div v-if="instances.length > 0" class="text-center text-body-small text-on-surface-variant mt-4">
       共 {{ instances.length }} 个实例
       <span v-if="searchQuery && filteredInstances.length !== instances.length">
@@ -450,7 +438,6 @@ onMounted(() => {
       </span>
     </div>
 
-    <!-- 重命名对话框 -->
     <v-dialog v-model="renameDialog" max-width="360">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
@@ -472,7 +459,6 @@ onMounted(() => {
       </v-card>
     </v-dialog>
 
-    <!-- Mod 管理对话框 -->
     <v-dialog v-model="modDialog" max-width="640" scrollable>
       <v-card color="surface-container-high">
         <v-card-title class="d-flex align-center pa-4 pb-3">
@@ -560,7 +546,6 @@ onMounted(() => {
       </v-card>
     </v-dialog>
 
-    <!-- 删除模组确认 -->
     <v-dialog v-model="modDeleteDialog" max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
@@ -578,7 +563,6 @@ onMounted(() => {
       </v-card>
     </v-dialog>
 
-    <!-- 删除确认对话框 -->
     <v-dialog v-model="deleteDialog" max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">

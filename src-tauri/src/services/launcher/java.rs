@@ -1,4 +1,6 @@
-//! Java 路径解析和 UUID 生成
+//! Java 解析与玩家 UUID 模块
+//!
+//! 相对路径解析、java -version 探测、MC 版本到推荐 Java 范围的映射与多安装自动挑选
 
 use crate::errors::LauncherError;
 use crate::models::GameConfig;
@@ -13,7 +15,6 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-/// 生成离线模式 UUID
 pub fn generate_offline_uuid(username: &str) -> String {
     if let Ok(config) = load_config() {
         if let (Some(saved_username), Some(saved_uuid)) = (&config.username, &config.uuid) {
@@ -78,14 +79,11 @@ pub fn resolve_java_path(config: &GameConfig) -> Result<String, LauncherError> {
     }
 }
 
-/// 解析游戏目录路径（支持相对路径）
 pub fn resolve_game_dir(game_dir: &str) -> PathBuf {
     resolve_path(game_dir)
 }
 
-/// 检测 Java 版本号
-/// 返回主版本号，如 Java 17 返回 17，Java 21 返回 21
-/// 如果检测失败返回 None
+/// 返回 Java 主版本号；Java 8 的 "1.8.0_x" 版本串按 8 计
 pub fn detect_java_version(java_path: &str) -> Option<u32> {
     let resolved = resolve_path(java_path);
     let actual_path = if resolved.exists() {
@@ -128,40 +126,25 @@ pub fn detect_java_version(java_path: &str) -> Option<u32> {
     None
 }
 
-/// 根据 Minecraft 版本号获取所需的最低 Java 版本
-/// - 1.16.5 及以下 → 8
-/// - 1.17 ~ 1.20.4 → 17
-/// - 1.20.5 ~ 1.21.x → 21
-/// - 26.x+ → 25
+/// 所需最低 Java 版本，即 recommended_java_version_range 的下界
 pub fn required_java_version(mc_version: &str) -> u32 {
     recommended_java_version_range(mc_version).0
 }
 
 use crate::utils::minecraft::parse_mc_version;
 
-/// 获取 Minecraft 版本推荐的 Java 版本范围 (min, max)
-///
-/// 返回 (最低版本, 最高版本)。启动器会优先在范围内寻找最匹配的 Java。
-/// 如果用户只有范围外的 Java，也会尝试使用（带警告）。
-///
-/// 版本对应关系：
-/// - 1.16.5 及以下 → (8, 8)     // 1.12.2/1.16.5 推荐用 Java 8，Java 17+ 启动 Forge 会报错
-/// - 1.17 ~ 1.20.4 → (17, 17)   // 推荐 Java 17，Java 21+ 可能有兼容性问题
-/// - 1.20.5 ~ 1.21.x → (21, 23) // 推荐 Java 21~23，Java 24+ 可能有 mod/库兼容性问题
-/// - 26.x+ → (25, 99)           // 新格式，需要 Java 25+
+/// 推荐 Java 版本范围 (min, max)；范围外的 Java 也会用，但带警告
+/// 下界依据：≤1.16.5 用 Java 17+ 启动 Forge 会报错，1.17~1.20.4 用 Java 21+ 有兼容风险，1.20.5+ 用 Java 24+ 有 mod/库兼容风险，26.x 需 Java 25+
 pub fn recommended_java_version_range(mc_version: &str) -> (u32, u32) {
     if let Some((major, minor)) = parse_mc_version(mc_version) {
         if major >= 26 {
             return (25, 99);
         }
         if major > 1 || (major == 1 && minor > 20) {
-            // 1.20.5+ / 1.21.x: 推荐 Java 21~23
-            // 注意：parse_mc_version 暂时没返回 patch，所以 1.20.5 只能靠 minor 判定
-            // 如果需要精确到 1.20.5，可以改进 parse_mc_version
+            // parse_mc_version 不返回 patch，1.20.5 只能靠 minor 判定
             return (21, 23);
         }
         if major == 1 && minor == 20 {
-            // 1.20.x，尝试检查 patch
             let parts: Vec<&str> = mc_version.split('.').collect();
             if parts.len() >= 3 {
                 if let Ok(patch) = parts[2].split('-').next().unwrap_or("0").parse::<u32>() {
@@ -176,27 +159,18 @@ pub fn recommended_java_version_range(mc_version: &str) -> (u32, u32) {
             return (17, 17);
         }
         if major == 1 && minor <= 7 {
-            // 1.7.10 及以前的版本，允许使用 Java 7 或 8
-            // 注：1.7.10 虽推荐 Java 8，但某些极旧模组可能需要 Java 7
+            // 某些极旧模组可能只能用 Java 7，故下界放到 7
             return (7, 8);
         }
         // 1.8 ~ 1.16.5
         return (8, 8);
     }
 
-    // 无法解析时默认返回 17（大部分现代版本）
+    // 无法解析时按多数现代版本取 17
     (17, 17)
 }
 
-/// 解析实际的 Minecraft 版本号
-/// 如果输入的是实例 ID，则尝试从其 JSON 中获取真实版本
-///
-/// 优先级：
-/// 1. 如果 version_id 本身就是合法的 MC 版本号，直接返回
-/// 2. 从版本 JSON 的 FML 参数中提取 `--fml.mcVersion`
-/// 3. 从版本 JSON 的 patches 数组中提取 game 版本
-/// 4. 从 `inheritsFrom` 字段解析（如果值是合法 MC 版本号则直接使用）
-/// 5. 递归查找父版本 JSON（处理多层继承）
+/// 把实例 ID 解析为真实 MC 版本，提取顺序：版本 ID 本身 → --fml.mcVersion → patches game 版本 → inheritsFrom 递归
 pub fn resolve_actual_mc_version(version_id: &str, game_dir: &str) -> String {
     if parse_mc_version(version_id).is_some() {
         return version_id.to_string();
@@ -233,7 +207,6 @@ pub fn resolve_actual_mc_version(version_id: &str, game_dir: &str) -> String {
     version_id.to_string()
 }
 
-/// 从版本 JSON 的 arguments 中提取 --fml.mcVersion
 fn extract_fml_mc_version(json: &serde_json::Value) -> Option<String> {
     let args = json
         .get("arguments")
@@ -250,7 +223,6 @@ fn extract_fml_mc_version(json: &serde_json::Value) -> Option<String> {
     None
 }
 
-/// 从版本 JSON 的 patches 数组中提取 game 版本
 fn extract_patches_game_version(json: &serde_json::Value) -> Option<String> {
     let patches = json["patches"].as_array()?;
 
@@ -267,7 +239,6 @@ fn resolve_actual_mc_version_recursive(version_id: &str, game_dir: &str, depth: 
         return version_id.to_string();
     }
 
-    // 如果 version_id 看起来已经像个正经版本号了（如 1.12.2），直接返回
     if parse_mc_version(version_id).is_some() {
         return version_id.to_string();
     }
@@ -292,7 +263,6 @@ fn resolve_actual_mc_version_recursive(version_id: &str, game_dir: &str, depth: 
     version_id.to_string()
 }
 
-/// Java 匹配结果
 #[derive(Debug, Clone)]
 pub struct JavaMatchResult {
     pub path: String,
@@ -301,9 +271,7 @@ pub struct JavaMatchResult {
     pub warning: Option<String>,
 }
 
-/// 自动匹配 Java 版本
-/// 从所有可用的 Java 安装中选择最匹配的版本
-/// 优先选择推荐版本范围内的 Java，如果没有则选择兼容的（带警告）
+/// 选取策略：优先推荐范围内最高版本（兼容性最好），否则取满足下界的最低版本
 pub fn auto_match_java_for_version(mc_version: &str) -> Option<JavaMatchResult> {
     let (min_ver, max_ver) = recommended_java_version_range(mc_version);
     log::info!(
@@ -343,7 +311,6 @@ pub fn auto_match_java_for_version(mc_version: &str) -> Option<JavaMatchResult> 
         return None;
     }
 
-    // 第一步：在推荐范围内寻找最接近 max_ver 的版本（范围内最高版本通常兼容性最好）
     let optimal = candidates
         .iter()
         .filter(|(_, ver)| *ver >= min_ver && *ver <= max_ver)
@@ -359,7 +326,7 @@ pub fn auto_match_java_for_version(mc_version: &str) -> Option<JavaMatchResult> 
         });
     }
 
-    // 第二步：如果没有范围内的，找满足最低要求的最低版本（避免过高的版本）
+    // 范围外优先取满足下界的最低版本，避免版本过高
     let fallback = candidates
         .iter()
         .filter(|(_, ver)| *ver >= min_ver)

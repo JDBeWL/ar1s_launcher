@@ -161,7 +161,6 @@ onUnmounted(() => {
 
 <template>
   <v-container fluid class="page-container pa-4">
-    <!-- 搜索和筛选 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <v-row density="compact" align="center">
@@ -231,7 +230,6 @@ onUnmounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 版本列表 - 骨架屏加载 -->
     <template v-if="loading">
       <v-row density="compact">
         <v-col v-for="i in 12" :key="i" cols="12" sm="6" md="4">
@@ -272,7 +270,6 @@ onUnmounted(() => {
     </div>
 
     <template v-else>
-      <!-- 版本网格 -->
       <v-row density="compact">
         <v-col v-for="item in displayedVersions" :key="item.id" cols="12" sm="6" md="4">
           <v-card variant="flat" color="surface-container" class="version-card h-100">
@@ -315,10 +312,8 @@ onUnmounted(() => {
         </v-col>
       </v-row>
 
-      <!-- 无限滚动哨兵 -->
       <div ref="sentinelRef" class="infinite-scroll-sentinel" />
 
-      <!-- 统计信息 -->
       <div class="text-center text-body-small text-on-surface-variant mt-3">
         {{
           hasMore

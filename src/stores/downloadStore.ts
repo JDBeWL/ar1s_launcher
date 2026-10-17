@@ -1,3 +1,7 @@
+/**
+ * 版本下载状态存储
+ * 订阅 download-progress 维护进度与错误，取消失败时回退成 emit 事件
+ */
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { emit } from '@tauri-apps/api/event';
@@ -81,11 +85,10 @@ export const useDownloadStore = defineStore('download', () => {
     }
   }
 
-  // Actions
   async function startDownload(versionId: string, source: string = 'bmcl') {
     selectedVersion.value = versionId;
     downloadProgress.value.status = 'downloading';
-    downloadError.value = null; // Reset error on new download
+    downloadError.value = null;
     completionNotified.value = false;
     userHidNotification.value = false;
     showNotification.value = true;

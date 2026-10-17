@@ -1,16 +1,14 @@
-//! 全局 HTTP 客户端管理
+//! 全局 HTTP 客户端模块
 //!
-//! 提供通用的全局 HTTP 客户端（带连接池复用、超时、UA），
-//! 适用于 API 请求、加载器安装、整合包下载等场景。
-//! 下载模块 (`download::http`) 有自己的专用客户端（禁用压缩、更长超时）。
+//! 惰性初始化的共享 reqwest 客户端（浏览器 UA、30 秒超时），供 API 与元数据请求
+//! 下载走 download::http 的专用客户端（禁用压缩、更长超时），不用这里的
 
 use reqwest::Client;
 use std::time::Duration;
 
-/// 统一的 User-Agent 标识（使用浏览器 UA 以获得更好的 API 兼容性）
+/// 用浏览器 UA，部分 API 会拒绝非浏览器标识
 pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Ar1sLauncher/1.0";
 
-/// 全局通用 HTTP 客户端（懒加载单例，连接池复用）
 static HTTP_CLIENT: std::sync::LazyLock<Client> = std::sync::LazyLock::new(|| {
     Client::builder()
         .timeout(Duration::from_secs(30))
@@ -22,10 +20,6 @@ static HTTP_CLIENT: std::sync::LazyLock<Client> = std::sync::LazyLock::new(|| {
         .expect("Failed to create HTTP client")
 });
 
-/// 获取全局通用 HTTP 客户端引用
-///
-/// 适用于 API 请求、加载器版本查询、整合包搜索等场景。
-/// 连接池自动复用，无需每次创建新客户端。
 pub fn get_client() -> &'static Client {
     &HTTP_CLIENT
 }

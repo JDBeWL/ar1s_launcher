@@ -1,3 +1,7 @@
+//! 通用工具模块集合
+//!
+//! 无状态纯函数，不属于任何服务、被多处复用
+
 pub mod file_utils;
 pub mod logger;
 pub mod minecraft;

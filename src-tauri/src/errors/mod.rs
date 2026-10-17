@@ -1,3 +1,7 @@
+//! 错误类型模块
+//!
+//! 唯一的 LauncherError 枚举与各底层错误的 From 转换，供 `?` 冒泡到 command 返回值
+
 use std::io;
 use thiserror::Error;
 use tokio::task::JoinError;

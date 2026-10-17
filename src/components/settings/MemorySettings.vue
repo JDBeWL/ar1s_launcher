@@ -107,7 +107,6 @@ onMounted(async () => {
 
 <template>
   <div class="settings-group">
-    <!-- 系统内存概览 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -138,7 +137,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 自动内存设置 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-1">
@@ -170,7 +168,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 手动内存设置 -->
     <v-card variant="flat" v-if="!autoMemoryEnabled" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -178,7 +175,6 @@ onMounted(async () => {
           <span class="text-title-medium">手动设置</span>
         </div>
 
-        <!-- 快捷预设 -->
         <div class="mb-5">
           <div class="text-body-medium text-on-surface-variant mb-3">快捷预设</div>
           <div class="d-flex flex-wrap ga-2">
@@ -195,7 +191,6 @@ onMounted(async () => {
           </div>
         </div>
 
-        <!-- 滑块 -->
         <div class="mb-4">
           <div class="d-flex align-center justify-space-between mb-2">
             <span class="text-body-medium">自定义内存</span>
@@ -232,7 +227,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 警告和建议 -->
     <div v-if="memoryWarning || memoryEfficiency" class="mb-4">
       <v-alert v-if="memoryWarning" color="warning-container" density="compact" class="mb-2">
         <template #prepend>
@@ -249,7 +243,6 @@ onMounted(async () => {
       </v-alert>
     </div>
 
-    <!-- 内存建议 -->
     <v-alert color="secondary-container" class="tip-alert">
       <template #prepend>
         <v-icon size="20" color="on-secondary-container">mdi-information-outline</v-icon>

@@ -1,8 +1,7 @@
 /**
- * 服务层入口
- * 统一导出所有 API 和工具
+ * API 统一出口
+ * 汇总各分域接口与 Modrinth 类型，供组件按一个入口引用
  */
-
 export { api, versionApi, instanceApi, loaderApi, javaApi, configApi, userApi, modpackApi } from './api';
 
 export type { ModrinthSearchResult, ModrinthModpack } from '../types/events';

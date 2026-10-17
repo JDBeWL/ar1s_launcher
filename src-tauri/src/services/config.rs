@@ -1,3 +1,7 @@
+//! 配置文件读写模块
+//!
+//! 读写 exe 同目录的 ar1s.json 并带进程内缓存；解析失败时备份 .bak 再重建默认配置
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -63,7 +67,6 @@ pub fn invalidate_config_cache() {
     log::debug!("配置缓存已清除");
 }
 
-// 获取保存的用户名
 pub fn get_saved_username() -> Result<Option<String>, LauncherError> {
     let config = load_config()?;
     Ok(config.username.clone())
@@ -73,7 +76,6 @@ pub fn set_saved_username(username: String) -> Result<(), LauncherError> {
     set_config_value(|config| config.username = Some(username))
 }
 
-// 获取保存的UUID
 pub fn get_saved_uuid() -> Result<Option<String>, LauncherError> {
     let config = load_config()?;
     Ok(config.uuid.clone())
@@ -96,32 +98,27 @@ pub fn load_config() -> Result<Arc<GameConfig>, LauncherError> {
     Ok(arc)
 }
 
-/// 内部配置加载函数（不使用缓存）
 fn load_config_internal() -> Result<GameConfig, LauncherError> {
     let config_path = get_config_path()?;
     let is_first_run = !config_path.exists();
 
     if config_path.exists() {
         let content = fs::read_to_string(&config_path)?;
-        // 如果配置文件内容为空或损坏，自动备份并重建默认配置
+        // 配置损坏时备份为 .bak 并重建默认配置，不向上报错
         match serde_json::from_str::<GameConfig>(&content) {
             Ok(config) => Ok(config),
             Err(_) => {
-                // 备份损坏的配置文件
                 let backup_path = config_path.with_extension("bak");
                 let _ = fs::copy(&config_path, &backup_path);
                 log::warn!("配置文件损坏，已备份并重建默认配置");
-                // 重建默认配置
                 create_default_config(is_first_run)
             }
         }
     } else {
-        // 创建默认配置
         create_default_config(is_first_run)
     }
 }
 
-/// 创建默认配置
 fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError> {
     let exe_dir = EXE_DIR
         .as_ref()
@@ -176,7 +173,6 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         jvm_advanced: crate::models::JvmAdvancedOptions::default(),
     };
 
-    // 首次运行时自动检测Java
     if is_first_run {
         if let Ok(java_paths) = auto_detect_java() {
             if !java_paths.is_empty() {
@@ -209,14 +205,12 @@ pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
     Ok(())
 }
 
-/// 内部保存函数（不更新缓存）
 fn save_config_internal(config: &GameConfig) -> Result<(), LauncherError> {
     let config_path = get_config_path()?;
     fs::write(config_path, serde_json::to_string_pretty(config)?)?;
     Ok(())
 }
 
-/// 缓存的可执行文件所在目录（避免每次调用 current_exe()）
 static EXE_DIR: std::sync::LazyLock<Result<PathBuf, String>> = std::sync::LazyLock::new(|| {
     std::env::current_exe()
         .map_err(|e| format!("无法获取可执行文件路径: {}", e))?
@@ -225,7 +219,6 @@ static EXE_DIR: std::sync::LazyLock<Result<PathBuf, String>> = std::sync::LazyLo
         .ok_or_else(|| "无法获取可执行文件目录".to_string())
 });
 
-/// 获取配置文件路径（使用缓存的可执行文件目录）
 fn get_config_path() -> Result<PathBuf, LauncherError> {
     let exe_dir = EXE_DIR
         .as_ref()
@@ -233,7 +226,6 @@ fn get_config_path() -> Result<PathBuf, LauncherError> {
     Ok(exe_dir.join("ar1s.json"))
 }
 
-/// 配置键值映射定义
 #[derive(Debug, Clone, Copy)]
 enum ConfigKey {
     JavaPath,
@@ -430,7 +422,6 @@ pub fn save_config_key(key: String, value: String) -> Result<(), LauncherError> 
     }
 }
 
-/// 通用配置获取函数
 fn get_config_value<T, F>(getter: F) -> Result<T, LauncherError>
 where
     F: FnOnce(&GameConfig) -> T,
@@ -439,7 +430,6 @@ where
     Ok(getter(&config))
 }
 
-/// 通用配置设置函数
 fn set_config_value<T, F>(setter: F) -> Result<(), LauncherError>
 where
     F: FnOnce(&mut GameConfig) -> T,
@@ -494,18 +484,17 @@ pub fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
     set_config_value(|config| config.download_threads = threads)
 }
 
-/// 获取系统总内存（单位: MB）
+/// 单位：MB
 pub fn get_total_memory() -> u64 {
     let stats = get_system_memory();
     stats.total_memory_mb
 }
 
-/// 检查内存设置是否超过系统90%（用于前端警告）
+/// 超过系统内存 90% 时返回警告文案
 pub fn check_memory_warning(memory_mb: u32) -> Result<Option<String>, LauncherError> {
     Ok(get_memory_warning_message(memory_mb))
 }
 
-/// 获取自动内存配置
 pub fn get_auto_memory_config() -> Result<AutoMemoryConfig, LauncherError> {
     let config = load_config()?;
     let auto_config = AutoMemoryConfig {
@@ -520,7 +509,6 @@ pub fn set_auto_memory_enabled(enabled: bool) -> Result<(), LauncherError> {
     set_config_value(|config| config.auto_memory_enabled = enabled)
 }
 
-/// 自动设置内存（如果启用自动设置）
 pub fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
     let config = load_config()?;
     let auto_config = AutoMemoryConfig {
@@ -537,7 +525,6 @@ pub fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
     Ok(recommended_memory)
 }
 
-/// 分析内存使用效率
 pub fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError> {
     Ok(crate::services::memory::analyze_memory_efficiency(
         memory_mb,
@@ -553,7 +540,6 @@ pub fn update_instance_last_played(instance_name: &str) -> Result<(), LauncherEr
     set_config_value(|config| config.instance_last_played.insert(key, now))
 }
 
-/// 获取实例的上次启动时间
 pub fn get_instance_last_played(instance_name: &str) -> Option<i64> {
     load_config()
         .ok()
@@ -575,7 +561,6 @@ pub fn rename_instance_last_played(old_name: &str, new_name: &str) -> Result<(),
     })
 }
 
-/// 获取上次选择的游戏版本
 pub fn get_last_selected_version() -> Option<String> {
     load_config()
         .ok()

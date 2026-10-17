@@ -1,8 +1,7 @@
 /**
- * 统一日志系统
- * 提供统一的日志接口，便于后续扩展（如发送到后端、日志文件等）
+ * 前端日志模块
+ * 带 [context] 前缀包装 console，生产环境完全静默以免泄露敏感信息
  */
-
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 class Logger {
@@ -14,9 +13,7 @@ class Logger {
   private log(level: LogLevel, message: string, error?: unknown, context?: string): void {
     const formattedMessage = this.formatMessage(level, message, context);
 
-    // 根据环境决定输出方式
     if (import.meta.env.DEV) {
-      // 开发环境：详细输出
       switch (level) {
         case 'debug':
           console.debug(formattedMessage, error || '');
@@ -56,10 +53,8 @@ class Logger {
   }
 }
 
-// 导出单例
 export const logger = new Logger();
 
-// 便捷函数
 export const logError = (message: string, error?: unknown, context?: string) => {
   logger.error(message, error, context);
 };

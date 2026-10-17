@@ -1,40 +1,11 @@
 #!/usr/bin/env python3
 """生成界面用的中文子集字体（public/fonts/noto-sans-sc-subset.woff2）。
 
-背景
-----
-桌面端不能依赖系统字体：Windows 是微软雅黑、macOS 是苹方、Linux 是 Noto Sans CJK，
-三者的字面尺寸和墨迹位置都不同，同一份 CSS 在不同机器上会差 1px 级别。
-所以中文也随包自带一份。
-
-做法
-----
-拿 Noto Sans SC 的**可变字体**（wght 100-900，17.8 MB）裁出实际要用的字，
-输出仍然是可变字体 —— 一个文件覆盖全部字重，比按字重各存一份静态字体省一半体积。
-
-字符集 = 以下四部分的并集：
-  1. 界面实际用字：扫描 src/ 与 src-tauri/src/ 的源码，取出所有 CJK/标点/全角字符；
-     Rust 那边的报错文案也会显示到界面上，所以要一起扫。
-  2. GB2312 全表：一级（3755）+ 二级（3008）汉字 + 符号区。动态文本用得到 ——
-     实例名、整合包标题、启动器转述的游戏日志，这些不可能靠扫源码穷举。
-     6763 字覆盖现代汉语约 99.7%，符号区补上希腊/俄文字母、圈码、箭头、制表符。
-  3. 拉丁基本区 + Latin-1：给字体留一份自足能力，Roboto 加载失败时也能兜住 ASCII。
-  4. 界面里出现的排版符号：破折号、省略号、书名号、全角标点等。
-
-用法
-----
-    pip install "fonttools[woff]" brotli
-    python scripts/build-cjk-subset.py
-
-依赖只在这条维护命令里用到，不参与 pnpm build / tauri build。
-
-产物
-----
-    public/fonts/noto-sans-sc-subset.woff2   (约 2.0 MB)
-    public/fonts/NotoSansSC-OFL.txt          (OFL-1.1 授权文本，必须随包分发)
-
-改完界面文案后重新跑一次即可；漏掉的生僻字不会变成豆腐块，
-浏览器会逐字回退到系统 CJK 字体，只是那些字不受版本一致性保护。
+中文必须随包自带：Windows/macOS/Linux 的系统 CJK 字体字面尺寸与墨迹位置都不同，同一份 CSS 在各机器上渲染不一致。
+字符集除扫描 src/ 与 src-tauri/src 得到的界面用字外，还要并上 GB2312 全表 —— 实例名、整合包标题、转述的游戏日志无法靠扫源码穷举。
+源文件取可变字体，裁剪后仍是可变字体，一个文件覆盖全部字重。
+NotoSansSC-OFL.txt 是 OFL-1.1 要求随包分发的授权文本。
+用法：pip install "fonttools[woff]" brotli 后执行 python scripts/build-cjk-subset.py；改完界面文案重跑一次，依赖不进 pnpm/tauri build。
 """
 
 from __future__ import annotations
@@ -52,11 +23,9 @@ CACHE = ROOT / ".cache" / "NotoSansSC-VF.ttf"
 OUT_FONT = ROOT / "public" / "fonts" / "noto-sans-sc-subset.woff2"
 OUT_LICENSE = ROOT / "public" / "fonts" / "NotoSansSC-OFL.txt"
 
-# 扫描这些目录下的源码，收集界面用字
 SCAN_DIRS = ("src", "src-tauri/src")
 SCAN_EXT = {".vue", ".ts", ".css", ".rs", ".html"}
 
-# 额外强制保留的排版符号（界面里用到的）
 EXTRA_SYMBOLS = "—‘’“”…•·×→✓−"
 
 
@@ -71,8 +40,7 @@ def collect_charset() -> set[str]:
                     if o > 0x2000:  # 汉字、标点、全角字符都在这个区间之上
                         chars.add(ch)
 
-    # GB2312 全表：0xA1-0xA9 是符号区（拉丁/希腊/俄文字母、圈码、箭头、制表符，
-    # 整合包描述和文件路径里会出现），0xB0-0xF7 是一级(3755)+二级(3008)汉字
+    # GB2312：0xA1-0xA9 符号区（希腊/俄文字母、圈码、箭头、制表符），0xB0-0xF7 一二级汉字
     for hi in range(0xA1, 0xF8):
         for lo in range(0xA1, 0xFF):
             try:
@@ -80,8 +48,8 @@ def collect_charset() -> set[str]:
             except UnicodeDecodeError:
                 pass
 
-    chars |= {chr(c) for c in range(0x20, 0x7F)}  # ASCII 可打印区
-    chars |= {chr(c) for c in range(0xA0, 0x100)}  # Latin-1
+    chars |= {chr(c) for c in range(0x20, 0x7F)}
+    chars |= {chr(c) for c in range(0xA0, 0x100)}
     chars |= set(EXTRA_SYMBOLS)
     return chars
 
@@ -125,7 +93,6 @@ def main() -> int:
     font.flavor = "woff2"
     font.save(str(OUT_FONT))
 
-    # 校验：覆盖是否完整、可变轴是否还在
     check = TTFont(str(OUT_FONT))
     cmap = check.getBestCmap()
     missing = [c for c in chars if ord(c) not in cmap]

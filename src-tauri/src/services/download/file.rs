@@ -1,4 +1,6 @@
-//! 单文件下载逻辑（支持断点续传）
+//! 单个文件下载
+//!
+//! 写 .part 临时文件按 Range 续传，校验大小与 sha1，失败时切 fallback_url
 
 use crate::errors::LauncherError;
 use crate::models::DownloadJob;
@@ -17,12 +19,10 @@ pub async fn download_file(
     bytes_downloaded: &Arc<AtomicU64>,
     bytes_since_last: &Arc<AtomicU64>,
 ) -> Result<(), LauncherError> {
-    // 先检查取消状态
     if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
         return Err(LauncherError::Custom("Download cancelled".to_string()));
     }
 
-    // 1. 检查完整文件是否已存在且有效
     if job.path.exists() {
         match file_utils::verify_and_repair_file(job, &http).await {
             Ok(true) => {
@@ -49,7 +49,6 @@ pub async fn download_file(
         }
     }
 
-    // 2. 尝试从指定 URL 下载（支持断点续传）
     match download_with_resume(
         http,
         url,
@@ -89,7 +88,6 @@ pub async fn download_file(
     }
 }
 
-/// 检查是否应该尝试备用 URL
 fn should_try_fallback(e: &LauncherError) -> bool {
     let is_http_error = if let LauncherError::Http(err) = e {
         err.status() == Some(reqwest::StatusCode::NOT_FOUND) || err.is_timeout()
@@ -116,10 +114,8 @@ async fn download_with_resume(
 ) -> Result<(), LauncherError> {
     let tmp_path = job.path.with_extension("part");
 
-    // 检查是否有部分下载的文件
     let existing_size = get_existing_file_size(&tmp_path).await;
 
-    // 如果已下载的大小等于或超过预期大小，验证文件
     if existing_size > 0 && job.size > 0 && existing_size >= job.size {
         debug!(
             "Part file complete ({}), verifying: {}",
@@ -127,19 +123,16 @@ async fn download_with_resume(
             tmp_path.display()
         );
         if file_utils::verify_file(&tmp_path, job.hash.as_deref(), job.size)? {
-            // 文件完整，直接移动
             finalize_download(&tmp_path, &job.path).await?;
             bytes_downloaded.fetch_add(job.size, Ordering::Relaxed);
             return Ok(());
         } else {
-            // 文件损坏，删除重新下载
             warn!("Part file corrupted, restarting download");
             let _ = tokio::fs::remove_file(&tmp_path).await;
         }
     }
 
-    // 尝试断点续传（直接发送 Range 请求，download_chunk_with_resume 会处理
-    // 服务器不支持 Range 返回 200 的情况，无需额外 HEAD 预检请求）
+    // 不做 HEAD 预检，直接发 Range；返回 200（不支持 Range）由 download_chunk_with_resume 兜底
     let resume_from = if existing_size > 0 && job.size > 0 && existing_size < job.size {
         debug!("Resuming download from byte {}: {}", existing_size, url);
         Some(existing_size)
@@ -160,7 +153,6 @@ async fn download_with_resume(
     .await
 }
 
-/// 获取已存在文件的大小
 async fn get_existing_file_size(path: &std::path::Path) -> u64 {
     tokio::fs::metadata(path)
         .await
@@ -187,13 +179,11 @@ async fn download_chunk_with_resume(
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        // 根据是否续传选择打开模式
         let mut file = if resume_from.is_some() {
             let mut f = tokio::fs::OpenOptions::new()
                 .write(true)
                 .open(&tmp_path)
                 .await?;
-            // 移动到文件末尾
             f.seek(std::io::SeekFrom::End(0)).await?;
             f
         } else {
@@ -205,18 +195,15 @@ async fn download_chunk_with_resume(
                 .await?
         };
 
-        // 构建请求（如果续传，添加 Range 头）
         let mut request = client.get(url);
         if let Some(offset) = resume_from {
             request = request.header("Range", format!("bytes={}-", offset));
-            // 已下载的部分计入进度
             bytes_downloaded.fetch_add(offset, Ordering::Relaxed);
             bytes_added_this_attempt += offset;
         }
 
         let response = request.send().await?;
 
-        // 检查响应状态
         let status = response.status();
         if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
             return Err(LauncherError::Custom(format!(
@@ -225,13 +212,10 @@ async fn download_chunk_with_resume(
             )));
         }
 
-        // 如果请求了 Range 但服务器返回 200（而非 206），说明不支持续传
         if resume_from.is_some() && status == reqwest::StatusCode::OK {
             debug!("Server returned 200 instead of 206, restarting download");
-            // 回滚已计数的字节
             bytes_downloaded.fetch_sub(start_offset, Ordering::Relaxed);
             bytes_added_this_attempt -= start_offset;
-            // 重新打开文件并截断
             drop(file);
             file = tokio::fs::OpenOptions::new()
                 .create(true)
@@ -241,18 +225,14 @@ async fn download_chunk_with_resume(
                 .await?;
         }
 
-        // 验证 Content-Type（仅对新下载）
         if resume_from.is_none() {
             validate_content_type(&response, url)?;
         }
 
-        // 验证 Content-Length
         validate_content_length(&response, url, job.size, resume_from)?;
 
-        // 下载数据
         let mut response = response;
         while let Some(chunk) = response.chunk().await? {
-            // 检查本地状态和全局取消标志
             if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
                 return Err(LauncherError::Custom("Download cancelled".to_string()));
             }
@@ -263,13 +243,10 @@ async fn download_chunk_with_resume(
             bytes_added_this_attempt += len;
         }
 
-        // 确保数据写入磁盘
         file.flush().await?;
         drop(file);
 
-        // 验证文件
         if !file_utils::verify_file(&tmp_path, job.hash.as_deref(), job.size)? {
-            // 删除损坏的临时文件
             let _ = tokio::fs::remove_file(&tmp_path).await;
             return Err(LauncherError::Custom(format!(
                 "File verification failed for {}: size or hash mismatch (corrupted file deleted).",
@@ -277,14 +254,12 @@ async fn download_chunk_with_resume(
             )));
         }
 
-        // 移动文件到最终位置
         finalize_download(&tmp_path, &job.path).await?;
 
         Ok::<(), LauncherError>(())
     }
     .await;
 
-    // 如果失败，回滚已计数的字节
     if result.is_err() {
         bytes_downloaded.fetch_sub(bytes_added_this_attempt, Ordering::Relaxed);
     }
@@ -292,7 +267,6 @@ async fn download_chunk_with_resume(
     result
 }
 
-/// 验证 Content-Type
 fn validate_content_type(response: &reqwest::Response, url: &str) -> Result<(), LauncherError> {
     if let Some(ct) = response
         .headers()
@@ -310,7 +284,6 @@ fn validate_content_type(response: &reqwest::Response, url: &str) -> Result<(), 
     Ok(())
 }
 
-/// 验证 Content-Length
 fn validate_content_length(
     response: &reqwest::Response,
     url: &str,
@@ -339,7 +312,6 @@ fn validate_content_length(
     Ok(())
 }
 
-/// 完成下载，移动文件到最终位置
 async fn finalize_download(
     tmp_path: &std::path::Path,
     final_path: &std::path::Path,

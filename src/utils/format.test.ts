@@ -9,7 +9,7 @@ describe('formatTimeAgo', () => {
   it('刚刚（不到1分钟）', () => {
     const now = Date.now();
     expect(formatTimeAgo(now)).toBe('刚刚');
-    expect(formatTimeAgo(now - 30_000)).toBe('刚刚'); // 30秒前
+    expect(formatTimeAgo(now - 30_000)).toBe('刚刚');
   });
 
   it('N 分钟前', () => {
@@ -42,7 +42,6 @@ describe('formatTimeAgo', () => {
   it('超过30天显示具体日期', () => {
     const now = Date.now();
     const result = formatTimeAgo(now - 31 * 86_400_000);
-    // 应该返回 locale 日期字符串，不再是 "X 周前"
     expect(result).not.toContain('周前');
     expect(result).not.toContain('天前');
   });
@@ -63,7 +62,6 @@ describe('formatLastPlayed', () => {
 });
 
 describe('getLoaderIcon', () => {
-  // 列表场景
   it('Forge 列表图标', () => {
     expect(getLoaderIcon('forge', 'list')).toBe('mdi-anvil');
     expect(getLoaderIcon('Forge', 'list')).toBe('mdi-anvil');
@@ -86,7 +84,6 @@ describe('getLoaderIcon', () => {
     expect(getLoaderIcon('none', 'list')).toBe('mdi-minecraft');
   });
 
-  // 选择场景
   it('Fabric 选择图标', () => {
     expect(getLoaderIcon('fabric', 'select')).toBe('mdi-feather');
   });
@@ -95,7 +92,6 @@ describe('getLoaderIcon', () => {
     expect(getLoaderIcon('none', 'select')).toBe('mdi-close-circle-outline');
   });
 
-  // 默认值
   it('undefined 默认为 list 的 none', () => {
     expect(getLoaderIcon(undefined)).toBe('mdi-minecraft');
   });
@@ -132,8 +128,7 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(undefined)).toBe('undefined');
   });
 
-  // Tauri 命令 reject 出来的就是这个形状（LauncherError 的 Serialize 只有 message 字段），
-  // 调用点漏用它就会显示成 [object Object]
+  // Tauri 命令 reject 出来的就是这个形状：LauncherError 的 Serialize 只有 message 字段
   it('Tauri 错误载荷取 message', () => {
     expect(getErrorMessage({ message: '整合包可能不完整' })).toBe('整合包可能不完整');
   });

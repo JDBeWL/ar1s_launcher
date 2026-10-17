@@ -1,3 +1,7 @@
+//! 认证 command 模块
+//!
+//! 离线身份与 Microsoft 两种登录流程的 invoke 入口；待用的 device_code、code_verifier 存在进程内 Mutex
+
 use crate::errors::LauncherError;
 use crate::models::AuthType;
 use crate::services::config::{load_config, save_config};

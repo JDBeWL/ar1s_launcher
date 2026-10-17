@@ -1,3 +1,7 @@
+/**
+ * 前端路由
+ * HTML5 history 模式下的六条懒加载路由
+ */
 import { createRouter, createWebHistory } from 'vue-router';
 import type { RouteRecordRaw } from 'vue-router';
 

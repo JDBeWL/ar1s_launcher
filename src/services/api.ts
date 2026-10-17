@@ -1,6 +1,6 @@
 /**
- * 前端 API 服务层
- * 统一封装 Tauri invoke 调用，提供类型安全和请求去重
+ * Tauri 后端接口调用模块
+ * 按域封装 invoke，相同参数的并发请求合并，只读结果走缓存、写操作后按前缀失效
  */
 import { invoke } from '@tauri-apps/api/core';
 import { withCache, cache, CacheKeys } from './cache';
@@ -26,34 +26,22 @@ import type {
   GameConfig,
 } from '../types/events';
 
-// ============ 请求去重机制 ============
-
-/** 进行中的请求缓存 */
 const pendingRequests = new Map<string, Promise<unknown>>();
 
-/**
- * 去重的 invoke 调用
- * 相同的请求在进行中时会复用同一个 Promise
- */
 async function dedupedInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
   options?: { skipDedup?: boolean },
 ): Promise<T> {
-  // 如果跳过去重，直接调用
   if (options?.skipDedup) {
     return invoke<T>(cmd, args);
   }
 
-  // 生成请求唯一键
   const key = `${cmd}:${JSON.stringify(args ?? {})}`;
-
-  // 检查是否有进行中的相同请求
   if (pendingRequests.has(key)) {
     return pendingRequests.get(key) as Promise<T>;
   }
 
-  // 创建新请求
   const promise = invoke<T>(cmd, args).finally(() => {
     pendingRequests.delete(key);
   });
@@ -62,37 +50,29 @@ async function dedupedInvoke<T>(
   return promise;
 }
 
-// ============ 版本相关 API ============
-
 export const versionApi = {
-  /** 获取 Minecraft 版本列表（缓存 5 分钟） */
+  /** 默认 5 分钟缓存 */
   async getVersions(): Promise<VersionManifest> {
     return withCache(CacheKeys.VERSIONS, () => dedupedInvoke<VersionManifest>('get_versions'));
   },
 
-  /** 获取指定版本的文件大小信息 */
   async getVersionSize(versionId: string, mirror?: string): Promise<VersionSizeInfo> {
     return invoke<VersionSizeInfo>('get_version_size', { versionId, mirror });
   },
 
-  /** 下载指定版本 */
   async downloadVersion(versionId: string, mirror?: string): Promise<void> {
     // 下载不去重，每次都是新请求
     return invoke('download_version', { versionId, mirror });
   },
 
-  /** 取消下载 */
   async cancelDownload(): Promise<void> {
     return invoke('cancel_download');
   },
 
-  /** 验证版本文件完整性 */
   async validateVersionFiles(versionId: string): Promise<string[]> {
     return dedupedInvoke<string[]>('validate_version_files', { versionId });
   },
 };
-
-// ============ 实例相关 API ============
 
 export const instanceApi = {
   async getInstances(): Promise<GameInstance[]> {
@@ -122,7 +102,7 @@ export const instanceApi = {
     return invoke('open_instance_folder', { instanceName });
   },
 
-  /** 列出实例 mods 目录里的模组（含已禁用的）；状态会变，不走缓存 */
+  /** mods 目录里的模组，含已禁用的；状态会变，不走缓存 */
   async getMods(instanceName: string): Promise<ModInfo[]> {
     return invoke<ModInfo[]>('get_instance_mods', { instanceName });
   },
@@ -143,49 +123,45 @@ export const instanceApi = {
     cache.deleteByPrefix(CacheKeys.INSTANCES);
   },
 
-  /** 验证实例名称 */
   async validateInstanceName(name: string): Promise<InstanceNameValidation> {
     return dedupedInvoke<InstanceNameValidation>('validate_instance_name_cmd', { name });
   },
 
-  /** 检查实例名称是否可用 */
   async checkInstanceNameAvailable(name: string): Promise<InstanceNameValidation> {
     return dedupedInvoke<InstanceNameValidation>('check_instance_name_available', { name });
   },
 };
 
-// ============ 加载器相关 API ============
-
 export const loaderApi = {
-  /** 获取可用的加载器类型（缓存 5 分钟） */
+  /** 默认 5 分钟缓存 */
   async getAvailableLoaders(minecraftVersion: string): Promise<AvailableLoaders> {
     return withCache(`${CacheKeys.LOADERS}:${minecraftVersion}`, () =>
       dedupedInvoke<AvailableLoaders>('get_available_loaders', { minecraftVersion }),
     );
   },
 
-  /** 获取 Forge 版本列表（缓存 5 分钟） */
+  /** 默认 5 分钟缓存 */
   async getForgeVersions(minecraftVersion: string): Promise<ForgeVersion[]> {
     return withCache(`${CacheKeys.LOADERS}:forge:${minecraftVersion}`, () =>
       dedupedInvoke<ForgeVersion[]>('get_forge_versions', { minecraftVersion }),
     );
   },
 
-  /** 获取 Fabric 版本列表（缓存 5 分钟） */
+  /** 默认 5 分钟缓存 */
   async getFabricVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
     return withCache(`${CacheKeys.LOADERS}:fabric:${minecraftVersion}`, () =>
       dedupedInvoke<LoaderVersionInfo[]>('get_fabric_versions', { minecraftVersion }),
     );
   },
 
-  /** 获取 Quilt 版本列表（缓存 5 分钟） */
+  /** 默认 5 分钟缓存 */
   async getQuiltVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
     return withCache(`${CacheKeys.LOADERS}:quilt:${minecraftVersion}`, () =>
       dedupedInvoke<LoaderVersionInfo[]>('get_quilt_versions', { minecraftVersion }),
     );
   },
 
-  /** 获取 NeoForge 版本列表（缓存 5 分钟） */
+  /** 默认 5 分钟缓存 */
   async getNeoForgeVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
     return withCache(`${CacheKeys.LOADERS}:neoforge:${minecraftVersion}`, () =>
       dedupedInvoke<LoaderVersionInfo[]>('get_neoforge_versions', { minecraftVersion }),
@@ -193,75 +169,59 @@ export const loaderApi = {
   },
 };
 
-// ============ Java 相关 API ============
-
 export const javaApi = {
-  /** 查找 Java 安装（缓存 10 分钟） */
   async findJavaInstallations(): Promise<string[]> {
     return withCache(CacheKeys.JAVA, () => dedupedInvoke<string[]>('find_java_installations_command'), 10 * 60 * 1000);
   },
 
-  /** 强制刷新 Java 安装列表 */
   async refreshJavaInstallations(): Promise<string[]> {
     cache.delete(CacheKeys.JAVA);
     return invoke<string[]>('refresh_java_installations');
   },
 
-  /** 设置 Java 路径 */
   async setJavaPath(path: string): Promise<void> {
     return invoke('set_java_path_command', { path });
   },
 
-  /** 验证 Java 路径 */
   async validateJavaPath(path: string): Promise<boolean> {
     return dedupedInvoke<boolean>('validate_java_path', { path });
   },
 
-  /** 获取 Java 版本 */
   async getJavaVersion(path: string): Promise<string> {
     return dedupedInvoke<string>('get_java_version', { path });
   },
 
-  /** 获取自定义 Java 路径列表 */
   async getCustomJavaPaths(): Promise<string[]> {
     return dedupedInvoke<string[]>('get_custom_java_paths');
   },
 
-  /** 添加自定义 Java 路径 */
   async addCustomJavaPath(path: string): Promise<void> {
     return invoke('add_custom_java_path', { path });
   },
 
-  /** 移除自定义 Java 路径 */
   async removeCustomJavaPath(path: string): Promise<void> {
     return invoke('remove_custom_java_path', { path });
   },
 
-  /** 检查 Java 版本兼容性 */
   async checkJavaCompatibility(mcVersion: string): Promise<JavaCompatibilityResult> {
     return invoke<JavaCompatibilityResult>('check_java_compatibility', { mcVersion });
   },
 };
-
-// ============ 配置相关 API ============
 
 export const configApi = {
   async getConfig(): Promise<GameConfig> {
     return dedupedInvoke<GameConfig>('get_config');
   },
 
-  /** 获取游戏目录 */
   async getGameDir(): Promise<string> {
     return dedupedInvoke<string>('get_game_dir');
   },
 
-  /** 设置游戏目录 */
   async setGameDir(path: string): Promise<void> {
     cache.deleteByPrefix(`${CacheKeys.CONFIG}:game_dir_info`);
     return invoke('set_game_dir', { path });
   },
 
-  /** 获取游戏目录信息（缓存 2 分钟） */
   async getGameDirInfo(): Promise<GameDirInfo> {
     return withCache(
       `${CacheKeys.CONFIG}:game_dir_info`,
@@ -270,45 +230,38 @@ export const configApi = {
     );
   },
 
-  /** 获取下载线程数 */
   async getDownloadThreads(): Promise<number> {
     return dedupedInvoke<number>('get_download_threads');
   },
 
-  /** 设置下载线程数 */
   async setDownloadThreads(threads: number): Promise<void> {
     return invoke('set_download_threads', { threads });
   },
 
-  /** 加载配置项 */
   async loadConfigKey(key: string): Promise<string | null> {
     return dedupedInvoke<string | null>('load_config_key', { key });
   },
 
-  /** 保存配置项 */
   async saveConfigKey(key: string, value: string): Promise<void> {
     await invoke('save_config_key', { key, value });
     cache.deleteByPrefix(CacheKeys.CONFIG);
   },
 
-  /** 获取上次选择的版本 */
   async getLastSelectedVersion(): Promise<string | null> {
     return dedupedInvoke<string | null>('get_last_selected_version');
   },
 
-  /** 设置上次选择的版本 */
   async setLastSelectedVersion(version: string): Promise<void> {
     return invoke('set_last_selected_version', { version });
   },
 
-  /** 获取总内存（缓存 10 分钟） */
   async getTotalMemory(): Promise<number> {
     const key = `${CacheKeys.CONFIG}:total_memory`;
     const read = () => dedupedInvoke<number>('get_total_memory');
 
     let mb = await withCache<number>(key, read, 10 * 60 * 1000);
     if (!mb) {
-      // sysinfo 冷启动的首次刷新可能返回 0，把这个值缓存住会让之后 10 分钟都读到 0
+      // sysinfo 冷启动首次刷新可能返回 0，缓存住会让之后 10 分钟都读到 0
       cache.delete(key);
       mb = await read();
       if (mb) cache.set(key, mb, 10 * 60 * 1000);
@@ -316,37 +269,30 @@ export const configApi = {
     return mb;
   },
 
-  /** 获取窗口设置 */
   async getWindowSettings(): Promise<WindowSettings> {
     return dedupedInvoke<WindowSettings>('get_window_settings');
   },
 
-  /** 设置窗口设置 */
   async setWindowSettings(width: number | null, height: number | null, fullscreen: boolean): Promise<void> {
     return invoke('set_window_settings', { width, height, fullscreen });
   },
 
-  /** 获取 JVM 高级调优选项 */
   async getJvmAdvancedOptions(): Promise<JvmAdvancedOptions> {
     return invoke<JvmAdvancedOptions>('get_jvm_advanced_options');
   },
 
-  /** 保存 JVM 高级调优选项 */
   async setJvmAdvancedOptions(options: JvmAdvancedOptions): Promise<void> {
     return invoke('set_jvm_advanced_options', { options });
   },
 
-  /** 预览按当前配置实际生效的 JVM 参数 */
   async getEffectiveJvmArgs(memoryMb?: number): Promise<string[]> {
     return invoke<string[]>('get_effective_jvm_args', { memoryMb: memoryMb ?? null });
   },
 
-  /** 检查内存警告 */
   async checkMemoryWarning(memoryMb: number): Promise<string | null> {
     return dedupedInvoke<string | null>('check_memory_warning', { memoryMb });
   },
 
-  /** 获取自动内存配置（缓存 10 分钟） */
   async getAutoMemoryConfig(): Promise<AutoMemoryConfig> {
     return withCache(
       `${CacheKeys.CONFIG}:auto_memory`,
@@ -355,96 +301,79 @@ export const configApi = {
     );
   },
 
-  /** 设置自动内存开关 */
   async setAutoMemoryEnabled(enabled: boolean): Promise<void> {
     await invoke('set_auto_memory_enabled', { enabled });
     cache.deleteByPrefix(CacheKeys.CONFIG);
   },
 
-  /** 自动设置内存 */
   async autoSetMemory(): Promise<number | null> {
     return invoke<number | null>('auto_set_memory');
   },
 
-  /** 分析内存效率 */
   async analyzeMemoryEfficiency(memoryMb: number): Promise<string> {
     return dedupedInvoke<string>('analyze_memory_efficiency', { memoryMb });
   },
 };
 
-// ============ 用户相关 API ============
-
 export const userApi = {
-  /** 获取保存的用户名 */
   async getSavedUsername(): Promise<string | null> {
     return dedupedInvoke<string | null>('get_saved_username');
   },
 
-  /** 设置用户名 */
   async setSavedUsername(username: string): Promise<void> {
     return invoke('set_saved_username', { username });
   },
 
-  /** 获取保存的 UUID */
   async getSavedUuid(): Promise<string | null> {
     return dedupedInvoke<string | null>('get_saved_uuid');
   },
 
-  /** 设置 UUID */
   async setSavedUuid(uuid: string): Promise<void> {
     return invoke('set_saved_uuid', { uuid });
   },
 
-  /** 获取认证状态 */
   async getAuthStatus(): Promise<AuthStatus> {
     return dedupedInvoke<AuthStatus>('get_auth_status');
   },
 
-  /** 开始 Microsoft 设备代码登录流程 */
   async startMicrosoftLogin(): Promise<DeviceCodeDisplay> {
     return invoke<DeviceCodeDisplay>('start_microsoft_login');
   },
 
-  /** 完成 Microsoft 登录（轮询等待用户授权） */
+  /** 轮询等待用户授权 */
   async completeMicrosoftLogin(): Promise<MicrosoftLoginResult> {
     return invoke<MicrosoftLoginResult>('complete_microsoft_login');
   },
 
-  /** 开始 Microsoft Authorization Code + PKCE 登录流程，返回浏览器授权 URL */
+  /** Authorization Code + PKCE 流程，返回浏览器授权 URL */
   async startMicrosoftAuthCodeLogin(): Promise<string> {
     return invoke<string>('start_microsoft_auth_code_login');
   },
 
-  /** 完成 Authorization Code 登录（等待浏览器回调） */
+  /** 等浏览器回调，而非轮询 */
   async completeMicrosoftAuthCodeLogin(): Promise<MicrosoftLoginResult> {
     return invoke<MicrosoftLoginResult>('complete_microsoft_auth_code_login');
   },
 
-  /** 刷新 Microsoft 认证 token */
   async refreshMicrosoftAuth(): Promise<MicrosoftLoginResult> {
     return invoke<MicrosoftLoginResult>('refresh_microsoft_auth');
   },
 
-  /** 用已存的 access_token 重新取一次皮肤地址（换皮肤不会触发 token 刷新） */
+  /** 换皮肤不会触发 token 刷新，需用已存 access_token 重新取地址 */
   async refreshSkinUrl(): Promise<string | null> {
     return invoke<string | null>('refresh_skin_url');
   },
 
-  /** 退出 Microsoft 登录 */
   async logoutMicrosoft(): Promise<void> {
     return invoke('logout_microsoft');
   },
 
-  /** 设置认证类型 */
   async setAuthType(authType: string): Promise<void> {
     return invoke('set_auth_type', { authType });
   },
 };
 
-// ============ 整合包相关 API ============
-
 export const modpackApi = {
-  /** 搜索 Modrinth 整合包 */
   async searchModrinthModpacks(params: {
     query?: string;
     gameVersions?: string[];
@@ -457,7 +386,6 @@ export const modpackApi = {
     return dedupedInvoke<ModrinthSearchResult>('search_modrinth_modpacks', params);
   },
 
-  /** 获取整合包版本列表 */
   async getModrinthModpackVersions(
     projectId: string,
     gameVersions?: string[],
@@ -470,7 +398,6 @@ export const modpackApi = {
     });
   },
 
-  /** 安装整合包 */
   async installModrinthModpack(options: {
     modpack_id: string;
     version_id: string;
@@ -480,13 +407,10 @@ export const modpackApi = {
     return invoke('install_modrinth_modpack', { options });
   },
 
-  /** 取消整合包安装 */
   async cancelModpackInstall(): Promise<void> {
     return invoke('cancel_modpack_install');
   },
 };
-
-// ============ 统一导出 ============
 
 export const api = {
   version: versionApi,

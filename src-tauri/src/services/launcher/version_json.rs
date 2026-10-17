@@ -1,11 +1,13 @@
 //! 版本 JSON 加载和合并逻辑
+//!
+//! 沿 inheritsFrom 逐级合并父版本，libraries 与 arguments 去重、子版本优先
 
 use crate::errors::LauncherError;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-/// 加载并合并版本 JSON 文件，处理 `inheritsFrom` 继承关系
+/// 加载版本 JSON 并沿 inheritsFrom 合并父版本，子级字段优先
 pub fn load_and_merge_version_json(
     game_dir: &Path,
     version: &str,
@@ -23,14 +25,12 @@ pub fn load_and_merge_version_json(
     let version_json_str = fs::read_to_string(&version_json_path)?;
     let mut version_json: serde_json::Value = serde_json::from_str(&version_json_str)?;
 
-    // 如果版本声明了 inheritsFrom，递归加载并合并父版本的字段（子级优先）
     if let Some(mut parent_id) = version_json
         .get("inheritsFrom")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
     {
         let versions_base = game_dir.join("versions");
-        // 循环处理多层继承
         while !parent_id.is_empty() {
             let parent_json_path = versions_base
                 .join(&parent_id)
@@ -45,7 +45,6 @@ pub fn load_and_merge_version_json(
             merge_arguments(&mut version_json, &parent_json);
             merge_other_fields(&mut version_json, &parent_json);
 
-            // 处理下一层继承
             if let Some(next_parent) = parent_json.get("inheritsFrom").and_then(|v| v.as_str()) {
                 parent_id = next_parent.to_string();
             } else {
@@ -88,7 +87,6 @@ fn merge_libraries(version_json: &mut serde_json::Value, parent_json: &serde_jso
     }
 }
 
-/// 合并 arguments（game 和 jvm）
 fn merge_arguments(version_json: &mut serde_json::Value, parent_json: &serde_json::Value) {
     if let Some(parent_args) = parent_json.get("arguments") {
         if version_json.get("arguments").is_none() {
@@ -96,17 +94,14 @@ fn merge_arguments(version_json: &mut serde_json::Value, parent_json: &serde_jso
             return;
         }
 
-        // 合并 game 数组
         if let Some(parent_game_arr) = parent_args.get("game").and_then(|g| g.as_array()).cloned() {
             merge_game_arguments(version_json, parent_game_arr);
         }
 
-        // 合并 jvm 数组（新版 Forge 1.13+ 需要）
         if let Some(parent_jvm_arr) = parent_args.get("jvm").and_then(|j| j.as_array()).cloned() {
             merge_jvm_arguments(version_json, parent_jvm_arr);
         }
     } else if let Some(parent_mc_args) = parent_json.get("minecraftArguments") {
-        // 父级使用旧式 minecraftArguments
         if let Some(mc_args_str) = parent_mc_args.as_str() {
             let parts: Vec<serde_json::Value> = mc_args_str
                 .split(' ')
@@ -125,7 +120,6 @@ fn merge_arguments(version_json: &mut serde_json::Value, parent_json: &serde_jso
     }
 }
 
-/// 合并 game 参数数组
 fn merge_game_arguments(
     version_json: &mut serde_json::Value,
     parent_game_arr: Vec<serde_json::Value>,
@@ -158,7 +152,7 @@ fn merge_game_arguments(
     }
 }
 
-/// 合并 jvm 参数数组（新版 Forge 1.13+ 需要 --module-path 等参数）
+/// 合并 jvm 数组；新版 Forge 1.13+ 需从父版本继承 --module-path 等参数
 fn merge_jvm_arguments(
     version_json: &mut serde_json::Value,
     parent_jvm_arr: Vec<serde_json::Value>,
@@ -181,7 +175,6 @@ fn merge_jvm_arguments(
         // 子版本的 JVM 参数优先，父版本的参数追加到前面
         let mut merged: Vec<serde_json::Value> = Vec::new();
         for p in parent_jvm_arr {
-            // 避免重复添加相同的参数
             if !child_jvm_arr.contains(&p) {
                 merged.push(p);
             }

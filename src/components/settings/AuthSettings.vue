@@ -133,7 +133,6 @@ onMounted(async () => {
 
 <template>
   <div class="settings-group">
-    <!-- 认证模式选择 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -167,7 +166,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 离线模式设置 -->
     <v-card variant="flat" v-if="authStore.authType === 'offline'" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -191,7 +189,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- Microsoft 账户设置 -->
     <v-card variant="flat" v-if="authStore.authType === 'microsoft'" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -259,7 +256,6 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- Microsoft 浏览器登录等待对话框 -->
     <v-dialog v-model="authCodeWaiting" persistent max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
@@ -286,7 +282,6 @@ onMounted(async () => {
       </v-card>
     </v-dialog>
 
-    <!-- Microsoft 安全代码登录对话框 -->
     <v-dialog v-model="loginDialog" persistent max-width="420">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">

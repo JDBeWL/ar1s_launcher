@@ -1,3 +1,7 @@
+//! Modrinth API 模块
+//!
+//! 封装 api.modrinth.com/v2 的搜索与项目接口，请求失败按指数退避重试 3 次
+
 use crate::errors::LauncherError;
 use crate::models::modpack::*;
 use crate::services::http_client;
@@ -52,7 +56,6 @@ impl ModrinthService {
         )))
     }
 
-    /// 搜索整合包
     pub async fn search_modpacks(
         &self,
         query: Option<String>,
@@ -65,7 +68,6 @@ impl ModrinthService {
     ) -> Result<ModrinthSearchResponse, LauncherError> {
         let mut params = HashMap::new();
 
-        // 如果没有查询参数，使用默认查询来获取热门整合包
         let search_query = query.unwrap_or_else(|| "*".to_string());
         params.insert("query", search_query);
 
@@ -73,12 +75,11 @@ impl ModrinthService {
             params.insert("index", sort_val);
         }
 
-        // 正确构建 facets：每个条件一个分组（分组之间 AND，同组内 OR）
+        // facets 是分组数组：外层 AND、组内 OR
         let mut facets_groups: Vec<Vec<String>> = vec![vec!["project_type:modpack".to_string()]];
 
         if let Some(versions) = game_versions {
-            // 要求命中任意一个所选版本时，可将多个版本放入同一组；
-            // 这里我们只有单选，直接每个版本一个 AND 组更严格
+            // 同组放多个版本才是 OR；这里每个版本单独一组（AND，更严格）
             for v in &versions {
                 facets_groups.push(vec![format!("versions:{}", v)]);
             }
@@ -86,7 +87,6 @@ impl ModrinthService {
         }
 
         if let Some(loader_list) = loaders {
-            // 加载器作为 AND 条件
             for loader in &loader_list {
                 facets_groups.push(vec![format!("categories:{}", loader)]);
             }
@@ -94,14 +94,12 @@ impl ModrinthService {
         }
 
         if let Some(category_list) = categories {
-            // 分类作为 AND 条件
             for category in &category_list {
                 facets_groups.push(vec![format!("categories:{}", category)]);
             }
             debug!("添加分类过滤: {:?}", category_list);
         }
 
-        // 写入 facets 参数
         let facets_json = serde_json::to_string(&facets_groups)?;
         params.insert("facets", facets_json.clone());
         debug!("生成的 facets 参数: {}", facets_json);
@@ -127,18 +125,17 @@ impl ModrinthService {
             .await
             .map_err(|e| LauncherError::Custom(format!("解析响应失败: {}", e)))?;
 
-        // 转换API响应到我们的数据结构
         let hits = json_response["hits"]
             .as_array()
             .ok_or_else(|| LauncherError::Custom("无效的响应格式".to_string()))?
             .iter()
             .filter_map(|hit| {
-                // 仅保留整合包项目，防止误返回模组结果
+                // 搜索结果可能混入模组，只保留 modpack 项目
                 match hit.get("project_type").and_then(|v| v.as_str()) {
                     Some("modpack") => {}
                     _ => return None,
                 }
-                // 根据实际API响应结构解析数据
+                // 搜索结果字段名不同于项目接口：游戏版本在 `versions`，无独立 loaders（混在 `categories`），分类字段是 `categories`
                 Some(ModrinthModpack {
                     slug: hit["slug"].as_str()?.to_string(),
                     title: hit["title"].as_str()?.to_string(),
@@ -149,7 +146,6 @@ impl ModrinthService {
                     date_created: hit["date_created"].as_str()?.to_string(),
                     date_modified: hit["date_modified"].as_str()?.to_string(),
                     latest_version: hit["latest_version"].as_str()?.to_string(),
-                    // 注意：实际API中版本字段是 "versions"，不是 "game_versions"
                     game_versions: hit["versions"]
                         .as_array()
                         .map(|arr| {
@@ -158,14 +154,12 @@ impl ModrinthService {
                                 .collect()
                         })
                         .unwrap_or_default(),
-                    // 注意：实际API中没有 "loaders" 字段，需要从 categories 中提取
                     loaders: hit["categories"]
                         .as_array()
                         .map(|arr| {
                             arr.iter()
                                 .filter_map(|v| {
                                     let cat = v.as_str()?;
-                                    // 只保留加载器相关的分类
                                     match cat {
                                         "fabric" | "forge" | "quilt" | "neoforge" => {
                                             Some(cat.to_string())
@@ -176,14 +170,12 @@ impl ModrinthService {
                                 .collect()
                         })
                         .unwrap_or_default(),
-                    // 注意：实际API中分类字段是 "categories"
                     categories: hit["categories"]
                         .as_array()
                         .map(|arr| {
                             arr.iter()
                                 .filter_map(|v| {
                                     let cat = v.as_str()?;
-                                    // 排除加载器分类，只保留其他分类
                                     match cat {
                                         "fabric" | "forge" | "quilt" | "neoforge" => None,
                                         _ => Some(cat.to_string()),
@@ -201,7 +193,6 @@ impl ModrinthService {
         Ok(ModrinthSearchResponse { hits, total_hits })
     }
 
-    /// 获取整合包详细信息
     pub async fn get_modpack(&self, slug_or_id: &str) -> Result<ModrinthModpack, LauncherError> {
         let url = format!("{}/project/{}", MODRINTH_API_BASE, slug_or_id);
         let response = self
@@ -232,7 +223,6 @@ impl ModrinthService {
                 .to_string(),
             description: project["description"].as_str().unwrap_or("").to_string(),
             icon_url: project["icon_url"].as_str().map(|s| s.to_string()),
-            // author 字段在 project API 中不存在，使用 team 或默认值
             author: project["author"]
                 .as_str()
                 .or_else(|| project["team"].as_str())
@@ -241,7 +231,7 @@ impl ModrinthService {
             downloads: project["downloads"].as_u64().unwrap_or(0),
             date_created: project["date_created"].as_str().unwrap_or("").to_string(),
             date_modified: project["date_modified"].as_str().unwrap_or("").to_string(),
-            // versions 是版本 ID 数组，latest_version 可能不存在
+            // 项目接口没有 latest_version 字段，取 versions（版本 ID 数组）的第一个
             latest_version: project["versions"]
                 .as_array()
                 .and_then(|arr| arr.first())
@@ -275,7 +265,6 @@ impl ModrinthService {
         })
     }
 
-    /// 获取整合包版本列表
     pub async fn get_modpack_versions(
         &self,
         project_id: &str,
@@ -393,7 +382,6 @@ impl ModrinthService {
             .collect()
     }
 
-    /// 下载整合包文件
     pub async fn download_modpack_file(
         &self,
         file_url: &str,

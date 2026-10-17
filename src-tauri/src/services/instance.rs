@@ -1,3 +1,7 @@
+//! 实例管理模块
+//!
+//! 创建、重命名、删除实例，从版本 JSON 逐级推断加载器与游戏版本，兼管 mods 目录的 Mod 启停
+
 use crate::errors::LauncherError;
 use crate::models::{DownloadJob, InstanceInfo, LaunchOptions};
 use crate::services::{
@@ -22,7 +26,6 @@ struct InstallProgress {
     indeterminate: bool,
 }
 
-/// 辅助函数：获取游戏目录和版本目录
 fn get_dirs() -> Result<(PathBuf, PathBuf), LauncherError> {
     let config = config::load_config()?;
     let game_dir = PathBuf::from(&config.game_dir);
@@ -30,15 +33,12 @@ fn get_dirs() -> Result<(PathBuf, PathBuf), LauncherError> {
     Ok((game_dir, versions_dir))
 }
 
-/// 检查实例名称是否可用（验证格式并检查是否已存在）
 pub fn check_instance_name_available(name: &str) -> InstanceNameValidation {
-    // 首先验证名称格式
     let validation = validate_instance_name(name);
     if !validation.is_valid {
         return validation;
     }
 
-    // 然后检查实例是否已存在
     if let Ok((_, versions_dir)) = get_dirs() {
         let instance_dir = versions_dir.join(name);
         if instance_dir.exists() {
@@ -55,14 +55,12 @@ pub fn check_instance_name_available(name: &str) -> InstanceNameValidation {
     }
 }
 
-/// 创建新实例
 pub async fn create_instance(
     new_instance_name: String,
     base_version_id: String,
     loader: Option<LoaderType>,
     window: &Window,
 ) -> Result<(), LauncherError> {
-    // 验证实例名称
     validate_instance_name_or_error(&new_instance_name)?;
 
     let (game_dir, versions_dir) = get_dirs()?;
@@ -160,7 +158,6 @@ pub async fn create_instance(
             return Err(e);
         }
 
-        // 对于 Forge，需要合并配置
         if let LoaderType::Forge {
             mc_version,
             loader_version,
@@ -214,7 +211,7 @@ pub async fn create_instance(
 
     send_progress(100, "实例创建完成！", false);
 
-    // 触发游戏目录变更事件，通知前端刷新版本列表
+    // 通知前端刷新版本列表
     if let Ok(game_dir_str) = config::get_game_dir() {
         let _ = window.emit("game-dir-changed", &game_dir_str);
     }
@@ -222,11 +219,10 @@ pub async fn create_instance(
     Ok(())
 }
 
-/// 获取实例列表（使用 spawn_blocking 避免阻塞异步运行时）
 pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
     let (_, versions_dir) = get_dirs()?;
 
-    // 将 CPU 密集型的文件系统操作和 JSON 解析移到阻塞线程池
+    // 目录遍历加 JSON 解析耗时，放阻塞线程池执行
     let instances = tokio::task::spawn_blocking(move || get_instances_sync(&versions_dir))
         .await
         .map_err(|e| LauncherError::Custom(format!("获取实例列表失败: {}", e)))??;
@@ -236,13 +232,8 @@ pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
 
 /// 从版本 JSON 的 arguments 中提取 FML 参数
 ///
-/// Forge 版本 JSON 的 arguments.game 中包含：
-///   "--fml.forgeVersion", "36.2.39",
-///   "--fml.mcVersion", "1.16.5",
-///   "--fml.forgeGroup", "net.minecraftforge",
-///   "--fml.mcpVersion", "20210115.111550"
-///
-/// 也支持 NeoForge 的 "--fml.neoForgeVersion" 格式
+/// Forge/NeoForge 把加载器信息写在 arguments.game 的 `--fml.*` 参数里，
+/// 旧版 JSON 则在 minecraftArguments 字符串中
 fn parse_fml_arguments(json_value: &Value) -> (Option<String>, Option<String>, Option<String>) {
     let args = match json_value
         .get("arguments")
@@ -331,12 +322,7 @@ fn parse_fml_arguments(json_value: &Value) -> (Option<String>, Option<String>, O
 
 /// 从版本 JSON 的 patches 数组中提取加载器版本和游戏版本
 ///
-/// Fabric/Quilt 的版本 JSON 使用 patches 结构：
-///   "patches": [
-///     { "id": "game", "version": "1.20.4", "priority": 0 },
-///     { "id": "fabric", "version": "0.15.11" },
-///     { "id": "quilt", "version": "0.19.2" }
-///   ]
+/// Fabric/Quilt 的版本 JSON 用 patches 分别记录 game 与加载器条目
 fn parse_patches(json_value: &Value) -> (Option<String>, Option<String>, Option<String>) {
     let patches = match json_value["patches"].as_array() {
         Some(arr) => arr,
@@ -387,11 +373,7 @@ fn parse_patches(json_value: &Value) -> (Option<String>, Option<String>, Option<
 
 /// 从版本 JSON 的 libraries 数组中提取加载器类型和版本
 ///
-/// 通过扫描 Maven 坐标识别加载器：
-/// - Forge: `net.minecraftforge:forge:1.16.5-36.2.39`
-/// - Fabric: `net.fabricmc:fabric-loader:0.15.11`
-/// - Quilt: `org.quiltmc:quilt-loader:0.19.2`
-/// - NeoForge: `net.neoforged:neoforge:20.1.2`
+/// 按 Maven 坐标的 group/artifact 识别各加载器
 fn parse_loader_from_libraries(json_value: &Value) -> (Option<String>, Option<String>) {
     let libs = match json_value["libraries"].as_array() {
         Some(arr) => arr,
@@ -440,7 +422,6 @@ fn parse_loader_from_libraries(json_value: &Value) -> (Option<String>, Option<St
     (None, None)
 }
 
-/// 读取 instance.json 获取整合包元数据
 /// instance.json 里记录的整合包元数据
 struct InstanceMetadata {
     minecraft: String,
@@ -465,12 +446,7 @@ fn read_instance_metadata(instance_dir: &Path) -> Option<InstanceMetadata> {
     })
 }
 
-/// 通过继承链查找真实的 Minecraft 版本
-///
-/// 优先级：
-/// 1. 如果 `inheritsFrom` 本身就是合法的 MC 版本号（如 "1.16.5"），直接使用
-/// 2. 否则尝试读取父版本 JSON 继续递归（处理多层继承）
-/// 3. 都失败时回退到 version_id
+/// 沿 inheritsFrom 链解析真实 MC 版本：id 本身是版本号就直接用，否则读父 JSON 递归
 fn find_real_minecraft_version(
     version_id: &str,
     json_value: &Value,
@@ -496,7 +472,6 @@ fn find_real_minecraft_version(
     }
 }
 
-/// 同步获取实例列表（在阻塞线程池中执行）
 fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, LauncherError> {
     let mut instances = Vec::new();
 
@@ -698,7 +673,6 @@ fn count_mods(instance_path: &Path) -> Option<u32> {
     if count == 0 { None } else { Some(count) }
 }
 
-/// 实例 mods 目录里的一个模组文件
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModInfo {
@@ -798,7 +772,7 @@ fn read_mod_metadata(path: &Path) -> (Option<String>, Option<String>) {
     (None, None)
 }
 
-/// 只取 mods.toml 里第一条 displayName（退化到 modId），够展示用
+/// 取 mods.toml 里第一条 displayName，缺省退化到 modId
 fn parse_mods_toml_name(text: &str) -> Option<String> {
     let mut mod_id = None;
     for line in text.lines() {
@@ -902,7 +876,6 @@ pub fn set_mod_enabled(
     Ok(())
 }
 
-/// 删除模组文件
 pub fn delete_instance_mod(instance_name: String, file_name: String) -> Result<(), LauncherError> {
     validate_instance_name_or_error(&instance_name)?;
     let (_, path) = resolve_mod_path(&instance_name, &file_name)?;
@@ -911,7 +884,6 @@ pub fn delete_instance_mod(instance_name: String, file_name: String) -> Result<(
     Ok(())
 }
 
-/// 删除实例
 pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError> {
     let (_, versions_dir) = get_dirs()?;
     let instance_dir = versions_dir.join(&instance_name);
@@ -926,16 +898,13 @@ pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError>
     fs::remove_dir_all(&instance_dir)
         .map_err(|e| LauncherError::Custom(format!("删除实例失败: {}", e)))?;
 
-    // 删除上次启动时间记录
     let _ = config::remove_instance_last_played(&instance_name);
 
     info!("实例 {} 已删除", instance_name);
     Ok(())
 }
 
-/// 重命名实例
 pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), LauncherError> {
-    // 验证新实例名称
     validate_instance_name_or_error(&new_name)?;
 
     let (_, versions_dir) = get_dirs()?;
@@ -965,7 +934,6 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
     fs::rename(&old_dir, &new_dir)
         .map_err(|e| LauncherError::Custom(format!("重命名目录失败: {}", e)))?;
 
-    // 重命名内部文件
     let _ = fs::rename(
         new_dir.join(format!("{}.json", old_name)),
         new_dir.join(format!("{}.json", new_name)),
@@ -975,7 +943,6 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
         new_dir.join(format!("{}.jar", new_name)),
     );
 
-    // 更新 JSON ID
     let json_path = new_dir.join(format!("{}.json", new_name));
     if json_path.exists() {
         let content = fs::read_to_string(&json_path)?;
@@ -985,7 +952,6 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
         }
     }
 
-    // 重命名上次启动时间记录
     let _ = config::rename_instance_last_played(&old_name, &new_name);
 
     // 把固化下来的版本写进 instance.json，读取端会优先采用它
@@ -1000,7 +966,6 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
     Ok(())
 }
 
-/// 打开实例文件夹
 pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherError> {
     let (_, versions_dir) = get_dirs()?;
     let instance_dir = versions_dir.join(&instance_name);
@@ -1018,7 +983,6 @@ pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherE
     Ok(())
 }
 
-/// 启动实例
 pub async fn launch_instance(
     instance_name: String,
     override_java_path: Option<String>,
@@ -1069,7 +1033,7 @@ pub async fn launch_instance(
         }
     }
 
-    // 注意: update_instance_last_played 已在 launcher::launch_minecraft 中调用，此处无需重复
+    // lastPlayed 已由 launcher::launch_minecraft 更新，此处不重复
 
     let (auth_type, access_token, uuid) = match config.auth_type {
         crate::models::AuthType::Microsoft => {
@@ -1133,8 +1097,6 @@ pub async fn launch_instance(
 
     launcher::launch_minecraft(launch_options, window).await
 }
-
-// --- 下面是合并 JSON 和收集下载任务的私有辅助函数 ---
 
 async fn merge_and_complete_instance(
     instance_id: &str,

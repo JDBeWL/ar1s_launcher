@@ -11,8 +11,6 @@ describe('MemoryCache', () => {
     vi.useRealTimers();
   });
 
-  // ===== 基础操作 =====
-
   it('初始大小为 0', () => {
     expect(cache.size).toBe(0);
   });
@@ -45,38 +43,33 @@ describe('MemoryCache', () => {
     expect(cache.size).toBe(1);
   });
 
-  // ===== 过期机制 =====
-
   it('默认 TTL 5 分钟后过期', () => {
     cache.set('expire', 'data');
     expect(cache.get('expire')).toBe('data');
 
-    // 推进 5 分钟 + 1ms
     vi.advanceTimersByTime(5 * 60 * 1000 + 1);
     expect(cache.get('expire')).toBe(CACHE_MISS);
   });
 
   it('自定义 TTL', () => {
-    cache.set('short', 'data', 1000); // 1秒
+    cache.set('short', 'data', 1000);
     expect(cache.get('short')).toBe('data');
 
     vi.advanceTimersByTime(500);
-    expect(cache.get('short')).toBe('data'); // 还没过期
+    expect(cache.get('short')).toBe('data');
 
     vi.advanceTimersByTime(501);
-    expect(cache.get('short')).toBe(CACHE_MISS); // 已过期
+    expect(cache.get('short')).toBe(CACHE_MISS);
   });
 
   it('过期的 entry 被 get 时自动删除', () => {
     cache.set('auto-del', 'data', 100);
     vi.advanceTimersByTime(101);
 
-    expect(cache.size).toBe(1); // 还在 Map 里
-    cache.get('auto-del'); // 触发清理
-    expect(cache.size).toBe(0); // 已删除
+    expect(cache.size).toBe(1);
+    cache.get('auto-del');
+    expect(cache.size).toBe(0);
   });
-
-  // ===== delete =====
 
   it('delete 删除指定 key', () => {
     cache.set('a', 1);
@@ -89,8 +82,6 @@ describe('MemoryCache', () => {
   it('delete 不存在的 key 返回 false', () => {
     expect(cache.delete('nonexistent')).toBe(false);
   });
-
-  // ===== deleteByPrefix =====
 
   it('deleteByPrefix 删除匹配前缀的所有 key', () => {
     cache.set('loader:forge', 'data1');
@@ -109,8 +100,6 @@ describe('MemoryCache', () => {
     expect(cache.deleteByPrefix('nonexistent')).toBe(0);
   });
 
-  // ===== clear =====
-
   it('clear 清除所有缓存', () => {
     cache.set('a', 1);
     cache.set('b', 2);
@@ -119,8 +108,6 @@ describe('MemoryCache', () => {
     expect(cache.size).toBe(0);
     expect(cache.get('a')).toBe(CACHE_MISS);
   });
-
-  // ===== cleanup =====
 
   it('cleanup 只清除过期的 entry', () => {
     cache.set('expired1', 'data', 100);
@@ -166,7 +153,7 @@ describe('withCache', () => {
     const result2 = await withCache('test-key', fetcher);
 
     expect(result2).toBe('result');
-    expect(fetcher).toHaveBeenCalledOnce(); // 只调用了一次
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 
   it('缓存过期后重新调用 fetcher', async () => {

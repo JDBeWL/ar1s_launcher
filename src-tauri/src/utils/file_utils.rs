@@ -1,3 +1,7 @@
+//! 文件与下载校验工具
+//!
+//! 实例名校验、目录递归拷贝、sha1 与大小校验修复、从版本 JSON 收集 DownloadJob
+
 use crate::errors::LauncherError;
 use crate::models::DownloadJob;
 use crate::utils::minecraft::{evaluate_rules, get_mc_os_name};
@@ -8,25 +12,15 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-/// 实例名称验证结果
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InstanceNameValidation {
     pub is_valid: bool,
     pub error_message: Option<String>,
 }
 
-/// 验证实例名称是否安全有效
-///
-/// 规则：
-/// - 长度在 1-64 字符之间
-/// - 不能包含路径分隔符 (/, \)
-/// - 不能包含路径遍历字符 (..)
-/// - 不能包含 Windows 保留字符 (<, >, :, ", |, ?, *)
-/// - 不能以点或空格开头/结尾
-/// - 不能是 Windows 保留名称 (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
-/// - 不能包含控制字符 (ASCII 0-31)
+/// 实例名会直接当目录名用，带路径分隔符或 `..` 就能跳出版本目录
+/// Windows 保留名大小写不敏感，且只看首个 `.` 之前的部分（`CON.txt` 同样拒绝）
 pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
-    // 检查空名称
     if name.is_empty() {
         return InstanceNameValidation {
             is_valid: false,
@@ -34,7 +28,6 @@ pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
         };
     }
 
-    // 检查长度
     if name.len() > 64 {
         return InstanceNameValidation {
             is_valid: false,
@@ -42,7 +35,6 @@ pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
         };
     }
 
-    // 检查是否以点或空格开头/结尾
     if name.starts_with('.') || name.starts_with(' ') {
         return InstanceNameValidation {
             is_valid: false,
@@ -57,7 +49,6 @@ pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
         };
     }
 
-    // 检查路径遍历
     if name.contains("..") {
         return InstanceNameValidation {
             is_valid: false,
@@ -65,7 +56,6 @@ pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
         };
     }
 
-    // 检查路径分隔符
     if name.contains('/') || name.contains('\\') {
         return InstanceNameValidation {
             is_valid: false,
@@ -73,7 +63,6 @@ pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
         };
     }
 
-    // 检查 Windows 保留字符
     const RESERVED_CHARS: &[char] = &['<', '>', ':', '"', '|', '?', '*'];
     for c in RESERVED_CHARS {
         if name.contains(*c) {
@@ -84,7 +73,6 @@ pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
         }
     }
 
-    // 检查控制字符 (ASCII 0-31)
     if name.chars().any(|c| (c as u32) < 32) {
         return InstanceNameValidation {
             is_valid: false,
@@ -92,7 +80,6 @@ pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
         };
     }
 
-    // 检查 Windows 保留名称
     let name_upper = name.to_uppercase();
     let base_name = name_upper.split('.').next().unwrap_or(&name_upper);
     const RESERVED_NAMES: &[&str] = &[
@@ -113,7 +100,6 @@ pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
     }
 }
 
-/// 验证实例名称，如果无效则返回错误
 pub fn validate_instance_name_or_error(name: &str) -> Result<(), LauncherError> {
     let validation = validate_instance_name(name);
     if !validation.is_valid {
@@ -126,7 +112,6 @@ pub fn validate_instance_name_or_error(name: &str) -> Result<(), LauncherError> 
     Ok(())
 }
 
-/// 递归复制目录及其所有内容
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), std::io::Error> {
     fs::create_dir_all(&dst)?;
     for entry in fs::read_dir(src)? {
@@ -141,7 +126,7 @@ pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), 
     Ok(())
 }
 
-/// 验证文件完整性和哈希值
+/// expected_size 为 0 或 expected_hash 为 None 时，对应校验直接跳过
 pub fn verify_file(
     path: &std::path::Path,
     expected_hash: Option<&str>,
@@ -188,48 +173,39 @@ pub fn verify_file(
     }
 }
 
-/// 增强的文件验证和恢复机制
 pub async fn verify_and_repair_file(
     job: &crate::models::DownloadJob,
     client: &reqwest::Client,
 ) -> Result<bool, LauncherError> {
     let path = &job.path;
 
-    // 1. 检查文件是否存在
     if !path.exists() {
         debug!("文件不存在，需要下载: {}", path.display());
         return Ok(false);
     }
 
-    // 2. 验证文件完整性
     if verify_file(path, job.hash.as_deref(), job.size)? {
         debug!("文件验证通过: {}", path.display());
         return Ok(true);
     }
 
-    // 3. 文件损坏，尝试修复
     warn!("文件损坏，尝试修复: {}", path.display());
 
-    // 3.1 备份损坏的文件
     let backup_path = path.with_extension("bak");
     if let Err(e) = std::fs::copy(path, &backup_path) {
         warn!("备份损坏文件失败: {}", e);
     }
 
-    // 3.2 删除损坏的文件
     if let Err(e) = std::fs::remove_file(path) {
         warn!("删除损坏文件失败: {}", e);
     }
 
-    // 3.3 重新下载文件
     info!("重新下载文件: {}", path.display());
 
-    // 创建父目录
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    // 下载文件
     let response = client.get(&job.url).send().await?;
     if !response.status().is_success() {
         return Err(LauncherError::Custom(format!(
@@ -241,15 +217,12 @@ pub async fn verify_and_repair_file(
     let content = response.bytes().await?;
     std::fs::write(path, &content)?;
 
-    // 3.4 验证重新下载的文件
     if verify_file(path, job.hash.as_deref(), job.size)? {
         info!("文件修复成功: {}", path.display());
-        // 删除备份文件
         let _ = std::fs::remove_file(&backup_path);
         Ok(true)
     } else {
         warn!("文件修复失败: {}", path.display());
-        // 恢复备份文件
         if backup_path.exists() {
             let _ = std::fs::copy(&backup_path, path);
         }
@@ -257,7 +230,6 @@ pub async fn verify_and_repair_file(
     }
 }
 
-/// 批量验证文件完整性
 pub async fn batch_verify_files(
     jobs: &[crate::models::DownloadJob],
     client: &reqwest::Client,
@@ -293,7 +265,6 @@ pub async fn batch_verify_files(
     Ok(results)
 }
 
-/// 从版本JSON中收集下载任务
 pub fn collect_download_jobs_from_json(
     version_json: &Value,
     game_dir: &PathBuf,
@@ -304,7 +275,6 @@ pub fn collect_download_jobs_from_json(
     let assets_base_dir = game_dir.join("assets");
     let version_dir = game_dir.join("versions").join(version_id);
 
-    // 1) 客户端JAR
     if let Some(client) = version_json.get("downloads").and_then(|d| d.get("client")) {
         if let Some(url) = client.get("url").and_then(|u| u.as_str()) {
             let size = client.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
@@ -323,7 +293,6 @@ pub fn collect_download_jobs_from_json(
         }
     }
 
-    // 2) 资源索引 -> 对象
     if let Some(asset_idx) = version_json.get("assetIndex") {
         if let Some(idx_id) = asset_idx.get("id").and_then(|v| v.as_str()) {
             if let Some(idx_url) = asset_idx.get("url").and_then(|v| v.as_str()) {
@@ -344,14 +313,12 @@ pub fn collect_download_jobs_from_json(
         }
     }
 
-    // 3) 库文件 + 原生库
     if let Some(libs) = version_json.get("libraries").and_then(|v| v.as_array()) {
         for lib in libs {
             if !evaluate_rules(lib.get("rules")) {
                 continue;
             }
 
-            // 主构件
             if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
                 let path = artifact
                     .get("path")
@@ -383,7 +350,6 @@ pub fn collect_download_jobs_from_json(
                 }
             }
 
-            // 原生库/分类器
             if let Some(natives) = lib.get("natives") {
                 if let Some(natives_map) = natives.as_object() {
                     let current_os = get_mc_os_name();
@@ -498,11 +464,9 @@ pub fn collect_download_jobs_from_json(
     Ok(jobs)
 }
 
-/// 清理实例创建过程中创建的文件和目录
 pub fn cleanup_instance_creation(game_dir: &PathBuf, instance_name: &str, _base_version_id: &str) {
     info!("file_utils: 开始清理实例创建过程中的文件和目录");
 
-    // 清理整个实例目录（remove_dir_all 会递归删除所有子文件和子目录）
     let instance_dir = game_dir.join("versions").join(instance_name);
     if instance_dir.exists() {
         info!("file_utils: 清理实例目录: {}", instance_dir.display());
@@ -516,7 +480,6 @@ pub fn cleanup_instance_creation(game_dir: &PathBuf, instance_name: &str, _base_
     info!("file_utils: 清理完成");
 }
 
-/// 清理Forge安装过程中创建的文件和目录
 pub fn cleanup_forge_installation(
     instance_path: &PathBuf,
     game_dir: &PathBuf,
@@ -525,7 +488,6 @@ pub fn cleanup_forge_installation(
 ) {
     info!("file_utils: 开始清理Forge安装过程中的文件和目录");
 
-    // 1. 清理版本文件夹
     let version_id = format!(
         "{}-forge-{}",
         forge_version.mcversion, forge_version.version
@@ -541,7 +503,6 @@ pub fn cleanup_forge_installation(
         }
     }
 
-    // 2. 清理实例目录（如果创建了）
     if instance_path.exists() {
         info!("file_utils: 清理实例目录: {}", instance_path.display());
         if let Err(e) = fs::remove_dir_all(instance_path) {
@@ -551,7 +512,6 @@ pub fn cleanup_forge_installation(
         }
     }
 
-    // 3. 清理临时安装器文件
     if installer_path.exists() {
         info!(
             "file_utils: 清理临时安装器文件: {}",
@@ -570,8 +530,6 @@ pub fn cleanup_forge_installation(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ===== validate_instance_name 测试 =====
 
     #[test]
     fn test_valid_instance_names() {
@@ -594,7 +552,6 @@ mod tests {
         let long_name = "a".repeat(65);
         assert!(!validate_instance_name(&long_name).is_valid);
 
-        // 刚好 64 字符应该有效
         let exact_name = "a".repeat(64);
         assert!(validate_instance_name(&exact_name).is_valid);
     }
@@ -650,12 +607,10 @@ mod tests {
         assert!(!validate_instance_name("NUL").is_valid);
         assert!(!validate_instance_name("COM1").is_valid);
         assert!(!validate_instance_name("LPT1").is_valid);
-        // 大小写不敏感
         assert!(!validate_instance_name("con").is_valid);
         assert!(!validate_instance_name("Con").is_valid);
-        // 带扩展名的保留名称
         assert!(!validate_instance_name("CON.txt").is_valid);
-        // 类似但不是保留名称的应该有效
+        // 相似但不在保留名单里的名称应当通过
         assert!(validate_instance_name("CONNECT").is_valid);
         assert!(validate_instance_name("COM10").is_valid);
     }
@@ -666,8 +621,6 @@ mod tests {
         assert!(validate_instance_name_or_error("").is_err());
         assert!(validate_instance_name_or_error("CON").is_err());
     }
-
-    // ===== verify_file 测试 =====
 
     #[test]
     fn test_verify_file_nonexistent() {

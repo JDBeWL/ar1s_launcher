@@ -1,3 +1,7 @@
+//! Java 检测模块
+//!
+//! 扫描各发行版安装目录、PATH 与 JAVA_HOME，用 java -version 确认后去重缓存 1 小时
+
 use crate::{LauncherError, load_config, save_config};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +14,6 @@ use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-// Java 检测结果缓存
 struct JavaCache {
     paths: Vec<String>,
     cached_at: Instant,
@@ -19,10 +22,8 @@ struct JavaCache {
 static JAVA_CACHE: std::sync::LazyLock<RwLock<Option<JavaCache>>> =
     std::sync::LazyLock::new(|| RwLock::new(None));
 
-// 缓存有效期：1小时
 const JAVA_CACHE_DURATION: Duration = Duration::from_secs(3600);
 
-/// 清除 Java 检测缓存（供外部模块在需要时调用，如用户手动刷新）
 pub fn invalidate_java_cache() {
     if let Ok(mut cache) = JAVA_CACHE.write() {
         *cache = None;
@@ -30,7 +31,6 @@ pub fn invalidate_java_cache() {
     log::info!("Java 检测缓存已清除");
 }
 
-/// 检查缓存是否有效
 fn get_cached_java_paths() -> Option<Vec<String>> {
     if let Ok(cache) = JAVA_CACHE.read() {
         if let Some(ref cached) = *cache {
@@ -43,7 +43,6 @@ fn get_cached_java_paths() -> Option<Vec<String>> {
     None
 }
 
-/// 更新缓存
 fn update_java_cache(paths: Vec<String>) {
     if let Ok(mut cache) = JAVA_CACHE.write() {
         *cache = Some(JavaCache {
@@ -54,7 +53,6 @@ fn update_java_cache(paths: Vec<String>) {
     }
 }
 
-/// 标准化路径格式
 fn normalize_path(path: &str) -> String {
     if cfg!(windows) {
         path.replace("/", "\\")
@@ -63,7 +61,6 @@ fn normalize_path(path: &str) -> String {
     }
 }
 
-/// 检查Java可执行文件是否有效
 fn is_valid_java_executable(java_path: &Path) -> bool {
     if !java_path.exists() {
         return false;
@@ -81,11 +78,10 @@ fn is_valid_java_executable(java_path: &Path) -> bool {
                 return false;
             }
 
-            // 检查输出中是否包含Java版本信息
+            // 版本信息通常在 stderr，两路都要查
             let stderr_str = String::from_utf8_lossy(&output.stderr);
             let stdout_str = String::from_utf8_lossy(&output.stdout);
 
-            // 检查常见的Java版本标识
             stderr_str.contains("java version")
                 || stderr_str.contains("openjdk version")
                 || stderr_str.contains("Java(TM)")
@@ -97,74 +93,56 @@ fn is_valid_java_executable(java_path: &Path) -> bool {
     }
 }
 
-/// 检查PATH中是否存在Java命令
 fn find_java_in_path(java_cmd: &str) -> bool {
-    // 直接使用 is_valid_java_executable，避免重复执行 java -version
     is_valid_java_executable(Path::new(java_cmd))
 }
 
-/// 获取平台特定的Java安装目录
 fn get_java_installation_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
     #[cfg(target_os = "windows")]
     {
-        // 获取所有逻辑驱动器
         let drives = get_windows_drives();
 
         for drive in &drives {
-            // Program Files 目录
             let program_files = format!("{}:\\Program Files", drive);
             let program_files_x86 = format!("{}:\\Program Files (x86)", drive);
 
-            // Oracle Java
             dirs.push(PathBuf::from(&program_files).join("Java"));
             dirs.push(PathBuf::from(&program_files_x86).join("Java"));
 
-            // Microsoft OpenJDK
             dirs.push(PathBuf::from(&program_files).join("Microsoft"));
             dirs.push(PathBuf::from(&program_files_x86).join("Microsoft"));
 
-            // Eclipse Adoptium (Temurin)
             dirs.push(PathBuf::from(&program_files).join("Eclipse Adoptium"));
             dirs.push(PathBuf::from(&program_files_x86).join("Eclipse Adoptium"));
             dirs.push(PathBuf::from(&program_files).join("Eclipse Foundation"));
 
-            // AdoptOpenJDK (旧版)
             dirs.push(PathBuf::from(&program_files).join("AdoptOpenJDK"));
             dirs.push(PathBuf::from(&program_files_x86).join("AdoptOpenJDK"));
 
-            // Amazon Corretto
             dirs.push(PathBuf::from(&program_files).join("Amazon Corretto"));
             dirs.push(PathBuf::from(&program_files_x86).join("Amazon Corretto"));
 
-            // Azul Zulu
             dirs.push(PathBuf::from(&program_files).join("Zulu"));
             dirs.push(PathBuf::from(&program_files_x86).join("Zulu"));
             dirs.push(PathBuf::from(&program_files).join("Azul Zulu"));
 
-            // BellSoft Liberica
             dirs.push(PathBuf::from(&program_files).join("BellSoft"));
             dirs.push(PathBuf::from(&program_files_x86).join("BellSoft"));
 
-            // Red Hat OpenJDK
             dirs.push(PathBuf::from(&program_files).join("RedHat"));
             dirs.push(PathBuf::from(&program_files_x86).join("RedHat"));
 
-            // SAP SapMachine
             dirs.push(PathBuf::from(&program_files).join("SapMachine"));
 
-            // GraalVM
             dirs.push(PathBuf::from(&program_files).join("GraalVM"));
 
-            // 通用 JDK 目录
             dirs.push(PathBuf::from(&program_files).join("OpenJDK"));
             dirs.push(PathBuf::from(&program_files_x86).join("OpenJDK"));
         }
 
-        // 用户目录下的 Java
         if let Ok(user_profile) = std::env::var("USERPROFILE") {
-            // scoop 安装的 Java
             dirs.push(
                 PathBuf::from(&user_profile)
                     .join("scoop")
@@ -196,10 +174,9 @@ fn get_java_installation_dirs() -> Vec<PathBuf> {
                     .join("corretto-jdk"),
             );
 
-            // .jdks 目录 (IntelliJ IDEA 下载的 JDK)
+            // .jdks：IntelliJ IDEA 下载的 JDK 存放处
             dirs.push(PathBuf::from(&user_profile).join(".jdks"));
 
-            // .sdkman (SDKMAN)
             dirs.push(
                 PathBuf::from(&user_profile)
                     .join(".sdkman")
@@ -208,7 +185,6 @@ fn get_java_installation_dirs() -> Vec<PathBuf> {
             );
         }
 
-        // 使用环境变量获取的 Program Files
         if let Ok(pf) = std::env::var("ProgramFiles") {
             if !dirs.iter().any(|d| d.starts_with(&pf)) {
                 dirs.push(PathBuf::from(&pf).join("Java"));
@@ -228,7 +204,6 @@ fn get_java_installation_dirs() -> Vec<PathBuf> {
         dirs.push(PathBuf::from("/usr/local/Cellar/openjdk"));
         dirs.push(PathBuf::from("/opt/homebrew/Cellar/openjdk"));
 
-        // 用户目录
         if let Ok(home) = std::env::var("HOME") {
             dirs.push(
                 PathBuf::from(&home)
@@ -247,7 +222,6 @@ fn get_java_installation_dirs() -> Vec<PathBuf> {
         dirs.push(PathBuf::from("/opt/java"));
         dirs.push(PathBuf::from("/opt/jdk"));
 
-        // 用户目录
         if let Ok(home) = std::env::var("HOME") {
             dirs.push(
                 PathBuf::from(&home)
@@ -262,12 +236,10 @@ fn get_java_installation_dirs() -> Vec<PathBuf> {
     dirs.into_iter().filter(|dir| dir.exists()).collect()
 }
 
-/// 获取 Windows 系统上的所有逻辑驱动器
 #[cfg(target_os = "windows")]
 fn get_windows_drives() -> Vec<char> {
     let mut drives = Vec::new();
 
-    // 检查 A-Z 驱动器
     for letter in b'A'..=b'Z' {
         let drive_path = format!("{}:\\", letter as char);
         if PathBuf::from(&drive_path).exists() {
@@ -283,7 +255,6 @@ fn get_windows_drives() -> Vec<char> {
     Vec::new()
 }
 
-/// 在指定目录中查找Java安装
 fn find_java_in_directory(dir: &Path) -> Vec<String> {
     let mut paths = Vec::new();
 
@@ -292,9 +263,7 @@ fn find_java_in_directory(dir: &Path) -> Vec<String> {
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 let dir_name = entry.file_name().to_string_lossy().to_lowercase();
 
-                // 检查是否为Java安装目录
                 if is_java_directory_name(&dir_name) {
-                    // 直接检查 bin/java
                     let java_exe = entry.path().join("bin").join(if cfg!(windows) {
                         "java.exe"
                     } else {
@@ -305,12 +274,11 @@ fn find_java_in_directory(dir: &Path) -> Vec<String> {
                         let path_str = java_exe.to_string_lossy().replace("\\", "/");
                         paths.push(path_str.to_owned());
                     } else {
-                        // 某些发行版有额外的子目录层级 (如 Eclipse Adoptium)
-                        // 检查 Contents/Home/bin/java (macOS) 或直接子目录
+                        // 某些发行版（如 Eclipse Adoptium）还多一层子目录
                         paths.extend(find_java_in_subdirectory(&entry.path()));
                     }
                 } else {
-                    // 对于 Microsoft、Eclipse Adoptium 等目录，需要递归搜索一层
+                    // Microsoft、Eclipse Adoptium 这类目录名本身不像 Java 目录，需再搜一层
                     paths.extend(find_java_in_subdirectory(&entry.path()));
                 }
             }
@@ -320,7 +288,6 @@ fn find_java_in_directory(dir: &Path) -> Vec<String> {
     paths
 }
 
-/// 检查目录名是否可能是 Java 安装目录
 fn is_java_directory_name(name: &str) -> bool {
     name.contains("jdk")
         || name.contains("jre")
@@ -337,7 +304,6 @@ fn is_java_directory_name(name: &str) -> bool {
         || name.contains("bisheng")
 }
 
-/// 在子目录中查找 Java（处理额外的目录层级）
 fn find_java_in_subdirectory(dir: &Path) -> Vec<String> {
     let mut paths = Vec::new();
 
@@ -346,7 +312,6 @@ fn find_java_in_subdirectory(dir: &Path) -> Vec<String> {
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 let sub_dir_name = entry.file_name().to_string_lossy().to_lowercase();
 
-                // 检查子目录是否是 Java 目录
                 if is_java_directory_name(&sub_dir_name) {
                     let java_exe = entry.path().join("bin").join(if cfg!(windows) {
                         "java.exe"
@@ -359,7 +324,6 @@ fn find_java_in_subdirectory(dir: &Path) -> Vec<String> {
                         paths.push(path_str.to_owned());
                     }
 
-                    // macOS 的 Contents/Home 结构
                     #[cfg(target_os = "macos")]
                     {
                         let macos_java = entry
@@ -375,7 +339,7 @@ fn find_java_in_subdirectory(dir: &Path) -> Vec<String> {
                     }
                 }
 
-                // scoop 的 current 符号链接
+                // scoop 用 current 目录指向实际安装的符号链接
                 if sub_dir_name == "current" {
                     let java_exe = entry.path().join("bin").join(if cfg!(windows) {
                         "java.exe"
@@ -395,9 +359,8 @@ fn find_java_in_subdirectory(dir: &Path) -> Vec<String> {
     paths
 }
 
-/// 查找Java安装路径（带缓存，并行扫描）
+/// 查找 Java 安装路径（带缓存，并行扫描）
 pub async fn find_java_installations_command() -> Result<Vec<String>, LauncherError> {
-    // 先检查缓存
     if let Some(cached_paths) = get_cached_java_paths() {
         return Ok(cached_paths);
     }
@@ -405,7 +368,7 @@ pub async fn find_java_installations_command() -> Result<Vec<String>, LauncherEr
     log::info!("开始扫描 Java 安装路径...");
     let start_time = Instant::now();
 
-    // 使用 spawn_blocking 将 CPU 密集型操作移到阻塞线程池
+    // 磁盘扫描耗时，放阻塞线程池以免卡住异步运行时
     let paths = tokio::task::spawn_blocking(|| scan_java_installations_parallel())
         .await
         .map_err(|e| LauncherError::Custom(format!("Java 扫描任务失败: {}", e)))?;
@@ -417,13 +380,11 @@ pub async fn find_java_installations_command() -> Result<Vec<String>, LauncherEr
         paths.len()
     );
 
-    // 更新缓存
     update_java_cache(paths.clone());
 
     Ok(paths)
 }
 
-/// 同步版本：仅使用缓存，不触发扫描
 pub fn find_java_installations_command_sync() -> Result<Vec<String>, LauncherError> {
     if let Some(cached_paths) = get_cached_java_paths() {
         return Ok(cached_paths);
@@ -431,7 +392,7 @@ pub fn find_java_installations_command_sync() -> Result<Vec<String>, LauncherErr
     Ok(scan_java_installations_parallel())
 }
 
-/// 并行扫描 Java 安装（同步函数，在阻塞线程池中执行）
+/// 并行扫描 Java 安装，须在阻塞线程池中调用
 fn scan_java_installations_parallel() -> Vec<String> {
     let java_dirs = get_java_installation_dirs();
 
@@ -475,7 +436,6 @@ fn scan_java_installations_parallel() -> Vec<String> {
         paths.extend(path_results);
     }
 
-    // 3. 检查 JAVA_HOME 环境变量
     if let Ok(java_home) = std::env::var("JAVA_HOME") {
         let java_home_path = PathBuf::from(&java_home);
         let java_exe =
@@ -491,7 +451,6 @@ fn scan_java_installations_parallel() -> Vec<String> {
         }
     }
 
-    // 4. 检查其他 Java 相关环境变量
     for env_var in &[
         "JDK_HOME",
         "JRE_HOME",
@@ -516,7 +475,6 @@ fn scan_java_installations_parallel() -> Vec<String> {
         }
     }
 
-    // 去重（基于规范化路径）
     let mut unique_paths = Vec::new();
     let mut seen_paths = std::collections::HashSet::new();
 
@@ -535,22 +493,18 @@ fn scan_java_installations_parallel() -> Vec<String> {
         }
     }
 
-    // 按路径排序
     unique_paths.sort();
     unique_paths
 }
 
-/// 强制刷新 Java 安装路径（忽略缓存）
 pub async fn refresh_java_installations() -> Result<Vec<String>, LauncherError> {
     invalidate_java_cache();
     find_java_installations_command().await
 }
 
-/// 设置Java路径
 pub async fn set_java_path_command(path: String) -> Result<(), LauncherError> {
     let normalized_path = normalize_path(&path);
 
-    // 验证路径是否有效
     if !validate_java_path(path.clone()).await? {
         return Err(LauncherError::Custom(format!(
             "无效的Java路径或Java版本: {}",
@@ -565,9 +519,8 @@ pub async fn set_java_path_command(path: String) -> Result<(), LauncherError> {
     Ok(())
 }
 
-/// 验证Java路径是否有效（支持相对路径）
+/// 验证 Java 路径，支持相对路径
 pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
-    // 如果是简单的命令名称（如"java"）
     if path == "java" || path == "java.exe" {
         let java_cmd = if cfg!(windows) { "java.exe" } else { "java" };
         return Ok(find_java_in_path(java_cmd));
@@ -587,7 +540,7 @@ pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
     }
 }
 
-/// 获取 Java 版本信息（支持相对路径）
+/// 获取 Java 版本信息，支持相对路径
 pub async fn get_java_version(path: String) -> Result<String, LauncherError> {
     let resolved = crate::services::launcher::java::resolve_path(&path);
 
@@ -618,16 +571,13 @@ pub async fn get_java_version(path: String) -> Result<String, LauncherError> {
                 stdout
             };
 
-            // 提取版本号
             for line in version_output.lines() {
                 if line.contains("version") {
-                    // 提取引号中的版本号
                     if let Some(start) = line.find('"') {
                         if let Some(end) = line[start + 1..].find('"') {
                             return Ok(line[start + 1..start + 1 + end].to_string());
                         }
                     }
-                    // 如果没有引号，返回整行
                     return Ok(line.trim().to_string());
                 }
             }
@@ -638,11 +588,10 @@ pub async fn get_java_version(path: String) -> Result<String, LauncherError> {
     }
 }
 
-/// 自动检测Java安装 (同步版本，用于配置加载)
+/// 自动检测 Java 安装（同步，供配置加载使用）
 pub fn auto_detect_java() -> Result<Vec<String>, LauncherError> {
     let mut java_paths = Vec::new();
 
-    // 1. 检查JAVA_HOME环境变量（优先）
     if let Ok(java_home) = std::env::var("JAVA_HOME") {
         let java_exe = if cfg!(windows) { "java.exe" } else { "java" };
         let java_path = PathBuf::from(&java_home).join("bin").join(java_exe);
@@ -652,7 +601,6 @@ pub fn auto_detect_java() -> Result<Vec<String>, LauncherError> {
         }
     }
 
-    // 2. 检查常见的Java安装目录
     #[cfg(target_os = "windows")]
     {
         let program_files =
@@ -684,7 +632,6 @@ pub fn auto_detect_java() -> Result<Vec<String>, LauncherError> {
         }
     }
 
-    // 3. 从 PATH 环境变量中查找 Java（获取完整路径）
     if let Ok(path_env) = std::env::var("PATH") {
         let separator = if cfg!(windows) { ';' } else { ':' };
         for path_entry in path_env.split(separator) {
@@ -700,12 +647,10 @@ pub fn auto_detect_java() -> Result<Vec<String>, LauncherError> {
         }
     }
 
-    // 去重
     let mut unique_paths = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
     for path in java_paths {
-        // 尝试规范化路径进行比较
         let normalized = match PathBuf::from(&path).canonicalize() {
             Ok(canonical) => canonical.to_string_lossy().to_lowercase(),
             Err(_) => path.to_lowercase(),

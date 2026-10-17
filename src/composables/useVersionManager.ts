@@ -1,3 +1,7 @@
+/**
+ * 已安装版本管理
+ * 读取游戏目录里的已安装版本，未选中时优先恢复上次选择
+ */
 import { ref } from 'vue';
 import { useEventSubscription } from './useEventSubscription';
 import { configApi } from '../services';

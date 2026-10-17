@@ -1,11 +1,12 @@
 //! Natives 库解压逻辑
+//!
+//! 按 OS 与 ${arch} 选 natives jar 解压到版本目录供 java.library.path，非空目录直接复用
 
 use crate::errors::LauncherError;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// 解压 Natives 库文件
 pub fn extract_natives(
     version_json: &serde_json::Value,
     version_dir: &Path,
@@ -19,7 +20,7 @@ pub fn extract_natives(
         format!("Natives目录: {}", natives_dir.display()),
     );
 
-    // 如果 natives 目录已存在且非空，跳过解压（缓存复用）
+    // natives 目录已存在且非空时直接复用缓存，跳过解压
     if natives_dir.exists() {
         if fs::read_dir(&natives_dir)
             .map(|mut d| d.next().is_some())
@@ -31,7 +32,6 @@ pub fn extract_natives(
             );
             return Ok(natives_dir);
         }
-        // 目录存在但为空，删除后重新创建
         fs::remove_dir_all(&natives_dir)?;
     }
     fs::create_dir_all(&natives_dir)?;
@@ -51,7 +51,7 @@ pub fn extract_natives(
             continue;
         };
 
-        // 处理 ${arch} 占位符替换
+        // 分类符里的 ${arch} 需替换成运行架构
         let arch = if std::env::consts::ARCH.contains("64") {
             "64"
         } else {
@@ -101,7 +101,6 @@ pub fn extract_natives(
     Ok(natives_dir)
 }
 
-/// 解压单个 native jar 文件
 fn extract_native_jar(
     lib_path: &Path,
     natives_dir: &Path,
@@ -115,12 +114,10 @@ fn extract_native_jar(
         let mut file = archive.by_index(i)?;
         let entry_name = file.name()?.to_string();
 
-        // 检查是否需要排除
         if should_exclude_entry(&entry_name, lib) {
             continue;
         }
 
-        // 跳过文件夹条目
         if entry_name.ends_with('/') {
             continue;
         }
@@ -151,7 +148,6 @@ fn extract_native_jar(
     Ok(())
 }
 
-/// 检查条目是否应该被排除
 fn should_exclude_entry(entry_name: &str, lib: &serde_json::Value) -> bool {
     let Some(extract_rules) = lib.get("extract") else {
         return false;
@@ -166,7 +162,6 @@ fn should_exclude_entry(entry_name: &str, lib: &serde_json::Value) -> bool {
         .any(|v| entry_name.starts_with(v.as_str().unwrap_or("")))
 }
 
-/// 记录 natives 目录内容
 fn log_natives_dir_contents(natives_dir: &Path, emit: &impl Fn(&str, String)) {
     if !natives_dir.exists() {
         return;

@@ -1,11 +1,6 @@
-//! Minecraft 游戏启动器模块
+//! Minecraft 启动流程模块
 //!
-//! 该模块负责启动 Minecraft 游戏，包括：
-//! - 版本 JSON 加载和合并
-//! - Classpath 构建
-//! - Natives 解压
-//! - JVM 和游戏参数构建
-//! - 进程启动和监控
+//! 串起 token 刷新、隔离目录、natives 解压、classpath、参数拼装、Java 匹配与进程监控
 
 mod arguments;
 mod classpath;
@@ -26,7 +21,6 @@ use tauri::Emitter;
 
 pub use classpath::find_library_jar;
 
-/// 启动 Minecraft 游戏
 pub async fn launch_minecraft(
     options: LaunchOptions,
     window: tauri::Window,
@@ -86,7 +80,6 @@ pub async fn launch_minecraft(
         }
     }
 
-    // 保存用户名和 UUID 到配置文件
     let uuid = if options.auth_type.as_deref() == Some("microsoft") {
         options
             .uuid
@@ -100,19 +93,15 @@ pub async fn launch_minecraft(
     config.uuid = Some(uuid.clone());
     save_config(&config)?;
 
-    // 更新实例的上次启动时间
     let _ = update_instance_last_played(&options.version);
-    // 保存上次选择的版本
     let _ = set_last_selected_version(&options.version);
 
-    // 设置路径（支持相对路径）
     let game_dir = java::resolve_game_dir(&config.game_dir);
     let version_dir = game_dir.join("versions").join(&options.version);
 
     emit("log-debug", format!("尝试启动版本: {}", options.version));
     emit("log-debug", format!("游戏目录: {}", game_dir.display()));
 
-    // 加载版本 JSON
     let version_json = version_json::load_and_merge_version_json(&game_dir, &options.version)?;
 
     let libraries_base_dir = game_dir.join("libraries");
@@ -127,14 +116,13 @@ pub async fn launch_minecraft(
         format!("资源文件目录: {}", assets_base_dir.display()),
     );
 
-    // 统一 OS 名称映射
+    // Minecraft 版本 JSON 用 "osx" 而非 Rust 的 "macos"
     let current_os = if std::env::consts::OS == "macos" {
         "osx"
     } else {
         std::env::consts::OS
     };
 
-    // 1. 准备隔离和 Natives 目录
     isolation::prepare_isolated_version_directory(&config, &game_dir, &version_dir)?;
     let natives_dir = natives::extract_natives(
         &version_json,
@@ -144,7 +132,6 @@ pub async fn launch_minecraft(
         &emit,
     )?;
 
-    // 2. 构建 Classpath
     let mut classpath = classpath::build_classpath(
         &version_json,
         &libraries_base_dir,
@@ -153,7 +140,6 @@ pub async fn launch_minecraft(
         &emit,
     )?;
 
-    // 3. 获取主类并执行库预检
     let main_class = version_json["mainClass"]
         .as_str()
         .ok_or_else(|| LauncherError::Custom("无法在json中找到mainClass".to_string()))?;
@@ -162,7 +148,6 @@ pub async fn launch_minecraft(
         classpath::precheck_launchwrapper_libraries(&mut classpath, &libraries_base_dir, &emit)?;
     }
 
-    // 4. 构建参数
     let assets_index = version_json["assetIndex"]["id"]
         .as_str()
         .unwrap_or(&options.version);
@@ -180,10 +165,9 @@ pub async fn launch_minecraft(
         &emit,
     );
 
-    // 解析实际的 Minecraft 版本号，用于 JVM 参数优化和 Java 匹配
+    // 实例 ID 未必是 MC 版本号，解析真实版本供 Java 匹配和 JVM 参数优化
     let actual_mc_version = java::resolve_actual_mc_version(&options.version, &config.game_dir);
 
-    // 5. 组装 Java 启动参数
     let java_path = if let Some(ref override_path) = options.override_java_path {
         emit(
             "log-info",
@@ -212,7 +196,6 @@ pub async fn launch_minecraft(
     };
     emit("log-debug", format!("使用的Java路径: {}", java_path));
 
-    // 检测 Java 版本，用于 JVM 参数优化
     let java_version = java::detect_java_version(&java_path);
     if let Some(v) = java_version {
         emit("log-debug", format!("检测到Java版本: {}", v));
@@ -226,7 +209,6 @@ pub async fn launch_minecraft(
     let lwjgl_lib_path = natives_dir.to_string_lossy().to_string();
     let memory_mb = options.memory.unwrap_or(2048);
 
-    // 检查内存设置是否安全
     if let Err(e) = is_memory_setting_safe(memory_mb) {
         emit("log-warning", format!("内存设置警告: {}", e));
     }
@@ -234,7 +216,6 @@ pub async fn launch_minecraft(
     // 生成 JVM 参数：默认只有 G1GC 优化，其余按用户在高级选项里的开关追加
     let mut final_args = optimize_jvm_memory_args(memory_mb, java_version, &config.jvm_advanced);
 
-    // 添加其他必要的 JVM 参数
     final_args.extend([
         format!("-Djava.library.path={}", lwjgl_lib_path),
         format!("-Dorg.lwjgl.librarypath={}", lwjgl_lib_path),
@@ -243,7 +224,6 @@ pub async fn launch_minecraft(
     ]);
     final_args.extend(jvm_args);
 
-    // 构建 Classpath 字符串
     let classpath_str = classpath
         .iter()
         .map(|p| p.to_string_lossy())
@@ -257,9 +237,7 @@ pub async fn launch_minecraft(
     final_args.push(main_class.to_string());
     final_args.extend(game_args_vec);
 
-    // 添加窗口大小参数
-    // 注意：版本 JSON 的 has_custom_resolution 规则可能已经注入过，避免重复传参
-    // （Forge 只取第一个 --width 值，重复时用户设置会被占位符挤掉）
+    // 版本 JSON 的 has_custom_resolution 规则可能已注入 --width/--height；Forge 只取第一个 --width，重复传参会让用户设置被占位符挤掉
     let has_arg = |flag: &str| final_args.iter().any(|a| a == flag);
     let width_present = has_arg("--width");
     let height_present = has_arg("--height");
@@ -277,7 +255,7 @@ pub async fn launch_minecraft(
         }
     }
 
-    // 兜底：任何未替换的 ${...} 占位符都会让游戏直接崩溃，这里提前告警
+    // 未替换的 ${...} 占位符会让游戏直接崩溃，这里提前告警
     if let Some(unresolved) = final_args.iter().find(|a| a.contains("${")) {
         emit(
             "log-warning",
@@ -288,14 +266,12 @@ pub async fn launch_minecraft(
         final_args.push("--fullscreen".to_string());
     }
 
-    // 6. 启动游戏
     let working_dir = if config.version_isolation {
         version_dir
     } else {
         game_dir
     };
 
-    // 设置游戏语言
     if let Some(ref lang) = config.language {
         if let Err(e) = crate::utils::minecraft::set_game_language(&working_dir, lang) {
             emit("log-warning", format!("无法设置游戏语言: {}", e));

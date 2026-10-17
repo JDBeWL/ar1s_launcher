@@ -1,3 +1,7 @@
+//! 整合包安装模块
+//!
+//! 下载解压 Modrinth 整合包，按 modrinth.index.json 并发补下模组与依赖加载器，失败或取消时回滚实例
+
 use crate::errors::LauncherError;
 use crate::models::DownloadJob;
 use crate::models::modpack::*;
@@ -12,33 +16,26 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 
-/// 全局取消标志
 static MODPACK_CANCEL_FLAG: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
 
-/// 获取或初始化取消标志
 fn get_cancel_flag() -> Arc<AtomicBool> {
     MODPACK_CANCEL_FLAG
         .get_or_init(|| Arc::new(AtomicBool::new(false)))
         .clone()
 }
 
-/// 重置取消标志
 pub fn reset_modpack_cancel_flag() {
-    // 确保标志已初始化，然后重置为 false
     get_cancel_flag().store(false, Ordering::SeqCst);
 }
 
-/// 设置取消标志
 pub fn set_modpack_cancel_flag() {
     get_cancel_flag().store(true, Ordering::SeqCst);
 }
 
-/// 检查是否已取消
 fn is_cancelled() -> bool {
     get_cancel_flag().load(Ordering::SeqCst)
 }
 
-/// 检查取消状态，如果已取消则返回错误
 fn check_cancelled() -> Result<(), LauncherError> {
     if is_cancelled() {
         Err(LauncherError::Custom("安装已取消".to_string()))
@@ -54,7 +51,6 @@ pub struct ModpackInstallProgress {
     pub indeterminate: bool,
 }
 
-/// Modrinth index.json 中的文件定义
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct ModrinthIndexFile {
@@ -72,7 +68,6 @@ struct ModrinthIndexHashes {
     sha512: Option<String>,
 }
 
-/// Modrinth index.json 结构
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct ModrinthIndex {
@@ -110,11 +105,9 @@ pub struct ModpackInstaller {
     http_client: &'static Client,
 }
 
-/// 获取全局 ModpackInstaller 实例（避免每次请求都创建新实例）
 static INSTALLER: std::sync::LazyLock<ModpackInstaller> =
     std::sync::LazyLock::new(ModpackInstaller::new);
 
-/// 获取全局 ModpackInstaller 引用
 pub fn get_installer() -> &'static ModpackInstaller {
     &INSTALLER
 }
@@ -127,16 +120,13 @@ impl ModpackInstaller {
         }
     }
 
-    /// 安装Modrinth整合包
     pub async fn install_modrinth_modpack(
         &self,
         options: ModpackInstallOptions,
         window: &tauri::Window,
     ) -> Result<(), LauncherError> {
-        // 重置取消标志
         reset_modpack_cancel_flag();
 
-        // 验证实例名称
         validate_instance_name_or_error(&options.instance_name)?;
 
         let config = config::load_config()?;
@@ -145,7 +135,6 @@ impl ModpackInstaller {
         let temp_dir = game_dir.join("temp");
         let extract_dir = temp_dir.join(format!("{}_extract", &options.instance_name));
 
-        // 1. 检查实例是否已存在
         if instance_dir.exists() {
             return Err(LauncherError::Custom(format!(
                 "名为 '{}' 的实例已存在，请使用其他名称",
@@ -153,7 +142,6 @@ impl ModpackInstaller {
             )));
         }
 
-        // 执行安装，如果失败或取消则清理
         let result = self
             .do_install_modrinth_modpack(
                 &options,
@@ -165,11 +153,9 @@ impl ModpackInstaller {
             )
             .await;
 
-        // 如果安装失败或被取消，清理已创建的目录
         if result.is_err() {
             info!("安装失败或被取消，清理已创建的文件...");
 
-            // 清理实例目录
             if instance_dir.exists() {
                 if let Err(e) = fs::remove_dir_all(&instance_dir) {
                     warn!("清理实例目录失败: {}", e);
@@ -178,7 +164,6 @@ impl ModpackInstaller {
                 }
             }
 
-            // 清理解压目录
             if extract_dir.exists() {
                 let _ = fs::remove_dir_all(&extract_dir);
             }
@@ -187,7 +172,6 @@ impl ModpackInstaller {
         result
     }
 
-    /// 执行实际的整合包安装逻辑
     async fn do_install_modrinth_modpack(
         &self,
         options: &ModpackInstallOptions,
@@ -197,7 +181,6 @@ impl ModpackInstaller {
         temp_dir: &PathBuf,
         extract_dir: &PathBuf,
     ) -> Result<(), LauncherError> {
-        // 发送进度更新
         let send_progress = |progress: u8, message: &str, indeterminate: bool| {
             let _ = window.emit(
                 "modpack-install-progress",
@@ -215,7 +198,6 @@ impl ModpackInstaller {
         send_progress(10, "获取整合包信息...", false);
         check_cancelled()?;
 
-        // 2. 获取整合包详细信息
         let modpack = self
             .modrinth_service
             .get_modpack(&options.modpack_id)
@@ -225,7 +207,6 @@ impl ModpackInstaller {
         send_progress(15, "获取整合包版本...", false);
         check_cancelled()?;
 
-        // 3. 获取指定版本信息
         let versions = self
             .modrinth_service
             .get_modpack_versions(&options.modpack_id, None, None)
@@ -240,7 +221,6 @@ impl ModpackInstaller {
         send_progress(20, "下载整合包文件...", false);
         check_cancelled()?;
 
-        // 4. 下载整合包文件
         let primary_file = selected_version
             .files
             .iter()
@@ -262,7 +242,6 @@ impl ModpackInstaller {
         send_progress(35, "解压整合包...", false);
         check_cancelled()?;
 
-        // 5. 解压整合包
         if extract_dir.exists() {
             fs::remove_dir_all(&extract_dir)?;
         }
@@ -275,7 +254,6 @@ impl ModpackInstaller {
         send_progress(45, "处理整合包配置...", false);
         check_cancelled()?;
 
-        // 6. 处理整合包配置
         let index_path = extract_dir.join("modrinth.index.json");
         let modrinth_index = if index_path.exists() {
             let content = fs::read_to_string(&index_path)?;
@@ -288,27 +266,24 @@ impl ModpackInstaller {
             None
         };
 
-        // 创建实例目录
         fs::create_dir_all(&instance_dir)?;
 
         send_progress(50, "复制整合包文件...", false);
         check_cancelled()?;
 
-        // 7. 复制 overrides 目录内容
         let overrides_dir = extract_dir.join("overrides");
         if overrides_dir.exists() {
             info!("复制 overrides 目录到实例");
             file_utils::copy_dir_all(&overrides_dir, &instance_dir)?;
         }
 
-        // 也检查 client-overrides (某些整合包使用)
+        // 某些整合包用 client-overrides 而非 overrides
         let client_overrides_dir = extract_dir.join("client-overrides");
         if client_overrides_dir.exists() {
             info!("复制 client-overrides 目录到实例");
             file_utils::copy_dir_all(&client_overrides_dir, &instance_dir)?;
         }
 
-        // 8. 下载 mods 和其他依赖文件
         if let Some(ref index) = modrinth_index {
             send_progress(55, "下载模组文件...", false);
             check_cancelled()?;
@@ -319,7 +294,6 @@ impl ModpackInstaller {
         send_progress(75, "安装游戏版本...", false);
         check_cancelled()?;
 
-        // 9. 安装基础游戏版本和加载器
         if let Some(ref index) = modrinth_index {
             self.install_game_and_loader(
                 &index.dependencies,
@@ -333,7 +307,6 @@ impl ModpackInstaller {
         send_progress(90, "创建实例配置...", false);
         check_cancelled()?;
 
-        // 10. 创建实例配置文件
         let mc_version = modrinth_index
             .as_ref()
             .map(|i| i.dependencies.minecraft.clone())
@@ -385,7 +358,6 @@ impl ModpackInstaller {
         let config_path = instance_dir.join("instance.json");
         fs::write(config_path, serde_json::to_string_pretty(&instance_config)?)?;
 
-        // 11. 清理临时文件
         if modpack_file_path.exists() {
             let _ = fs::remove_file(&modpack_file_path);
         }
@@ -396,7 +368,7 @@ impl ModpackInstaller {
         send_progress(100, "整合包安装完成！", false);
         info!("整合包 {} 安装完成", options.instance_name);
 
-        // 触发游戏目录变更事件，通知前端刷新版本列表
+        // 通知前端刷新版本列表
         if let Ok(game_dir_str) = config::get_game_dir() {
             let _ = window.emit("game-dir-changed", &game_dir_str);
         }
@@ -404,7 +376,7 @@ impl ModpackInstaller {
         Ok(())
     }
 
-    /// 下载整合包中定义的文件（mods等）— 并发下载，复用版本下载的断点续传实现
+    /// 并发下载整合包文件，复用 download_file 的断点续传
     async fn download_modpack_files(
         &self,
         files: &[ModrinthIndexFile],
@@ -418,7 +390,6 @@ impl ModpackInstaller {
             return Ok(());
         }
 
-        // 获取配置的下载线程数
         let dl_config = config::load_config()?;
         let max_concurrent = (dl_config.download_threads as usize).max(1);
         let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
@@ -429,7 +400,7 @@ impl ModpackInstaller {
         // download_file 靠这两个标志在流式读取中途响应取消
         let running = Arc::new(AtomicBool::new(true));
         let cancelled = get_cancel_flag();
-        // 整合包进度按文件数计算，字节计数只是 download_file 的出参，这里不消费
+        // 进度按文件数计算，字节计数只是 download_file 的出参
         let bytes_downloaded = Arc::new(AtomicU64::new(0));
         let bytes_since_last = Arc::new(AtomicU64::new(0));
 
@@ -448,13 +419,13 @@ impl ModpackInstaller {
             let cancelled = cancelled.clone();
             let bytes_downloaded = bytes_downloaded.clone();
             let bytes_since_last = bytes_since_last.clone();
-            // Modrinth 每个文件给多个镜像，第一个当主源、第二个当备源。
-            // sha1 缺失时不校验，否则会把好文件判成坏文件。
+            // Modrinth 每个文件给多个镜像：第一个当主源、第二个当备源
             let job = DownloadJob {
                 url: file.downloads.first().cloned().unwrap_or_default(),
                 fallback_url: file.downloads.get(1).cloned(),
                 path: instance_dir.join(&file.path),
                 size: file.file_size.unwrap_or(0),
+                // index.json 允许 sha1 为空串，为空时不校验，否则好文件会被判坏
                 hash: (!file.hashes.sha1.is_empty()).then(|| file.hashes.sha1.clone()),
             };
 
@@ -523,7 +494,6 @@ impl ModpackInstaller {
             handles.push(handle);
         }
 
-        // 等待所有下载任务完成
         for handle in handles {
             let _ = handle.await;
         }
@@ -555,7 +525,6 @@ impl ModpackInstaller {
         Ok(())
     }
 
-    /// 安装游戏版本和加载器
     async fn install_game_and_loader(
         &self,
         deps: &ModrinthDependencies,
@@ -566,7 +535,6 @@ impl ModpackInstaller {
         let mc_version = &deps.minecraft;
         info!("安装 Minecraft {}", mc_version);
 
-        // 下载基础游戏版本
         let config = config::load_config()?;
         download::process_and_download_version(
             mc_version.clone(),
@@ -575,7 +543,6 @@ impl ModpackInstaller {
         )
         .await?;
 
-        // 安装加载器（使用统一的 loaders 模块）
         if let Some(forge_version) = &deps.forge {
             info!("安装 Forge {}", forge_version);
             loaders::install_loader(
@@ -621,14 +588,13 @@ impl ModpackInstaller {
             )
             .await?;
         } else {
-            // 纯净版，创建版本 JSON
+            // 无加载器依赖时手动补一份版本 JSON
             self.create_vanilla_version_json(mc_version, instance_name, game_dir)?;
         }
 
         Ok(())
     }
 
-    /// 创建指向加载器版本的版本 JSON
     fn create_loader_version_json(
         &self,
         instance_name: &str,
@@ -640,7 +606,6 @@ impl ModpackInstaller {
 
         let json_path = version_dir.join(format!("{}.json", instance_name));
 
-        // 如果已经存在，不覆盖
         if json_path.exists() {
             return Ok(());
         }
@@ -657,7 +622,6 @@ impl ModpackInstaller {
         Ok(())
     }
 
-    /// 创建纯净版版本 JSON
     fn create_vanilla_version_json(
         &self,
         mc_version: &str,
@@ -667,7 +631,7 @@ impl ModpackInstaller {
         self.create_loader_version_json(instance_name, mc_version, game_dir)
     }
 
-    /// 解压整合包文件
+    /// 解压整合包，防止 zip 路径遍历
     async fn extract_modpack(
         &self,
         modpack_file_path: &PathBuf,
@@ -680,15 +644,12 @@ impl ModpackInstaller {
             let mut file = archive.by_index(i)?;
             let file_name = file.name()?.to_string();
 
-            // 安全检查：防止路径遍历攻击
-            // 检查是否包含 ".." 或绝对路径
             if file_name.contains("..") || file_name.starts_with('/') || file_name.starts_with('\\')
             {
                 log::warn!("跳过可疑的 zip 条目: {}", file_name);
                 continue;
             }
 
-            // 在 Windows 上也检查驱动器路径 (如 C:)
             #[cfg(windows)]
             if file_name.len() >= 2 && file_name.chars().nth(1) == Some(':') {
                 log::warn!("跳过可疑的 zip 条目 (绝对路径): {}", file_name);
@@ -697,7 +658,6 @@ impl ModpackInstaller {
 
             let outpath = extract_dir.join(&file_name);
 
-            // 确保解压路径在目标目录内
             let canonical_extract = extract_dir
                 .canonicalize()
                 .unwrap_or_else(|_| extract_dir.clone());
@@ -728,7 +688,6 @@ impl ModpackInstaller {
         Ok(())
     }
 
-    /// 搜索Modrinth整合包
     pub async fn search_modpacks(
         &self,
         query: Option<String>,
@@ -752,7 +711,6 @@ impl ModpackInstaller {
             .await
     }
 
-    /// 获取整合包版本列表
     pub async fn get_modpack_versions(
         &self,
         project_id: &str,

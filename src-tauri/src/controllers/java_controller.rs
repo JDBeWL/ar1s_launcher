@@ -1,3 +1,7 @@
+//! Java command 模块
+//!
+//! 本机 Java 扫描与自定义路径管理的 invoke 入口，兼容性判定前先把实例 ID 解析成真实 MC 版本
+
 use crate::errors::LauncherError;
 use crate::models::JavaCompatibilityResult;
 use crate::services::config::load_config;
@@ -49,7 +53,7 @@ pub fn check_java_compatibility(
 ) -> Result<JavaCompatibilityResult, LauncherError> {
     let config = load_config()?;
 
-    // 解析实际的 Minecraft 版本号（处理整合包 ID）
+    // 传入的可能是整合包 ID，要解析成真实 MC 版本号
     let actual_mc_version = java::resolve_actual_mc_version(&mc_version, &config.game_dir);
     log::info!("检查 Java 兼容性: {} -> {}", mc_version, actual_mc_version);
 

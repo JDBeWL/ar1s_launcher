@@ -42,14 +42,12 @@ function selectModpack(modpack: ModrinthModpack) {
 
 onMounted(async () => {
   await fetchGameVersions();
-  // 初始加载整合包列表
   await searchModpacks();
 });
 </script>
 
 <template>
   <div>
-    <!-- 搜索和筛选 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <v-row density="compact">
@@ -116,13 +114,11 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <!-- 加载状态 -->
     <div v-if="loadingModpacks" class="text-center py-12">
       <v-progress-circular indeterminate size="48" color="primary" />
       <div class="text-body-medium text-on-surface-variant mt-4">搜索整合包中...</div>
     </div>
 
-    <!-- 空状态 -->
     <div v-else-if="modpacks.length === 0" class="text-center py-12">
       <v-avatar size="80" color="surface-container-high" class="mb-4">
         <v-icon size="40" color="on-surface-variant">mdi-package-variant</v-icon>
@@ -135,7 +131,6 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 整合包列表 -->
     <template v-else>
       <v-row density="compact">
         <v-col v-for="modpack in modpacks" :key="modpack.slug" cols="12" sm="6" md="4">
@@ -143,7 +138,6 @@ onMounted(async () => {
         </v-col>
       </v-row>
 
-      <!-- 分页 -->
       <div v-if="modpackTotalPages > 1" class="d-flex flex-column align-center mt-5">
         <v-pagination
           v-model="modpackCurrentPage"

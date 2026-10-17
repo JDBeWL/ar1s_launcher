@@ -168,7 +168,6 @@ onUnmounted(() => {
 
 <template>
   <div class="settings-group">
-    <!-- 游戏目录 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-3">
@@ -185,7 +184,6 @@ onUnmounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 版本隔离 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between mb-1">
@@ -204,7 +202,6 @@ onUnmounted(() => {
         </div>
         <p class="text-body-medium text-on-surface-variant mb-0">为每个游戏版本创建独立的文件夹，避免配置冲突</p>
 
-        <!-- 隔离选项 -->
         <v-expand-transition>
           <div v-if="versionIsolation" class="mt-4 pt-4 isolation-options">
             <div class="text-body-medium text-on-surface-variant mb-3">选择需要隔离的内容：</div>
@@ -224,7 +221,6 @@ onUnmounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 下载设置 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -232,7 +228,6 @@ onUnmounted(() => {
           <span class="text-title-medium">下载设置</span>
         </div>
 
-        <!-- 下载线程 -->
         <div class="mb-5">
           <div class="d-flex align-center mb-2">
             <span class="text-body-medium">下载线程数</span>
@@ -257,7 +252,6 @@ onUnmounted(() => {
           </v-slider>
         </div>
 
-        <!-- 下载源 -->
         <div>
           <div class="text-body-medium mb-3">下载源</div>
           <v-btn-toggle
@@ -284,7 +278,6 @@ onUnmounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 游戏语言 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -304,7 +297,6 @@ onUnmounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 外观 -->
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
@@ -326,7 +318,6 @@ onUnmounted(() => {
       </v-card-text>
     </v-card>
 
-    <!-- 关于 -->
     <v-card variant="flat" color="surface-container">
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">

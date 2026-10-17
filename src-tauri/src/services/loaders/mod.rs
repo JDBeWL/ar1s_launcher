@@ -1,10 +1,6 @@
 //! Mod 加载器安装模块
 //!
-//! 统一管理所有 mod 加载器的安装逻辑：
-//! - Forge
-//! - Fabric
-//! - Quilt
-//! - NeoForge
+//! 安装四种加载器并生成带 inheritsFrom 的实例版本 JSON，LoaderType 负责路由
 
 pub mod fabric;
 pub mod forge;
@@ -20,7 +16,6 @@ use crate::errors::LauncherError;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// 加载器类型枚举
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum LoaderType {
@@ -43,7 +38,6 @@ pub enum LoaderType {
 }
 
 impl LoaderType {
-    /// 获取 Minecraft 版本
     pub fn mc_version(&self) -> &str {
         match self {
             LoaderType::Forge { mc_version, .. } => mc_version,
@@ -53,7 +47,6 @@ impl LoaderType {
         }
     }
 
-    /// 获取加载器版本
     pub fn loader_version(&self) -> &str {
         match self {
             LoaderType::Forge { loader_version, .. } => loader_version,
@@ -63,7 +56,6 @@ impl LoaderType {
         }
     }
 
-    /// 获取加载器名称
     pub fn name(&self) -> &'static str {
         match self {
             LoaderType::Forge { .. } => "Forge",
@@ -74,7 +66,6 @@ impl LoaderType {
     }
 }
 
-/// 安装加载器的统一入口
 pub async fn install_loader(
     loader: &LoaderType,
     instance_name: &str,

@@ -1,6 +1,5 @@
 <template>
   <v-container fluid class="page-container pa-4">
-    <!-- 安装方式选择 - 使用 Tab 样式 -->
     <v-tabs v-model="installType" color="primary" class="mb-4" grow>
       <v-tab value="custom">
         <v-icon start size="20">mdi-cog</v-icon>
@@ -12,16 +11,12 @@
       </v-tab>
     </v-tabs>
 
-    <!-- 内容区域 -->
     <v-window v-model="installType">
-      <!-- 自定义安装 -->
       <v-window-item value="custom">
         <CustomInstallForm />
       </v-window-item>
 
-      <!-- 从互联网安装 -->
       <v-window-item value="online">
-        <!-- 平台选择 -->
         <v-chip-group v-model="selectedPlatform" mandatory selected-class="text-primary" class="mb-4">
           <v-chip value="modrinth" variant="tonal" filter size="large">
             <v-icon start size="18">mdi-alpha-m-circle</v-icon>
@@ -34,10 +29,8 @@
           </v-chip>
         </v-chip-group>
 
-        <!-- Modrinth 整合包浏览 -->
         <ModrinthBrowser v-if="selectedPlatform === 'modrinth'" />
 
-        <!-- CurseForge 占位 -->
         <v-alert v-else-if="selectedPlatform === 'curseforge'" type="info" variant="tonal">
           CurseForge 整合包支持正在开发中...
         </v-alert>

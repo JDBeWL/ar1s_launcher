@@ -1,23 +1,20 @@
-//! 下载状态管理（支持断点续传）
+//! 下载断点状态
+//!
+//! 以 URL 为键记录已完成与失败项并落盘，进行中的只留内存，dirty 决定何时写盘
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-/// 下载状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadState {
-    /// 已完成的文件 URL 集合（使用 HashSet 实现 O(1) 查找）
     pub completed_files: HashSet<String>,
-    /// 下载失败的文件 URL 集合
     pub failed_files: HashSet<String>,
-    /// 部分下载的文件信息（URL -> 已下载字节数）
+    /// URL -> 已下载字节数
     #[serde(default)]
     pub partial_downloads: HashMap<String, u64>,
-    /// 当前活跃的下载（仅内存中）
     #[serde(skip)]
     pub active_downloads: HashMap<String, PathBuf>,
-    /// 是否有未保存的更改
     #[serde(skip)]
     pub dirty: bool,
 }
@@ -33,7 +30,6 @@ impl DownloadState {
         }
     }
 
-    /// 从文件加载状态
     pub fn load_from_file(path: &std::path::Path) -> Option<Self> {
         std::fs::read_to_string(path)
             .ok()
@@ -53,7 +49,6 @@ impl DownloadState {
     }
 
     pub fn mark_completed(&mut self, url: String) {
-        // 从部分下载中移除
         self.partial_downloads.remove(&url);
         self.completed_files.insert(url);
         self.mark_dirty();
@@ -64,14 +59,12 @@ impl DownloadState {
         self.mark_dirty();
     }
 
-    /// 更新部分下载进度
     #[allow(dead_code)]
     pub fn update_partial(&mut self, url: String, bytes: u64) {
         self.partial_downloads.insert(url, bytes);
         self.mark_dirty();
     }
 
-    /// 获取部分下载的字节数
     #[allow(dead_code)]
     pub fn get_partial_bytes(&self, url: &str) -> u64 {
         self.partial_downloads.get(url).copied().unwrap_or(0)
@@ -85,19 +78,16 @@ impl DownloadState {
         self.active_downloads.remove(url);
     }
 
-    /// 检查文件是否已完成
     pub fn is_completed(&self, url: &str) -> bool {
         self.completed_files.contains(url)
     }
 
-    /// 清除失败状态（用于重试）
     #[allow(dead_code)]
     pub fn clear_failed(&mut self, url: &str) {
         self.failed_files.remove(url);
         self.mark_dirty();
     }
 
-    /// 重置状态（用于重新下载）
     #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.completed_files.clear();
@@ -137,7 +127,6 @@ mod tests {
 
         assert!(state.is_completed("http://example.com/a"));
         assert!(!state.is_completed("http://example.com/b"));
-        // mark_completed 应该移除部分下载记录
         assert_eq!(state.get_partial_bytes("http://example.com/a"), 0);
         assert!(state.dirty);
     }
@@ -147,7 +136,6 @@ mod tests {
         let mut state = DownloadState::new();
         state.mark_completed("http://example.com/a".into());
         state.mark_completed("http://example.com/a".into());
-        // HashSet 自动去重，不应有重复
         assert_eq!(state.completed_files.len(), 1);
     }
 
@@ -204,7 +192,6 @@ mod tests {
         state.mark_completed("http://example.com/b".into());
         state.mark_failed("http://example.com/c".into());
         state.update_partial("http://example.com/d".into(), 2048);
-        // active_downloads 和 dirty 应该被 skip
 
         let json = serde_json::to_string(&state).unwrap();
         let restored: DownloadState = serde_json::from_str(&json).unwrap();
@@ -214,7 +201,6 @@ mod tests {
         assert!(restored.is_completed("http://example.com/b"));
         assert!(restored.failed_files.contains("http://example.com/c"));
         assert_eq!(restored.get_partial_bytes("http://example.com/d"), 2048);
-        // skip 字段应该是默认值
         assert!(restored.active_downloads.is_empty());
         assert!(!restored.dirty);
     }

@@ -50,11 +50,9 @@ const chipLabel = computed(() => {
 
 <template>
   <v-card color="surface-container" variant="flat" class="instance-card h-100 d-flex flex-column">
-    <!-- 顶部装饰条 -->
     <div :class="['card-accent', `accent-${(instance.loaderType || 'none').toLowerCase()}`]" />
 
     <v-card-text class="pa-4 flex-grow-1 d-flex flex-column">
-      <!-- 头部：标题和菜单 -->
       <div class="d-flex align-start justify-space-between mb-2">
         <div class="flex-grow-1 min-width-0 mr-2">
           <div class="text-title-large font-weight-bold text-truncate name-text" :title="instance.name">
@@ -112,7 +110,6 @@ const chipLabel = computed(() => {
         </v-menu>
       </div>
 
-      <!-- 中间信息：最后游玩和 Mod 数量 -->
       <div class="info-row d-flex align-center ga-4 text-body-small text-on-surface-variant mt-auto pt-4 mb-4">
         <div class="d-flex align-center">
           <v-icon size="14" class="mr-1.5" color="on-surface-variant">mdi-clock-outline</v-icon>
@@ -124,7 +121,6 @@ const chipLabel = computed(() => {
         </div>
       </div>
 
-      <!-- 底部：启动按钮 -->
       <v-btn
         variant="tonal"
         :color="loaderColor.color"
@@ -188,7 +184,6 @@ const chipLabel = computed(() => {
   min-width: 0;
 }
 
-/* 加载器特定装饰色 */
 .accent-forge {
   background: linear-gradient(90deg, #3273a8, #5ea3d8);
 }

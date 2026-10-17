@@ -1,7 +1,6 @@
 <template>
   <v-container fluid class="page-container pa-4">
     <v-card variant="flat" color="surface-container">
-      <!-- 标题栏 -->
       <v-card-title class="d-flex align-center pa-4">
         <v-btn variant="text" icon="mdi-arrow-left" :disabled="installing" @click="goBack" class="mr-2" />
         <div class="flex-grow-1">
@@ -16,7 +15,6 @@
       <v-divider />
 
       <v-card-text class="pa-4">
-        <!-- 安装进度 -->
         <v-expand-transition>
           <v-card v-if="installing" color="surface-container-high" class="mb-4" variant="flat">
             <v-card-text class="pa-4">
@@ -60,7 +58,6 @@
           </v-card>
         </v-expand-transition>
 
-        <!-- 加载骨架屏 -->
         <template v-if="loadingVersions">
           <v-skeleton-loader type="text" class="mb-4" />
           <v-row>
@@ -73,16 +70,13 @@
           </v-row>
         </template>
 
-        <!-- 版本选择表单 -->
         <template v-else-if="!installing">
-          <!-- 无可用版本 -->
           <v-alert v-if="modpackVersions.length === 0" type="warning" variant="tonal" class="mb-4">
             <template #title>无可用版本</template>
             该整合包暂无可安装的版本，请返回重新选择
           </v-alert>
 
           <template v-else>
-            <!-- 版本配置区域 -->
             <div class="config-section mb-4">
               <div class="text-title-small text-on-surface-variant mb-3">
                 <v-icon size="18" class="mr-1">mdi-tune</v-icon>
@@ -90,7 +84,6 @@
               </div>
 
               <v-row density="compact">
-                <!-- 加载器 -->
                 <v-col cols="6" sm="4" md="3">
                   <v-select
                     v-model="selectedLoader"
@@ -107,7 +100,6 @@
                   </v-select>
                 </v-col>
 
-                <!-- 游戏版本 -->
                 <v-col cols="6" sm="4" md="3">
                   <v-select
                     v-model="selectedGameVersion"
@@ -126,7 +118,6 @@
                   </v-select>
                 </v-col>
 
-                <!-- 整合包版本 -->
                 <v-col cols="12" sm="4" md="6">
                   <v-select
                     v-model="selectedVersionId"
@@ -157,7 +148,6 @@
               </v-row>
             </div>
 
-            <!-- 实例配置区域 -->
             <div class="config-section mb-4">
               <div class="text-title-small text-on-surface-variant mb-3">
                 <v-icon size="18" class="mr-1">mdi-folder-cog</v-icon>
@@ -195,7 +185,6 @@
               <div class="text-body-small text-on-surface-variant mt-2">留空将使用整合包名称作为实例名称</div>
             </div>
 
-            <!-- 选中版本信息预览 -->
             <v-expand-transition>
               <v-card v-if="selectedVersionInfo" color="surface-container-high" variant="flat" class="mb-4">
                 <v-card-text class="pa-3">
@@ -224,7 +213,6 @@
           </template>
         </template>
 
-        <!-- 操作按钮 -->
         <div class="d-flex justify-end ga-2 mt-4">
           <v-btn v-if="!installing" variant="text" @click="goBack"> 取消 </v-btn>
           <v-btn
@@ -280,18 +268,15 @@ const checkingInstanceName = ref(false);
 let unlistenProgress: UnlistenFn | null = null;
 let instanceNameCheckTimeout: ReturnType<typeof setTimeout> | null = null;
 
-// 获取选中版本的详细信息
 const selectedVersionInfo = computed(() => {
   if (!selectedVersionId.value) return null;
   return modpackVersions.value.find((v) => v.id === selectedVersionId.value) || null;
 });
 
-// 获取实际使用的实例名称
 const effectiveInstanceName = computed(() => {
   return instanceName.value.trim() || title;
 });
 
-// 监听实例名称变化
 watch(instanceName, (newName) => {
   if (instanceNameCheckTimeout) {
     clearTimeout(instanceNameCheckTimeout);
@@ -299,7 +284,6 @@ watch(instanceName, (newName) => {
 
   instanceNameError.value = null;
 
-  // 使用实际名称进行检查
   const nameToCheck = newName.trim() || title;
   if (!nameToCheck) return;
 
@@ -469,7 +453,6 @@ async function install() {
 
 onMounted(async () => {
   await loadVersions();
-  // 检查默认实例名称
   if (title) {
     await checkInstanceName(title);
   }

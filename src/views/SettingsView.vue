@@ -43,7 +43,6 @@ onUnmounted(() => {
 
 <template>
   <div class="settings-container">
-    <!-- 小屏幕：顶部标签页 -->
     <template v-if="isSmallScreen">
       <div class="settings-mobile">
         <div class="pa-4 pb-0">
@@ -73,7 +72,6 @@ onUnmounted(() => {
       </div>
     </template>
 
-    <!-- 大屏幕：左侧导航 + 右侧内容 -->
     <template v-else>
       <div class="settings-nav">
         <div class="nav-header pa-4">
@@ -163,8 +161,7 @@ onUnmounted(() => {
   margin-bottom: 32px;
 }
 
-/* v-alert 默认把 prepend 图标垂直居中于整块内容，
-   多行提示里图标会飘到中间，改成贴住第一行标题 */
+/* Vuetify 把 v-alert 的 prepend 图标默认垂直居中，多行提示需手动钉到首行 */
 .tip-alert .v-alert__prepend {
   align-self: flex-start;
 }

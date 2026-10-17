@@ -1,3 +1,7 @@
+/**
+ * 账号认证状态存储
+ * 保存离线昵称与 Microsoft 登录态，负责登录流程、token 刷新与登出
+ */
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { userApi } from '../services';

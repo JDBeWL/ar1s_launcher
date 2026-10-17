@@ -50,7 +50,6 @@ const iconUrl = computed(() => sanitizeModrinthImageUrl(props.modpack.icon_url))
   >
     <v-card-text class="pa-4">
       <div class="d-flex align-start mb-3">
-        <!-- 图标 -->
         <v-avatar size="56" rounded="lg" class="mr-3 flex-shrink-0" color="secondary-container">
           <v-img v-if="iconUrl" :src="iconUrl" cover>
             <template #error>
@@ -62,19 +61,16 @@ const iconUrl = computed(() => sanitizeModrinthImageUrl(props.modpack.icon_url))
           <v-icon v-else size="28" color="on-secondary-container">mdi-package-variant</v-icon>
         </v-avatar>
 
-        <!-- 标题和作者 -->
         <div class="flex-grow-1 min-width-0">
           <div class="text-title-medium font-weight-bold text-truncate">{{ modpack.title }}</div>
           <div class="text-body-small text-on-surface-variant">{{ modpack.author }}</div>
         </div>
       </div>
 
-      <!-- 描述 -->
       <div class="text-body-medium text-on-surface-variant mb-3 modpack-desc">
         {{ truncateText(modpack.description, 80) }}
       </div>
 
-      <!-- 标签 -->
       <div class="d-flex flex-wrap ga-1 mb-3">
         <v-chip
           v-for="loader in modpack.loaders.slice(0, 2)"
@@ -90,7 +86,6 @@ const iconUrl = computed(() => sanitizeModrinthImageUrl(props.modpack.icon_url))
         </v-chip>
       </div>
 
-      <!-- 统计 -->
       <div class="d-flex align-center text-body-small text-on-surface-variant">
         <v-icon size="16" class="mr-1">mdi-download</v-icon>
         <span>{{ formatNumber(modpack.downloads) }}</span>
