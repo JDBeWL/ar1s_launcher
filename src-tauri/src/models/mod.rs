@@ -36,6 +36,83 @@ impl Default for AuthType {
     }
 }
 
+// 垃圾回收器策略
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GcStrategy {
+    /// G1GC 调优
+    G1,
+    /// 完全不指定垃圾回收器，交给 JVM 默认，与官方启动器一致
+    Default,
+    /// 吞吐量优先，适合核心数较少的机器
+    Parallel,
+    /// 单线程回收，通常只用于排查 GC 相关问题
+    Serial,
+    /// ZGC：极低停顿，适合超大堆（Java 15+；Old Java 会自动回退到 G1）
+    Z,
+}
+
+impl Default for GcStrategy {
+    fn default() -> Self {
+        GcStrategy::G1
+    }
+}
+
+// JVM 高级调优选项
+//
+// 默认策略：只做 G1GC 优化，其余 JVM 参数与官方启动器保持一致，
+// 最大化稳定性。下面每一项都可以由用户在「设置 - 高级选项」里自行开启。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct JvmAdvancedOptions {
+    /// 垃圾回收器策略，默认 G1
+    #[serde(default)]
+    pub gc_strategy: GcStrategy,
+    /// 启动时提交整个堆，改善运行期帧时间稳定性，代价是启动变慢
+    #[serde(default = "default_false")]
+    pub always_pre_touch: bool,
+    /// 禁止模组调用 System.gc() 触发的 Full GC
+    #[serde(default = "default_false")]
+    pub disable_explicit_gc: bool,
+    /// 字符串去重：省内存，但会拉长 Young GC 时间
+    #[serde(default = "default_false")]
+    pub string_deduplication: bool,
+    /// 关闭 hsperfdata 性能计数器共享内存
+    #[serde(default = "default_false")]
+    pub perf_disable_shared_mem: bool,
+    /// Metaspace 初始水位 (MB)，None 表示不加该参数、交给 JVM 默认
+    #[serde(default)]
+    pub metaspace_size_mb: Option<u32>,
+    /// Metaspace 上限 (MB)，None 表示不限制
+    ///
+    /// 大型整合包（如几百个模组的包）的类元数据会持续膨胀，
+    /// 不设上限时 JVM 会一直向系统申请本地内存，最终拖垮整机。
+    #[serde(default)]
+    pub metaspace_max_size_mb: Option<u32>,
+    /// OutOfMemoryError 时导出堆转储到 ./logs/heapdump.hprof
+    #[serde(default = "default_false")]
+    pub heap_dump_on_oom: bool,
+    /// 自定义追加参数，每行一条（或空格分隔），追加在所有内置参数之后
+    #[serde(default)]
+    pub extra_args: String,
+}
+
+impl Default for JvmAdvancedOptions {
+    fn default() -> Self {
+        Self {
+            gc_strategy: GcStrategy::default(),
+            always_pre_touch: false,
+            disable_explicit_gc: false,
+            string_deduplication: false,
+            perf_disable_shared_mem: false,
+            metaspace_size_mb: None,
+            metaspace_max_size_mb: None,
+            heap_dump_on_oom: false,
+            extra_args: String::new(),
+        }
+    }
+}
+
 // 游戏配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameConfig {
@@ -93,6 +170,9 @@ pub struct GameConfig {
     /// 正版 token 过期时间 (Unix 时间戳秒)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ms_expires_at: Option<i64>,
+    /// JVM 高级调优选项（设置 - 高级选项）
+    #[serde(default)]
+    pub jvm_advanced: JvmAdvancedOptions,
 }
 
 impl Default for GameConfig {
@@ -125,6 +205,7 @@ impl Default for GameConfig {
             ms_access_token: None,
             ms_refresh_token: None,
             ms_expires_at: None,
+            jvm_advanced: JvmAdvancedOptions::default(),
         }
     }
 }

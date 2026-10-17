@@ -113,12 +113,12 @@ function handleCancel() {
           class="mb-2"
         ></v-progress-linear>
 
-        <div class="d-flex justify-space-between text-body-small">
+        <div class="d-flex justify-space-between text-body-small num-mono">
           <span>{{ progressText }}</span>
           <span>{{ progressPercentage.toFixed(1) }}%</span>
         </div>
 
-        <div class="d-flex justify-space-between text-body-small mt-1">
+        <div class="d-flex justify-space-between text-body-small mt-1 num-mono">
           <span>{{ formattedSpeed }}</span>
           <span>剩余: {{ remainingTime }}</span>
         </div>

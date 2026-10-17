@@ -16,6 +16,7 @@ import type {
   ModrinthVersion,
   ModrinthSearchResult,
   WindowSettings,
+  JvmAdvancedOptions,
   AutoMemoryConfig,
   AuthStatus,
   DeviceCodeDisplay,
@@ -323,6 +324,21 @@ export const configApi = {
   /** 设置窗口设置 */
   async setWindowSettings(width: number | null, height: number | null, fullscreen: boolean): Promise<void> {
     return invoke('set_window_settings', { width, height, fullscreen });
+  },
+
+  /** 获取 JVM 高级调优选项 */
+  async getJvmAdvancedOptions(): Promise<JvmAdvancedOptions> {
+    return invoke<JvmAdvancedOptions>('get_jvm_advanced_options');
+  },
+
+  /** 保存 JVM 高级调优选项 */
+  async setJvmAdvancedOptions(options: JvmAdvancedOptions): Promise<void> {
+    return invoke('set_jvm_advanced_options', { options });
+  },
+
+  /** 预览按当前配置实际生效的 JVM 参数 */
+  async getEffectiveJvmArgs(memoryMb?: number): Promise<string[]> {
+    return invoke<string[]>('get_effective_jvm_args', { memoryMb: memoryMb ?? null });
   },
 
   /** 检查内存警告 */

@@ -1,4 +1,5 @@
 use crate::errors::LauncherError;
+use crate::models::{GcStrategy, JvmAdvancedOptions};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use sysinfo::{MemoryRefreshKind, System};
@@ -185,11 +186,13 @@ fn calculate_max_memory(total_memory: u32, base_need: u32) -> u32 {
 }
 
 /// 优化JVM内存参数
-/// 根据系统 CPU 核心数、游戏版本和 Java 版本动态调整参数，充分利用多核性能
+///
+/// 默认策略追加 G1GC 相关优化，其他 JVM 参数维持官方启动器的
+/// 最小集合以保证稳定性；更多优化项由 `JvmAdvancedOptions` 里的开关决定。
 pub fn optimize_jvm_memory_args(
     memory_mb: u32,
-    version: &str,
     java_version: Option<u32>,
+    advanced: &JvmAdvancedOptions,
 ) -> Vec<String> {
     let mut args = Vec::new();
 
@@ -200,72 +203,141 @@ pub fn optimize_jvm_memory_args(
     } else {
         (cpu_cores - 1).min(4)
     };
-    // 并行 GC 线程（Full GC 用）
-    let parallel_gc_threads = cpu_cores.min(8);
 
     // 基础内存参数：Xms = Xmx，避免堆动态扩展/收缩的开销
     args.push(format!("-Xmx{}M", memory_mb));
     args.push(format!("-Xms{}M", memory_mb));
 
-    // 判断是否为新版本（1.17+，需要 Java 17+）
-    let is_new_version = crate::utils::minecraft::is_new_version(version);
-
-    // ZGC 需要 Java 15+，分代 ZGC 需要 Java 21+（Java 24 起分代 ZGC 成为默认，标志被移除）
     let java_major = java_version.unwrap_or(17);
 
-    // Java 17+ 需要显式允许原生访问，否则 JNA/LWJGL 等库会发出警告甚至被阻止
+    // 这两个是新版 Java 下 LWJGL/JNA/JOML 正常工作的必要条件，不属于调优项，始终添加
     if java_major >= 17 {
         args.push("--enable-native-access=ALL-UNNAMED".to_string());
     }
-
-    // Java 23+ 中 sun.misc.Unsafe 的内存访问被限制，Minecraft 使用的 JOML 等库依赖它
     if java_major >= 23 {
         args.push("--sun-misc-unsafe-memory-access=allow".to_string());
     }
 
-    let supports_zgc = java_major >= 15;
-    let supports_generational_zgc = java_major >= 21 && java_major < 24;
-    // 大内存（≥4GB）+ 新版本 + Java 15+ 更适合用 ZGC
-    let use_zgc = memory_mb >= 4096 && is_new_version && supports_zgc;
-
-    if use_zgc {
-        // ZGC：低延迟并发 GC，适合大内存 + 多核
-        args.push("-XX:+UseZGC".to_string());
-        args.push(format!("-XX:ConcGCThreads={}", gc_threads));
-        args.push(format!("-XX:ParallelGCThreads={}", parallel_gc_threads));
-        // ZGC 分代模式（Java 21~23 需要显式开启且需要 UnlockExperimentalVMOptions，Java 24+ 默认分代且标志已移除）
-        if supports_generational_zgc {
-            args.push("-XX:+UnlockExperimentalVMOptions".to_string());
-            args.push("-XX:+ZGenerational".to_string());
+    // --- 垃圾回收器：默认 G1，可在高级选项中切换 ---
+    match advanced.gc_strategy {
+        GcStrategy::G1 => {
+            args.push("-XX:+UseG1GC".to_string());
+            args.push("-XX:G1NewSizePercent=20".to_string());
+            args.push("-XX:G1ReservePercent=20".to_string());
+            args.push("-XX:MaxGCPauseMillis=50".to_string());
         }
-    } else if is_new_version {
-        // G1GC：中等内存的通用选择
-        args.push("-XX:+UseG1GC".to_string());
-        args.push(format!("-XX:ParallelGCThreads={}", parallel_gc_threads));
-        args.push(format!("-XX:ConcGCThreads={}", gc_threads));
-        args.push("-XX:G1NewSizePercent=20".to_string());
-        args.push("-XX:G1ReservePercent=20".to_string());
-        args.push("-XX:MaxGCPauseMillis=50".to_string());
-        args.push("-XX:G1HeapWastePercent=5".to_string());
-    } else {
-        // 旧版本使用并行 GC
-        args.push("-XX:+UseParallelGC".to_string());
-        args.push(format!("-XX:ParallelGCThreads={}", parallel_gc_threads));
+        GcStrategy::Parallel => {
+            args.push("-XX:+UseParallelGC".to_string());
+        }
+        GcStrategy::Serial => {
+            args.push("-XX:+UseSerialGC".to_string());
+        }
+        GcStrategy::Z => {
+            // ZGC 需要 Java 15+，旧版本只能回退到 G1，否则 JVM 根本起不来
+            if java_major < 15 {
+                args.push("-XX:+UseG1GC".to_string());
+            } else {
+                args.push("-XX:+UseZGC".to_string());
+                // 分代 ZGC：Java 21~23 需显式开启，Java 24+ 默认分代且该标志已移除
+                if java_major >= 21 && java_major < 24 {
+                    args.push("-XX:+ZGenerational".to_string());
+                }
+            }
+        }
+        // Default：什么都不加，等同于官方启动器的行为
+        GcStrategy::Default => {}
+    }
+
+    if advanced.always_pre_touch {
+        args.push("-XX:+AlwaysPreTouch".to_string());
+    }
+
+    if advanced.disable_explicit_gc {
+        args.push("-XX:+DisableExplicitGC".to_string());
+    }
+
+    if advanced.string_deduplication {
+        args.push("-XX:+UseStringDeduplication".to_string());
+    }
+
+    if advanced.perf_disable_shared_mem {
+        args.push("-XX:+PerfDisableSharedMem".to_string());
+    }
+
+    // Metaspace：初始水位 + 上限
+    // 上限才是关键：不限制时大型整合包的类元数据会一直向系统要本地内存，
+    // 可能把整机拖到开始 swapping；限得太紧又会 OutOfMemoryError: Metaspace，所以默认不设
+    let metaspace_initial = advanced.metaspace_size_mb.filter(|mb| *mb > 0);
+    let metaspace_max = advanced.metaspace_max_size_mb.filter(|mb| *mb > 0);
+
+    match (metaspace_initial, metaspace_max) {
+        (Some(initial), Some(max)) => {
+            // 初始水位不允许超过上限，否则参数自相矛盾
+            args.push(format!("-XX:MetaspaceSize={}m", initial.min(max)));
+            args.push(format!("-XX:MaxMetaspaceSize={}m", max));
+        }
+        (Some(initial), None) => {
+            args.push(format!("-XX:MetaspaceSize={}m", initial));
+        }
+        (None, Some(max)) => {
+            // 只填上限时让初始值直接对齐上限，避免加载过程中反复触发带 Full GC 的类卸载
+            args.push(format!("-XX:MetaspaceSize={}m", max));
+            args.push(format!("-XX:MaxMetaspaceSize={}m", max));
+        }
+        (None, None) => {}
+    }
+
+    if advanced.heap_dump_on_oom {
+        args.push("-XX:+HeapDumpOnOutOfMemoryError".to_string());
+        args.push("-XX:HeapDumpPath=./logs/heapdump.hprof".to_string());
     }
 
     // JIT 编译器线程数，加速启动时的代码编译
     args.push(format!("-XX:CICompilerCount={}", gc_threads.min(4)));
 
-    // 字符串去重（仅 G1GC 支持），减少大整合包的内存占用
-    if !use_zgc && is_new_version {
-        args.push("-XX:+UseStringDeduplication".to_string());
-    }
+    // 自定义追加参数（每行一条或空格分隔，# 开头为注释）
+    args.extend(parse_extra_args(&advanced.extra_args));
 
-    // 内存溢出时生成堆转储
-    args.push("-XX:+HeapDumpOnOutOfMemoryError".to_string());
-    args.push("-XX:HeapDumpPath=./logs/heapdump.hprof".to_string());
+    // 兜底：只要用到 -XX 参数就确保解锁开关存在且排在前面，
+    // 避免自定义参数里的实验性选项导致 JVM 直接拒绝启动
+    ensure_experimental_unlock(&mut args);
 
     args
+}
+
+/// 实验性选项解锁标志
+const UNLOCK_EXPERIMENTAL: &str = "-XX:+UnlockExperimentalVMOptions";
+
+/// 保证 `-XX:+UnlockExperimentalVMOptions` 出现在所有 `-XX` 参数之前
+///
+/// JVM 要求解锁开关必须**先于**实验性选项，否则会报
+/// "VM option 'xxx' is experimental and must be enabled via -XX:+UnlockExperimentalVMOptions"
+/// 并且拒绝创建虚拟机（Java 8 上的 G1NewSizePercent 就是这一类）。
+fn ensure_experimental_unlock(args: &mut Vec<String>) {
+    if !args.iter().any(|a| a.starts_with("-XX:")) {
+        return;
+    }
+
+    // 先抹掉所有旧位置（可能来自自定义参数，排在后面同样不合法），再统一插到最前
+    args.retain(|a| a != UNLOCK_EXPERIMENTAL);
+    args.insert(0, UNLOCK_EXPERIMENTAL.to_string());
+}
+
+/// 解析用户自定义 JVM 参数：支持换行或空格分隔，`#` 开头视为注释
+fn parse_extra_args(raw: &str) -> Vec<String> {
+    let mut result = Vec::new();
+
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        for token in line.split_whitespace() {
+            result.push(token.to_string());
+        }
+    }
+
+    result
 }
 
 /// 检查内存设置是否安全（只检查最低限制，不限制上限）
@@ -388,7 +460,7 @@ mod tests {
 
     #[test]
     fn test_jvm_args_generation() {
-        let args = optimize_jvm_memory_args(2048, "1.20.1", Some(17));
+        let args = optimize_jvm_memory_args(2048, Some(17), &JvmAdvancedOptions::default());
         assert!(args.iter().any(|arg| arg.contains("-Xmx2048M")));
         assert!(args.iter().any(|arg| arg.contains("-Xms2048M")));
     }
@@ -417,43 +489,235 @@ mod tests {
     }
 
     #[test]
-    fn test_jvm_args_old_version_uses_parallel_gc() {
-        let args = optimize_jvm_memory_args(2048, "1.12.2", Some(8));
+    fn test_jvm_args_default_has_only_g1gc() {
+        // 默认策略：G1GC 调优 + 官方启动器的最小参数集，不掺杂其他调优
+        let args = optimize_jvm_memory_args(2048, Some(17), &JvmAdvancedOptions::default());
+        assert!(args.iter().any(|arg| arg == "-XX:+UseG1GC"));
+        assert!(args.iter().any(|arg| arg == "-XX:G1NewSizePercent=20"));
+        assert!(args.iter().any(|arg| arg == "-XX:G1ReservePercent=20"));
+        assert!(args.iter().any(|arg| arg == "-XX:MaxGCPauseMillis=50"));
+        // 实验性选项必须先解锁：Java 8 上缺了这行 JVM 会直接拒绝启动
+        let unlock_pos = args
+            .iter()
+            .position(|arg| arg == "-XX:+UnlockExperimentalVMOptions")
+            .expect("必须包含 UnlockExperimentalVMOptions");
+        let g1_new_pos = args
+            .iter()
+            .position(|arg| arg == "-XX:G1NewSizePercent=20")
+            .unwrap();
+        assert!(unlock_pos < g1_new_pos, "解锁开关必须排在实验性选项之前");
+        for unexpected in [
+            "-XX:+AlwaysPreTouch",
+            "-XX:+DisableExplicitGC",
+            "-XX:+PerfDisableSharedMem",
+            "-XX:+HeapDumpOnOutOfMemoryError",
+            "-XX:+UseStringDeduplication",
+            "-XX:+UseParallelGC",
+            "-XX:+UseZGC",
+        ] {
+            assert!(!args.iter().any(|arg| arg == unexpected), "{}", unexpected);
+        }
+        assert!(!args.iter().any(|arg| arg.starts_with("-XX:MetaspaceSize")));
+    }
+
+    #[test]
+    fn test_jvm_args_advanced_options_are_off_by_default() {
+        let opts = JvmAdvancedOptions::default();
+        assert_eq!(opts.gc_strategy, GcStrategy::G1, "默认应为 G1，与官方启动器一致");
+        assert!(!opts.always_pre_touch);
+        assert!(!opts.disable_explicit_gc);
+        assert!(!opts.string_deduplication);
+        assert!(!opts.perf_disable_shared_mem);
+        assert!(!opts.heap_dump_on_oom);
+        assert!(opts.metaspace_size_mb.is_none());
+        assert!(opts.metaspace_max_size_mb.is_none());
+        assert!(opts.extra_args.is_empty());
+    }
+
+    #[test]
+    fn test_jvm_args_advanced_flags_applied_when_enabled() {
+        let opts = JvmAdvancedOptions {
+            always_pre_touch: true,
+            disable_explicit_gc: true,
+            perf_disable_shared_mem: true,
+            string_deduplication: true,
+            heap_dump_on_oom: true,
+            metaspace_size_mb: Some(256),
+            metaspace_max_size_mb: Some(512),
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(4096, Some(17), &opts);
+        assert!(args.iter().any(|arg| arg == "-XX:+AlwaysPreTouch"));
+        assert!(args.iter().any(|arg| arg == "-XX:+DisableExplicitGC"));
+        assert!(args.iter().any(|arg| arg == "-XX:+PerfDisableSharedMem"));
+        assert!(args.iter().any(|arg| arg == "-XX:+UseStringDeduplication"));
+        assert!(args.iter().any(|arg| arg == "-XX:MetaspaceSize=256m"));
+        assert!(args.iter().any(|arg| arg == "-XX:+HeapDumpOnOutOfMemoryError"));
+    }
+
+    #[test]
+    fn test_jvm_args_gc_strategy_default_matches_official() {
+        // Default 策略不指定任何垃圾回收器，与官方启动器一致
+        let opts = JvmAdvancedOptions {
+            gc_strategy: GcStrategy::Default,
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(4096, Some(17), &opts);
+        for gc in [
+            "-XX:+UseG1GC",
+            "-XX:+UseParallelGC",
+            "-XX:+UseSerialGC",
+            "-XX:+UseZGC",
+        ] {
+            assert!(!args.iter().any(|arg| arg == gc), "{}", gc);
+        }
+        assert!(!args.iter().any(|arg| arg.starts_with("-XX:G1")));
+    }
+
+    #[test]
+    fn test_jvm_args_gc_strategy_parallel_and_serial() {
+        let parallel = JvmAdvancedOptions {
+            gc_strategy: GcStrategy::Parallel,
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(2048, Some(17), &parallel);
         assert!(args.iter().any(|arg| arg == "-XX:+UseParallelGC"));
+        assert!(!args.iter().any(|arg| arg == "-XX:+UseG1GC"));
+
+        let serial = JvmAdvancedOptions {
+            gc_strategy: GcStrategy::Serial,
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(2048, Some(17), &serial);
+        assert!(args.iter().any(|arg| arg == "-XX:+UseSerialGC"));
         assert!(!args.iter().any(|arg| arg == "-XX:+UseG1GC"));
     }
 
     #[test]
-    fn test_jvm_args_new_version_uses_g1gc() {
-        // 2GB 内存 + 新版本使用 G1GC（< 4GB 不走 ZGC）
-        let args = optimize_jvm_memory_args(2048, "1.20.1", Some(17));
-        assert!(args.iter().any(|arg| arg == "-XX:+UseG1GC"));
-        assert!(!args.iter().any(|arg| arg == "-XX:+UseParallelGC"));
-    }
-
-    #[test]
-    fn test_jvm_args_large_memory_uses_zgc() {
-        // 4GB+ 内存 + 新版本 + Java 21 使用 ZGC（含分代模式，需要 UnlockExperimentalVMOptions）
-        let args = optimize_jvm_memory_args(4096, "1.20.1", Some(21));
+    fn test_jvm_args_gc_strategy_z_selected_explicitly() {
+        let opts = JvmAdvancedOptions {
+            gc_strategy: GcStrategy::Z,
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(8192, Some(21), &opts);
         assert!(args.iter().any(|arg| arg == "-XX:+UseZGC"));
         assert!(args.iter().any(|arg| arg == "-XX:+ZGenerational"));
-        assert!(
-            args.iter()
-                .any(|arg| arg == "-XX:+UnlockExperimentalVMOptions")
-        );
+        assert!(!args.iter().any(|arg| arg == "-XX:+UseG1GC"));
     }
 
     #[test]
-    fn test_jvm_args_zgc_java24_no_generational_flag() {
-        // Java 24+ 分代 ZGC 为默认，ZGenerational 标志已移除
-        let args = optimize_jvm_memory_args(4096, "1.20.1", Some(24));
+    fn test_jvm_args_gc_strategy_z_falls_back_on_old_java() {
+        // Java 8 没有 ZGC，必须回退到 G1 而不是让 JVM 启动失败
+        let opts = JvmAdvancedOptions {
+            gc_strategy: GcStrategy::Z,
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(4096, Some(8), &opts);
+        assert!(!args.iter().any(|arg| arg == "-XX:+UseZGC"));
+        assert!(args.iter().any(|arg| arg == "-XX:+UseG1GC"));
+    }
+
+    #[test]
+    fn test_jvm_args_metaspace_initial_and_max() {
+        let opts = JvmAdvancedOptions {
+            metaspace_size_mb: Some(256),
+            metaspace_max_size_mb: Some(512),
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(4096, Some(17), &opts);
+        assert!(args.iter().any(|arg| arg == "-XX:MetaspaceSize=256m"));
+        assert!(args.iter().any(|arg| arg == "-XX:MaxMetaspaceSize=512m"));
+    }
+
+    #[test]
+    fn test_jvm_args_metaspace_max_only_sets_initial_too() {
+        // 只填上限时初始值对齐上限，省掉加载期的反复扩容
+        let opts = JvmAdvancedOptions {
+            metaspace_max_size_mb: Some(768),
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(4096, Some(17), &opts);
+        assert!(args.iter().any(|arg| arg == "-XX:MetaspaceSize=768m"));
+        assert!(args.iter().any(|arg| arg == "-XX:MaxMetaspaceSize=768m"));
+    }
+
+    #[test]
+    fn test_jvm_args_metaspace_initial_clamped_to_max() {
+        // 初始水位不能超过上限
+        let opts = JvmAdvancedOptions {
+            metaspace_size_mb: Some(1024),
+            metaspace_max_size_mb: Some(512),
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(4096, Some(17), &opts);
+        assert!(args.iter().any(|arg| arg == "-XX:MetaspaceSize=512m"));
+        assert!(!args.iter().any(|arg| arg == "-XX:MetaspaceSize=1024m"));
+        assert!(args.iter().any(|arg| arg == "-XX:MaxMetaspaceSize=512m"));
+    }
+
+    #[test]
+    fn test_jvm_args_metaspace_zero_values_ignored() {
+        let opts = JvmAdvancedOptions {
+            metaspace_size_mb: Some(0),
+            metaspace_max_size_mb: Some(0),
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(4096, Some(17), &opts);
+        assert!(!args.iter().any(|arg| arg.starts_with("-XX:MetaspaceSize")));
+        assert!(!args.iter().any(|arg| arg.starts_with("-XX:MaxMetaspaceSize")));
+    }
+
+    #[test]
+    fn test_jvm_args_custom_experimental_arg_gets_unlock_prepended() {
+        // 不指定 GC 时只剩自定义参数，解锁开关仍要自动补在最前面
+        let opts = JvmAdvancedOptions {
+            gc_strategy: GcStrategy::Default,
+            extra_args: "-XX:+UseZGC\n-XX:+ZGenerational".to_string(),
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(4096, Some(21), &opts);
+        assert_eq!(args.first().unwrap(), "-XX:+UnlockExperimentalVMOptions");
+        assert!(args.contains(&"-XX:+UseZGC".to_string()));
+    }
+
+    #[test]
+    fn test_jvm_args_no_duplicate_unlock() {
+        let opts = JvmAdvancedOptions {
+            extra_args: "-XX:+UnlockExperimentalVMOptions\n-XX:+UseZGC".to_string(),
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(4096, Some(21), &opts);
+        let count = args
+            .iter()
+            .filter(|a| *a == "-XX:+UnlockExperimentalVMOptions")
+            .count();
+        assert_eq!(count, 1, "解锁开关不应重复出现");
+    }
+
+    #[test]
+    fn test_jvm_args_extra_args_parsed_and_appended() {
+        let opts = JvmAdvancedOptions {
+            extra_args: "# 我想试试 ZGC\n-XX:+UseZGC\n-XX:+ZGenerational\n\n  -Dfoo=bar -Dbar=baz \n"
+                .to_string(),
+            ..JvmAdvancedOptions::default()
+        };
+        let args = optimize_jvm_memory_args(4096, Some(21), &opts);
         assert!(args.iter().any(|arg| arg == "-XX:+UseZGC"));
-        assert!(!args.iter().any(|arg| arg == "-XX:+ZGenerational"));
+        assert!(args.iter().any(|arg| arg == "-XX:+ZGenerational"));
+        assert!(args.iter().any(|arg| arg == "-Dfoo=bar"));
+        assert!(args.iter().any(|arg| arg == "-Dbar=baz"));
+        assert!(!args.iter().any(|arg| arg.starts_with('#')));
+        // 自定义参数排在最后，方便覆盖前面的设置
+        let last_index = args
+            .iter()
+            .rposition(|arg| arg == "-XX:+UseG1GC")
+            .expect("G1GC 仍在启用");
+        assert!(args[last_index..].contains(&"-XX:+UseZGC".to_string()));
     }
 
     #[test]
     fn test_jvm_args_enable_native_access_java17() {
-        let args = optimize_jvm_memory_args(2048, "1.20.1", Some(17));
+        let args = optimize_jvm_memory_args(2048, Some(17), &JvmAdvancedOptions::default());
         assert!(
             args.iter()
                 .any(|arg| arg == "--enable-native-access=ALL-UNNAMED")
@@ -462,7 +726,7 @@ mod tests {
 
     #[test]
     fn test_jvm_args_no_native_access_java8() {
-        let args = optimize_jvm_memory_args(2048, "1.12.2", Some(8));
+        let args = optimize_jvm_memory_args(2048, Some(8), &JvmAdvancedOptions::default());
         assert!(
             !args
                 .iter()
@@ -473,7 +737,7 @@ mod tests {
     #[test]
     fn test_jvm_args_unsafe_memory_access_java25() {
         // Java 23+ 需要允许 sun.misc.Unsafe 内存访问
-        let args = optimize_jvm_memory_args(2048, "1.20.1", Some(25));
+        let args = optimize_jvm_memory_args(2048, Some(25), &JvmAdvancedOptions::default());
         assert!(
             args.iter()
                 .any(|arg| arg == "--sun-misc-unsafe-memory-access=allow")
@@ -483,7 +747,7 @@ mod tests {
     #[test]
     fn test_jvm_args_no_unsafe_memory_access_java21() {
         // Java 21 不需要 sun.misc.Unsafe 内存访问参数
-        let args = optimize_jvm_memory_args(2048, "1.20.1", Some(21));
+        let args = optimize_jvm_memory_args(2048, Some(21), &JvmAdvancedOptions::default());
         assert!(
             !args
                 .iter()
@@ -492,19 +756,17 @@ mod tests {
     }
 
     #[test]
-    fn test_jvm_args_zgc_no_generational_on_java17() {
-        // Java 17 支持 ZGC 但不支持分代模式
-        let args = optimize_jvm_memory_args(4096, "1.20.1", Some(17));
-        assert!(args.iter().any(|arg| arg == "-XX:+UseZGC"));
-        assert!(!args.iter().any(|arg| arg == "-XX:+ZGenerational"));
-    }
-
-    #[test]
     fn test_jvm_args_no_zgc_on_java8() {
-        // Java 8 不支持 ZGC，即使大内存也用 G1GC
-        let args = optimize_jvm_memory_args(4096, "1.20.1", Some(8));
+        // Java 8 启动新版本时依然使用 G1GC
+        let args = optimize_jvm_memory_args(4096, Some(8), &JvmAdvancedOptions::default());
         assert!(!args.iter().any(|arg| arg == "-XX:+UseZGC"));
         assert!(args.iter().any(|arg| arg == "-XX:+UseG1GC"));
+        // 旧 Java 不应带上 Java 17+ 的原生访问标志
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg == "--enable-native-access=ALL-UNNAMED")
+        );
     }
 
     #[test]

@@ -1,8 +1,12 @@
 //! JVM 和游戏参数构建逻辑
 
 use crate::models::{GameConfig, LaunchOptions};
-use crate::utils::minecraft::evaluate_rules_for_arguments;
+use crate::utils::minecraft::{evaluate_rules_for_arguments_with_features, FeatureSupport};
 use std::path::Path;
+
+/// Minecraft 未指定自定义分辨率时的默认窗口尺寸
+const DEFAULT_WINDOW_WIDTH: u32 = 854;
+const DEFAULT_WINDOW_HEIGHT: u32 = 480;
 
 /// 从版本 JSON 中获取基础 Minecraft 版本名
 /// 用于 Forge 的 ignoreList 参数（需要原版 MC jar 文件名）
@@ -64,6 +68,18 @@ pub fn build_arguments(
     // 优先使用 jar 字段，其次从 inheritsFrom 链中查找基础 MC 版本
     let base_mc_version = get_base_minecraft_version(version_json, &options.version);
 
+    // 用户自定义分辨率（未设置的一侧回落到 Minecraft 默认窗口尺寸）
+    let custom_width = options.window_width.or(config.window_width);
+    let custom_height = options.window_height.or(config.window_height);
+    let resolution_width = custom_width.unwrap_or(DEFAULT_WINDOW_WIDTH).to_string();
+    let resolution_height = custom_height.unwrap_or(DEFAULT_WINDOW_HEIGHT).to_string();
+
+    // has_custom_resolution 只有在用户真的设置了分辨率时才放行，
+    // 否则会把未替换的 ${resolution_width} 占位符丢给游戏
+    let feature_support = FeatureSupport {
+        custom_resolution: custom_width.is_some() || custom_height.is_some(),
+    };
+
     let replace_placeholders = |arg: &str| -> String {
         let actual_game_dir = if config.version_isolation {
             version_dir.to_string_lossy().to_string()
@@ -101,6 +117,9 @@ pub fn build_arguments(
             .replace("${user_type}", user_type)
             .replace("${version_type}", version_type)
             .replace("${user_properties}", "{}")
+            // 自定义分辨率占位符（vanilla 1.13+ 的 has_custom_resolution 特性）
+            .replace("${resolution_width}", &resolution_width)
+            .replace("${resolution_height}", &resolution_height)
             // 新版 Forge (1.13+) 需要的占位符
             .replace("${library_directory}", &libraries_dir.to_string_lossy())
             .replace("${classpath_separator}", classpath_separator)
@@ -111,8 +130,8 @@ pub fn build_arguments(
 
     // 处理新版 (1.13+) `arguments` 格式
     if let Some(arguments) = version_json.get("arguments") {
-        jvm_args = parse_jvm_arguments(arguments, &replace_placeholders);
-        game_args_vec = parse_game_arguments(arguments, &replace_placeholders);
+        jvm_args = parse_jvm_arguments(arguments, &replace_placeholders, &feature_support);
+        game_args_vec = parse_game_arguments(arguments, &replace_placeholders, &feature_support);
     }
     // 处理旧版 `minecraftArguments` 格式
     else if let Some(mc_args) = version_json["minecraftArguments"].as_str() {
@@ -129,6 +148,7 @@ pub fn build_arguments(
 fn parse_jvm_arguments(
     arguments: &serde_json::Value,
     replace_placeholders: &impl Fn(&str) -> String,
+    support: &FeatureSupport,
 ) -> Vec<String> {
     let mut jvm_args = vec![];
 
@@ -140,7 +160,7 @@ fn parse_jvm_arguments(
         if let Some(s) = arg.as_str() {
             jvm_args.push(replace_placeholders(s));
         } else if let Some(obj) = arg.as_object() {
-            if evaluate_rules_for_arguments(obj.get("rules")) {
+            if evaluate_rules_for_arguments_with_features(obj.get("rules"), support) {
                 if let Some(value) = obj.get("value") {
                     if let Some(s) = value.as_str() {
                         jvm_args.push(replace_placeholders(s));
@@ -163,6 +183,7 @@ fn parse_jvm_arguments(
 fn parse_game_arguments(
     arguments: &serde_json::Value,
     replace_placeholders: &impl Fn(&str) -> String,
+    support: &FeatureSupport,
 ) -> Vec<String> {
     let mut game_args = vec![];
 
@@ -171,7 +192,7 @@ fn parse_game_arguments(
             if let Some(s) = arg.as_str() {
                 game_args.push(replace_placeholders(s));
             } else if let Some(obj) = arg.as_object() {
-                if evaluate_rules_for_arguments(obj.get("rules")) {
+                if evaluate_rules_for_arguments_with_features(obj.get("rules"), support) {
                     if let Some(value) = obj.get("value") {
                         if let Some(s) = value.as_str() {
                             game_args.push(replace_placeholders(s));

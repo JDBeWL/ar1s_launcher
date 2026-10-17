@@ -20,7 +20,7 @@
         <v-expand-transition>
           <v-card v-if="installing" color="surface-container-high" class="mb-4" variant="flat">
             <v-card-text class="pa-4">
-              <div class="d-flex align-center justify-space-between mb-2">
+              <div class="d-flex align-center justify-space-between mb-2 num-mono">
                 <div class="d-flex align-center">
                   <v-progress-circular
                     v-if="installProgress.indeterminate"

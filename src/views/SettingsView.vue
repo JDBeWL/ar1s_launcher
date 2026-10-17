@@ -6,6 +6,7 @@ const AuthSettings = defineAsyncComponent(() => import('../components/settings/A
 const JavaSettings = defineAsyncComponent(() => import('../components/settings/JavaSettings.vue'));
 const MemorySettings = defineAsyncComponent(() => import('../components/settings/MemorySettings.vue'));
 const WindowSettings = defineAsyncComponent(() => import('../components/settings/WindowSettings.vue'));
+const AdvancedSettings = defineAsyncComponent(() => import('../components/settings/AdvancedSettings.vue'));
 
 const activeSection = ref('general');
 const isSmallScreen = ref(false);
@@ -16,6 +17,7 @@ const sections = [
   { id: 'java', title: 'Java 配置', icon: 'mdi-language-java' },
   { id: 'memory', title: '内存管理', icon: 'mdi-memory' },
   { id: 'window', title: '窗口设置', icon: 'mdi-monitor' },
+  { id: 'advanced', title: '高级选项', icon: 'mdi-tune-variant' },
 ];
 
 const activeTab = computed({
@@ -66,6 +68,7 @@ onUnmounted(() => {
           <JavaSettings v-else-if="activeSection === 'java'" />
           <MemorySettings v-else-if="activeSection === 'memory'" />
           <WindowSettings v-else-if="activeSection === 'window'" />
+          <AdvancedSettings v-else-if="activeSection === 'advanced'" />
         </div>
       </div>
     </template>
@@ -98,6 +101,7 @@ onUnmounted(() => {
           <JavaSettings v-else-if="activeSection === 'java'" />
           <MemorySettings v-else-if="activeSection === 'memory'" />
           <WindowSettings v-else-if="activeSection === 'window'" />
+          <AdvancedSettings v-else-if="activeSection === 'advanced'" />
         </div>
       </div>
     </template>

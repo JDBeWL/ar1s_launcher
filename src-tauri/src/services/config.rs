@@ -173,6 +173,7 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         ms_access_token: None,
         ms_refresh_token: None,
         ms_expires_at: None,
+        jvm_advanced: crate::models::JvmAdvancedOptions::default(),
     };
 
     // 首次运行时自动检测Java

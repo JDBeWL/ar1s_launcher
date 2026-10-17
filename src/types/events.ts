@@ -183,6 +183,22 @@ export interface WindowSettings {
   fullscreen: boolean;
 }
 
+// 垃圾回收器策略 (对应后端 GcStrategy，lowercase)
+export type GcStrategy = 'g1' | 'default' | 'parallel' | 'serial' | 'z';
+
+// JVM 高级调优选项 (对应后端 JvmAdvancedOptions，camelCase)
+export interface JvmAdvancedOptions {
+  gcStrategy: GcStrategy;
+  alwaysPreTouch: boolean;
+  disableExplicitGc: boolean;
+  stringDeduplication: boolean;
+  perfDisableSharedMem: boolean;
+  metaspaceSizeMb: number | null;
+  metaspaceMaxSizeMb: number | null;
+  heapDumpOnOom: boolean;
+  extraArgs: string;
+}
+
 // 自动内存配置 (对应后端 AutoMemoryConfig，使用 snake_case)
 export interface AutoMemoryConfig {
   enabled: boolean;

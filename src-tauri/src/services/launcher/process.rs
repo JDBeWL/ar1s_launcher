@@ -1,20 +1,47 @@
 //! 游戏进程启动和监控逻辑
 
 use crate::errors::LauncherError;
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tauri::Emitter;
 
 /// 游戏进程最大运行时间（24 小时）
 const MAX_GAME_RUNTIME: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// 收集的 stderr 最大行数
-const MAX_STDERR_LINES: usize = 50;
+/// 收集的最近日志（含 stdout）最大行数，用于崩溃/异常退出时回显
+const MAX_LOG_TAIL_LINES: usize = 100;
+
+/// 日志转发队列容量
+///
+/// 队列满时**直接丢弃**，绝不让读取线程阻塞：
+/// 一旦这里堵住，管道缓冲区会被写满，游戏里写日志的线程就会卡住，表现为周期性掉帧。
+const LOG_QUEUE_CAPACITY: usize = 4096;
+
+/// 单批最多转发多少行
+const LOG_FLUSH_MAX_LINES: usize = 200;
+
+/// 日志合并转发间隔
+const LOG_FLUSH_INTERVAL: Duration = Duration::from_millis(200);
+
+/// 退出后等待日志刷完的最长时间
+const LOG_FLUSH_WAIT: Duration = Duration::from_secs(2);
+
+/// 日志来源
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LogStream {
+    Stdout,
+    Stderr,
+}
+
+type LogItem = (LogStream, String);
 
 /// 启动并监控游戏进程
 pub fn spawn_and_monitor_process(
@@ -67,17 +94,24 @@ fn spawn_monitor_thread(
     let stderr = child.stderr.take().expect("Failed to open stderr");
 
     let is_running = Arc::new(AtomicBool::new(true));
-    let stderr_lines: Arc<std::sync::Mutex<Vec<String>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
-    let window_clone = window.clone();
-    let is_running_stdout = is_running.clone();
+    let stderr_lines: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
 
-    // 启动 stdout 读取线程
+    // 有界队列：满了就丢，读取线程永不被 IPC 拖慢
+    let (log_tx, log_rx) = mpsc::sync_channel::<LogItem>(LOG_QUEUE_CAPACITY);
+
+    // stdout 读取线程：只读不发送，避免每行一次 IPC
+    let tx_stdout: SyncSender<LogItem> = log_tx.clone();
+    let is_running_stdout = is_running.clone();
+    let tail_stdout = stderr_lines.clone();
     std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
-            if let Ok(l) = line {
-                let _ = window_clone.emit("log-debug", l);
+            match line {
+                Ok(l) => {
+                    push_tail(&tail_stdout, &l);
+                    let _ = tx_stdout.try_send((LogStream::Stdout, l));
+                }
+                Err(_) => break,
             }
             if !is_running_stdout.load(Ordering::SeqCst) {
                 break;
@@ -85,25 +119,33 @@ fn spawn_monitor_thread(
         }
     });
 
-    let window_clone_err = window.clone();
+    // stderr 读取线程
+    let tx_stderr: SyncSender<LogItem> = log_tx;
     let is_running_stderr = is_running.clone();
-    let stderr_lines_clone = stderr_lines.clone();
-    // 启动 stderr 读取线程
+    let tail_stderr = stderr_lines.clone();
     std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for line in reader.lines() {
-            if let Ok(l) = line {
-                let _ = window_clone_err.emit("log-error", l.clone());
-                let mut buf = stderr_lines_clone.lock().unwrap();
-                if buf.len() >= MAX_STDERR_LINES {
-                    buf.remove(0);
+            match line {
+                Ok(l) => {
+                    push_tail(&tail_stderr, &l);
+                    let _ = tx_stderr.try_send((LogStream::Stderr, l));
                 }
-                buf.push(l);
+                Err(_) => break,
             }
             if !is_running_stderr.load(Ordering::SeqCst) {
                 break;
             }
         }
+    });
+
+    // 转发线程：批量合并后再发给前端，把事件数量压到每秒 5 次左右
+    let forwarder_done = Arc::new(AtomicBool::new(false));
+    let forwarder_done_flag = forwarder_done.clone();
+    let window_forwarder = window.clone();
+    let forwarder: JoinHandle<()> = std::thread::spawn(move || {
+        forward_game_logs(log_rx, &window_forwarder);
+        forwarder_done_flag.store(true, Ordering::SeqCst);
     });
 
     std::thread::spawn(move || {
@@ -139,9 +181,15 @@ fn spawn_monitor_thread(
         match wait_for_process_with_timeout(&mut child, MAX_GAME_RUNTIME) {
             Ok(Some(status)) => {
                 is_running_main.store(false, Ordering::SeqCst);
-                // 短暂等待 stderr 线程读取完剩余输出
-                std::thread::sleep(Duration::from_millis(500));
-                let stderr_buf = stderr_lines.lock().unwrap().clone();
+                // 等转发线程把队列里剩余的日志刷完（最多 LOG_FLUSH_WAIT）
+                wait_log_flushed(&forwarder_done);
+                if forwarder_done.load(Ordering::SeqCst) {
+                    let _ = forwarder.join();
+                }
+                let stderr_buf: Vec<String> = stderr_lines
+                    .lock()
+                    .map(|buf| buf.iter().cloned().collect())
+                    .unwrap_or_default();
                 handle_process_exit(status, &window, &stderr_buf, &working_dir);
             }
             Ok(None) => {
@@ -167,6 +215,78 @@ fn spawn_monitor_thread(
 
         let _ = timeout_thread.join();
     });
+}
+
+/// 把一行日志追加到环形缓冲（保留最近 MAX_LOG_TAIL_LINES 行）
+fn push_tail(tail: &Mutex<VecDeque<String>>, line: &str) {
+    if let Ok(mut buf) = tail.lock() {
+        if buf.len() >= MAX_LOG_TAIL_LINES {
+            buf.pop_front();
+        }
+        buf.push_back(line.to_string());
+    }
+}
+
+/// 等待日志转发线程刷完剩余内容
+fn wait_log_flushed(forwarder_done: &AtomicBool) {
+    let deadline = Instant::now() + LOG_FLUSH_WAIT;
+    while !forwarder_done.load(Ordering::SeqCst) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// 持续消费日志队列，按固定节奏批量转发给前端
+///
+/// 关键点：合并成批量事件后，IPC 次数从「每行一次」降到「每秒约 5 次」，
+/// 既不会拖慢读取线程，也不会让 WebView 被大量事件淹没。
+fn forward_game_logs(rx: Receiver<LogItem>, window: &tauri::Window) {
+    let mut batch: Vec<LogItem> = Vec::with_capacity(LOG_FLUSH_MAX_LINES);
+
+    loop {
+        match rx.recv_timeout(LOG_FLUSH_INTERVAL) {
+            Ok(item) => {
+                batch.push(item);
+                // 顺手把队列里已经攒下的行一次性带走
+                while batch.len() < LOG_FLUSH_MAX_LINES {
+                    match rx.try_recv() {
+                        Ok(item) => batch.push(item),
+                        Err(_) => break,
+                    }
+                }
+                flush_log_batch(&batch, window);
+                batch.clear();
+            }
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    flush_log_batch(&batch, window);
+}
+
+/// 把一批日志按来源合并成两条事件发出
+fn flush_log_batch(batch: &[LogItem], window: &tauri::Window) {
+    if batch.is_empty() {
+        return;
+    }
+
+    let mut out = String::new();
+    let mut err = String::new();
+    for (stream, line) in batch {
+        let target = match stream {
+            LogStream::Stdout => &mut out,
+            LogStream::Stderr => &mut err,
+        };
+        target.push_str(line);
+        target.push('\n');
+    }
+
+    if !out.is_empty() {
+        let _ = window.emit("log-debug", out);
+    }
+    if !err.is_empty() {
+        let _ = window.emit("log-error", err);
+    }
 }
 
 /// 等待进程结束（带超时）

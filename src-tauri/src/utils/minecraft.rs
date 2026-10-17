@@ -83,7 +83,8 @@ pub fn get_mc_os_name() -> &'static str {
 ///   - 无条件规则(无 os 字段)：无条件应用 action
 ///   - 有条件规则(有 os 字段)：仅当条件匹配时应用 action
 pub fn evaluate_rules(rules: Option<&serde_json::Value>) -> bool {
-    evaluate_rules_impl(rules, RuleDefault::Deny)
+    // 库规则不使用 features 上下文，传入默认（全部不支持）即可
+    evaluate_rules_impl(rules, RuleDefault::Deny, &FeatureSupport::default())
 }
 
 /// 评估 Minecraft 版本 JSON 中的 rules 规则（参数模式）
@@ -92,8 +93,33 @@ pub fn evaluate_rules(rules: Option<&serde_json::Value>) -> bool {
 /// 与 `evaluate_rules` 的区别：
 /// - 有 rules 时默认**允许**（黑名单模式），只有被 disallow 才排除
 /// - 支持 features 条件检查（Minecraft 1.20+ 的可选参数）
+///
+/// 该重载不携带 features 上下文，任何 features 条件都判定为「不支持」。
 pub fn evaluate_rules_for_arguments(rules: Option<&serde_json::Value>) -> bool {
-    evaluate_rules_impl(rules, RuleDefault::Allow)
+    evaluate_rules_for_arguments_with_features(rules, &FeatureSupport::default())
+}
+
+/// 带 features 上下文的参数规则评估
+///
+/// `has_custom_resolution` 这类可选参数只有在上下文真正支持时才应放行，
+/// 否则会把未替换的 `${resolution_width}` 占位符直接塞给游戏。
+pub fn evaluate_rules_for_arguments_with_features(
+    rules: Option<&serde_json::Value>,
+    support: &FeatureSupport,
+) -> bool {
+    evaluate_rules_impl(rules, RuleDefault::Allow, support)
+}
+
+/// 启动器当前支持的可选 features 集合
+///
+/// Minecraft 1.13+ 版本 JSON 通过 features 控制可选参数，例如：
+/// `{"action":"allow","features":{"has_custom_resolution":true}}`
+/// 会引入 `--width ${resolution_width} --height ${resolution_height}`，
+/// 其中的占位符必须由启动器替换成真实数值。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FeatureSupport {
+    /// 用户在设置中指定了自定义窗口分辨率
+    pub custom_resolution: bool,
 }
 
 /// 规则评估的默认行为
@@ -103,7 +129,11 @@ enum RuleDefault {
 }
 
 /// 统一的规则评估实现
-fn evaluate_rules_impl(rules: Option<&serde_json::Value>, default: RuleDefault) -> bool {
+fn evaluate_rules_impl(
+    rules: Option<&serde_json::Value>,
+    default: RuleDefault,
+    support: &FeatureSupport,
+) -> bool {
     let Some(rules_array) = rules.and_then(|r| r.as_array()) else {
         return true;
     };
@@ -119,7 +149,7 @@ fn evaluate_rules_impl(rules: Option<&serde_json::Value>, default: RuleDefault) 
         let action_is_allow = rule["action"].as_str() == Some("allow");
 
         if let Some(features) = rule.get("features") {
-            if check_features(features) {
+            if check_features(features, support) {
                 // 启动器支持所有请求的 features，应用 action
                 allowed = action_is_allow;
             } else {
@@ -150,19 +180,26 @@ fn evaluate_rules_impl(rules: Option<&serde_json::Value>, default: RuleDefault) 
 
 /// 检查启动器是否支持指定的 features
 ///
-/// Minecraft 1.20+ 的版本 JSON 使用 features 来控制可选参数。
-/// 只有所有请求的 features 都被启动器支持时才返回 true。
-pub fn check_features(features: &serde_json::Value) -> bool {
-    const SUPPORTED_FEATURES: &[&str] = &["has_custom_resolution"];
-
+/// 只有当所有请求的 features 在当前启动上下文中都成立时才返回 true。
+/// 未知 feature 一律视为不支持（例如 `is_demo_user` 演示模式）。
+pub fn check_features(features: &serde_json::Value, support: &FeatureSupport) -> bool {
     if let Some(obj) = features.as_object() {
         for (key, value) in obj {
-            if value.as_bool() == Some(true) && !SUPPORTED_FEATURES.contains(&key.as_str()) {
+            if value.as_bool() == Some(true) && !is_feature_supported(key.as_str(), support) {
                 return false;
             }
         }
     }
     true
+}
+
+/// 单个 feature 在当前启动上下文中是否成立
+fn is_feature_supported(name: &str, support: &FeatureSupport) -> bool {
+    match name {
+        // 只有用户确实配置了自定义分辨率才启用，否则版本的占位符无法替换
+        "has_custom_resolution" => support.custom_resolution,
+        _ => false,
+    }
 }
 
 /// 递归查找最终的 JAR 版本（处理多层继承链）
@@ -484,11 +521,26 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_rules_for_arguments_features_supported() {
+    fn test_evaluate_rules_for_arguments_features_custom_resolution_disabled() {
+        // 未设置自定义分辨率时不应放行，否则会传入未替换的 ${resolution_width}
         let rules = serde_json::json!([
             {"action": "allow", "features": {"has_custom_resolution": true}}
         ]);
-        assert!(evaluate_rules_for_arguments(Some(&rules)));
+        assert!(!evaluate_rules_for_arguments(Some(&rules)));
+    }
+
+    #[test]
+    fn test_evaluate_rules_for_arguments_features_custom_resolution_enabled() {
+        let rules = serde_json::json!([
+            {"action": "allow", "features": {"has_custom_resolution": true}}
+        ]);
+        let support = FeatureSupport {
+            custom_resolution: true,
+        };
+        assert!(evaluate_rules_for_arguments_with_features(
+            Some(&rules),
+            &support
+        ));
     }
 
     #[test]
@@ -497,7 +549,14 @@ mod tests {
         let rules = serde_json::json!([
             {"action": "allow", "features": {"is_demo_user": true}}
         ]);
+        let support = FeatureSupport {
+            custom_resolution: true,
+        };
         assert!(!evaluate_rules_for_arguments(Some(&rules)));
+        assert!(!evaluate_rules_for_arguments_with_features(
+            Some(&rules),
+            &support
+        ));
     }
 
     #[test]
@@ -535,19 +594,30 @@ mod tests {
     #[test]
     fn test_check_features_supported() {
         let features = serde_json::json!({"has_custom_resolution": true});
-        assert!(check_features(&features));
+        let support = FeatureSupport {
+            custom_resolution: true,
+        };
+        assert!(check_features(&features, &support));
+        // 未开启自定义分辨率时应判定为不支持
+        assert!(!check_features(&features, &FeatureSupport::default()));
     }
 
     #[test]
     fn test_check_features_unsupported() {
         let features = serde_json::json!({"is_demo_user": true});
-        assert!(!check_features(&features));
+        let support = FeatureSupport {
+            custom_resolution: true,
+        };
+        assert!(!check_features(&features, &support));
     }
 
     #[test]
     fn test_check_features_mixed() {
         let features = serde_json::json!({"has_custom_resolution": true, "is_demo_user": true});
-        assert!(!check_features(&features));
+        let support = FeatureSupport {
+            custom_resolution: true,
+        };
+        assert!(!check_features(&features, &support));
     }
 
     #[test]

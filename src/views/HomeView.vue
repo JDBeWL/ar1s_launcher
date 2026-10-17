@@ -254,7 +254,7 @@ onMounted(async () => {
         <v-col cols="12" md="7">
           <div class="d-flex flex-column h-100">
             <v-card color="surface-container" variant="flat" class="d-flex flex-column flex-grow-1">
-              <v-card-text class="pa-4 d-flex align-center">
+              <v-card-text class="pa-4 d-flex align-center card-head-row">
                 <div class="d-flex align-center flex-grow-1">
                   <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-history</v-icon>
                   <span class="text-title-medium">最近游玩</span>
@@ -354,12 +354,12 @@ onMounted(async () => {
           <div class="text-title-large font-weight-bold text-center mb-4">修复游戏文件</div>
 
           <template v-if="repairProgress">
-            <div class="d-flex justify-space-between mb-2 text-body-medium">
+            <div class="d-flex justify-space-between mb-2 text-body-medium num-mono">
               <span>{{ repairProgress.status === 'downloading' ? '下载中' : '处理中' }}</span>
               <span class="font-weight-medium">{{ repairProgress.percent }}%</span>
             </div>
             <v-progress-linear :model-value="repairProgress.percent" height="6" rounded color="primary" />
-            <div class="d-flex justify-space-between mt-2 text-body-small text-on-surface-variant">
+            <div class="d-flex justify-space-between mt-2 text-body-small text-on-surface-variant num-mono">
               <span>{{ (repairProgress.bytes_downloaded / 1024 / 1024).toFixed(1) }} MB</span>
               <span>{{
                 repairProgress.speed < 1024

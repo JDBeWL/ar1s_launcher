@@ -78,6 +78,36 @@ pub fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError
     config::analyze_memory_efficiency(memory_mb)
 }
 
+#[tauri::command]
+pub fn get_jvm_advanced_options() -> Result<JvmAdvancedOptions, LauncherError> {
+    Ok(config::load_config()?.jvm_advanced.clone())
+}
+
+#[tauri::command]
+pub fn set_jvm_advanced_options(options: JvmAdvancedOptions) -> Result<(), LauncherError> {
+    let mut cfg = (*config::load_config()?).clone();
+    cfg.jvm_advanced = options;
+    config::save_config(&cfg)
+}
+
+/// 预览按当前配置实际会生成的 JVM 参数（用于高级选项页面展示）
+#[tauri::command]
+pub fn get_effective_jvm_args(memory_mb: Option<u32>) -> Result<Vec<String>, LauncherError> {
+    let cfg = config::load_config()?;
+    let memory = memory_mb.unwrap_or(cfg.max_memory);
+
+    // Java 路径可能还没配置，拿不到版本就用默认值，不影响预览
+    let java_version = crate::services::launcher::java::resolve_java_path(&cfg)
+        .ok()
+        .and_then(|path| crate::services::launcher::java::detect_java_version(&path));
+
+    Ok(crate::services::memory::optimize_jvm_memory_args(
+        memory,
+        java_version,
+        &cfg.jvm_advanced,
+    ))
+}
+
 /// 窗口设置
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct WindowSettings {

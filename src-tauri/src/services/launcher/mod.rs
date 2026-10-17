@@ -231,11 +231,8 @@ pub async fn launch_minecraft(
         emit("log-warning", format!("内存设置警告: {}", e));
     }
 
-    // 解析实际的 Minecraft 版本号，用于 JVM 参数优化
-    let actual_mc_version = java::resolve_actual_mc_version(&options.version, &config.game_dir);
-
-    // 生成优化的 JVM 内存参数（传入 Java 版本）
-    let mut final_args = optimize_jvm_memory_args(memory_mb, &actual_mc_version, java_version);
+    // 生成 JVM 参数：默认只有 G1GC 优化，其余按用户在高级选项里的开关追加
+    let mut final_args = optimize_jvm_memory_args(memory_mb, java_version, &config.jvm_advanced);
 
     // 添加其他必要的 JVM 参数
     final_args.extend([
@@ -261,13 +258,31 @@ pub async fn launch_minecraft(
     final_args.extend(game_args_vec);
 
     // 添加窗口大小参数
-    if let Some(width) = options.window_width.or(config.window_width) {
-        final_args.push("--width".to_string());
-        final_args.push(width.to_string());
+    // 注意：版本 JSON 的 has_custom_resolution 规则可能已经注入过，避免重复传参
+    // （Forge 只取第一个 --width 值，重复时用户设置会被占位符挤掉）
+    let has_arg = |flag: &str| final_args.iter().any(|a| a == flag);
+    let width_present = has_arg("--width");
+    let height_present = has_arg("--height");
+
+    if !width_present {
+        if let Some(width) = options.window_width.or(config.window_width) {
+            final_args.push("--width".to_string());
+            final_args.push(width.to_string());
+        }
     }
-    if let Some(height) = options.window_height.or(config.window_height) {
-        final_args.push("--height".to_string());
-        final_args.push(height.to_string());
+    if !height_present {
+        if let Some(height) = options.window_height.or(config.window_height) {
+            final_args.push("--height".to_string());
+            final_args.push(height.to_string());
+        }
+    }
+
+    // 兜底：任何未替换的 ${...} 占位符都会让游戏直接崩溃，这里提前告警
+    if let Some(unresolved) = final_args.iter().find(|a| a.contains("${")) {
+        emit(
+            "log-warning",
+            format!("启动参数中检测到未替换的占位符: {}", unresolved),
+        );
     }
     if options.fullscreen.unwrap_or(config.fullscreen) {
         final_args.push("--fullscreen".to_string());

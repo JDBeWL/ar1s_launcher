@@ -118,19 +118,19 @@ onMounted(async () => {
         <v-row align="center">
           <v-col cols="12" sm="4">
             <div class="memory-stat text-center pa-4">
-              <div class="text-headline-medium font-weight-bold text-primary">{{ totalMemoryGB }}</div>
+              <div class="text-headline-medium font-weight-bold text-primary num-mono">{{ totalMemoryGB }}</div>
               <div class="text-body-medium text-on-surface-variant">系统总内存 (GB)</div>
             </div>
           </v-col>
           <v-col cols="12" sm="4">
             <div class="memory-stat text-center pa-4">
-              <div class="text-headline-medium font-weight-bold text-secondary">{{ maxMemoryGB }}</div>
+              <div class="text-headline-medium font-weight-bold text-secondary num-mono">{{ maxMemoryGB }}</div>
               <div class="text-body-medium text-on-surface-variant">分配给游戏 (GB)</div>
             </div>
           </v-col>
           <v-col cols="12" sm="4">
             <div class="memory-stat text-center pa-4">
-              <div class="text-headline-medium font-weight-bold text-info">{{ memoryPercentage }}%</div>
+              <div class="text-headline-medium font-weight-bold text-info num-mono">{{ memoryPercentage }}%</div>
               <div class="text-body-medium text-on-surface-variant">占用比例</div>
             </div>
           </v-col>
@@ -160,7 +160,7 @@ onMounted(async () => {
         <v-expand-transition>
           <div v-if="autoMemoryEnabled" class="mt-4">
             <v-alert color="primary-container" density="compact">
-              <div class="d-flex align-center justify-space-between">
+              <div class="d-flex align-center justify-space-between num-mono">
                 <span class="text-on-primary-container">当前自动分配: {{ settingsStore.maxMemory }} MB</span>
                 <v-btn size="small" variant="text" color="primary" @click="applyAutoMemory"> 重新计算 </v-btn>
               </div>
@@ -222,10 +222,10 @@ onMounted(async () => {
             @end="settingsStore.saveMaxMemory"
           >
             <template #prepend>
-              <span class="text-body-small text-on-surface-variant">512 MB</span>
+              <span class="text-body-small text-on-surface-variant num-mono">512 MB</span>
             </template>
             <template #append>
-              <span class="text-body-small text-on-surface-variant">{{ maxAllocatableMB }} MB</span>
+              <span class="text-body-small text-on-surface-variant num-mono">{{ maxAllocatableMB }} MB</span>
             </template>
           </v-slider>
         </div>

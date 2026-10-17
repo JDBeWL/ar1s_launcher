@@ -303,7 +303,7 @@ onMounted(() => {
     <v-expand-transition>
       <v-card v-if="showProgress" color="surface-container-high" variant="flat" class="mb-4">
         <v-card-text class="pa-4">
-          <div class="d-flex align-center justify-space-between mb-2">
+          <div class="d-flex align-center justify-space-between mb-2 num-mono">
             <div class="d-flex align-center">
               <v-progress-circular
                 v-if="progressIndeterminate"

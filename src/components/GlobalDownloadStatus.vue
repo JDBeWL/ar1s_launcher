@@ -59,7 +59,7 @@ function cancelDownload() {
         class="download-fab-progress"
       />
       <v-tooltip activator="parent" location="left">
-        {{ isDownloading ? `下载中 ${progressPercentage.toFixed(0)}%` : '下载完成' }}
+        <span class="num-mono">{{ isDownloading ? `下载中 ${progressPercentage.toFixed(0)}%` : '下载完成' }}</span>
       </v-tooltip>
     </v-btn>
   </div>
