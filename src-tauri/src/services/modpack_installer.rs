@@ -5,6 +5,7 @@
 use crate::errors::LauncherError;
 use crate::models::DownloadJob;
 use crate::models::modpack::*;
+use crate::services::launcher::isolation;
 use crate::services::{config, download, http_client, loaders, modrinth};
 use crate::utils::file_utils::{self, validate_instance_name_or_error};
 use log::{error, info, warn};
@@ -132,6 +133,14 @@ impl ModpackInstaller {
         let config = config::load_config()?;
         let game_dir = PathBuf::from(&config.game_dir);
         let instance_dir = game_dir.join("versions").join(&options.instance_name);
+        // 版本信息写在实例目录，模组/配置/存档按隔离开关落到实例目录或共享根目录
+        let content_root = isolation::content_root(&config, &game_dir, &options.instance_name);
+        if !config.version_isolation {
+            warn!(
+                "版本隔离已关闭：整合包内容会写入共享目录 {}",
+                content_root.display()
+            );
+        }
         let temp_dir = game_dir.join("temp");
         let extract_dir = temp_dir.join(format!("{}_extract", &options.instance_name));
 
@@ -148,6 +157,7 @@ impl ModpackInstaller {
                 window,
                 &game_dir,
                 &instance_dir,
+                &content_root,
                 &temp_dir,
                 &extract_dir,
             )
@@ -164,6 +174,14 @@ impl ModpackInstaller {
                 }
             }
 
+            if !config.version_isolation && content_root != instance_dir {
+                // 关闭隔离时内容是共享的，删掉就等于删别人的文件，只能提示手动处理
+                warn!(
+                    "版本隔离已关闭，本次写入共享目录 {} 的文件不会被自动清理",
+                    content_root.display()
+                );
+            }
+
             if extract_dir.exists() {
                 let _ = fs::remove_dir_all(&extract_dir);
             }
@@ -178,6 +196,7 @@ impl ModpackInstaller {
         window: &tauri::Window,
         game_dir: &PathBuf,
         instance_dir: &PathBuf,
+        content_root: &PathBuf,
         temp_dir: &PathBuf,
         extract_dir: &PathBuf,
     ) -> Result<(), LauncherError> {
@@ -267,6 +286,9 @@ impl ModpackInstaller {
         };
 
         fs::create_dir_all(&instance_dir)?;
+        if content_root != instance_dir {
+            fs::create_dir_all(content_root)?;
+        }
 
         send_progress(50, "复制整合包文件...", false);
         check_cancelled()?;
@@ -274,20 +296,20 @@ impl ModpackInstaller {
         let overrides_dir = extract_dir.join("overrides");
         if overrides_dir.exists() {
             info!("复制 overrides 目录到实例");
-            file_utils::copy_dir_all(&overrides_dir, &instance_dir)?;
+            file_utils::copy_dir_all(&overrides_dir, content_root)?;
         }
 
         // 某些整合包用 client-overrides 而非 overrides
         let client_overrides_dir = extract_dir.join("client-overrides");
         if client_overrides_dir.exists() {
             info!("复制 client-overrides 目录到实例");
-            file_utils::copy_dir_all(&client_overrides_dir, &instance_dir)?;
+            file_utils::copy_dir_all(&client_overrides_dir, content_root)?;
         }
 
         if let Some(ref index) = modrinth_index {
             send_progress(55, "下载模组文件...", false);
             check_cancelled()?;
-            self.download_modpack_files(&index.files, &instance_dir, window)
+            self.download_modpack_files(&index.files, content_root, window)
                 .await?;
         }
 

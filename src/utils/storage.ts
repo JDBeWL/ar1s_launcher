@@ -2,20 +2,20 @@
  * localStorage 偏好读取
  * 主题、视图模式与排序键的读取，全部按白名单校验、非法值回退默认
  */
-// 必须是 plugins/vuetify.ts 里真实注册过的配色，否则会被回退成默认值
-const VALID_THEME_PALETTES = new Set(['indigo', 'emerald', 'rose']);
+import { DEFAULT_THEME_PRESET, THEME_PRESET_IDS } from '../theme/presets';
 
 const VALID_VIEW_MODES = new Set(['grid', 'list']);
 // 必须与 InstanceManagerView 的 sortOptions 及排序 switch 的分支一致，否则选了就存不住
 const VALID_SORT_BY = new Set(['lastPlayed', 'name', 'version']);
 
 export function isValidThemePalette(value: string): boolean {
-  return VALID_THEME_PALETTES.has(value);
+  // 白名单直接来自预设表
+  return THEME_PRESET_IDS.has(value);
 }
 
-export function getThemePalette(defaultValue: string = 'indigo'): string {
+export function getThemePalette(defaultValue: string = DEFAULT_THEME_PRESET): string {
   const stored = localStorage.getItem('themePalette');
-  if (stored && VALID_THEME_PALETTES.has(stored)) {
+  if (stored && THEME_PRESET_IDS.has(stored)) {
     return stored;
   }
   return defaultValue;

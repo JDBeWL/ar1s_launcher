@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router';
 import InstanceCard from '../components/instance/InstanceCard.vue';
 import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
 import { useNotificationStore } from '../stores/notificationStore';
-import { instanceApi } from '../services';
+import { configApi, instanceApi } from '../services';
 import { useGameLaunch } from '../composables/useGameLaunch';
 import type { GameInstance, ModInfo } from '../types/events';
 import { formatLastPlayed, getErrorMessage } from '../utils/format';
@@ -34,6 +34,8 @@ const modsError = ref('');
 const modBusy = ref<string | null>(null);
 const modDeleteDialog = ref(false);
 const modToDelete = ref<ModInfo | null>(null);
+// 关闭版本隔离时模组在共享目录里，启停/删除会影响所有实例
+const versionIsolation = ref(true);
 
 const sortOptions = [
   { title: '最近游玩', value: 'lastPlayed' },
@@ -230,6 +232,12 @@ onMounted(() => {
   if (searchParam && typeof searchParam === 'string') {
     searchQuery.value = searchParam;
   }
+  configApi
+    .loadConfigKey('versionIsolation')
+    .then((value) => {
+      if (value !== null) versionIsolation.value = value === 'true';
+    })
+    .catch((err) => logError('Failed to load isolation setting', err, 'InstanceManagerView'));
   loadInstances();
 });
 </script>
@@ -539,7 +547,13 @@ onMounted(() => {
 
         <v-divider />
         <v-card-actions class="pa-3">
-          <span class="text-body-small text-on-surface-variant"> 禁用只是把文件改名为 .jar.disabled，不会删除 </span>
+          <span class="text-body-small text-on-surface-variant">
+            {{
+              versionIsolation
+                ? '禁用只是把文件改名为 .jar.disabled，不会删除'
+                : '共享目录：这里启停或删除会影响所有实例'
+            }}
+          </span>
           <v-spacer />
           <v-btn variant="text" @click="modDialog = false">关闭</v-btn>
         </v-card-actions>
@@ -553,6 +567,9 @@ onMounted(() => {
           <div class="text-body-medium text-on-surface-variant">
             确定要删除 <strong class="text-on-surface">{{ modToDelete?.displayName }}</strong> 吗？ 文件
             {{ modToDelete?.fileName }} 会直接从磁盘移除。
+          </div>
+          <div v-if="!versionIsolation" class="text-body-small text-error mt-3">
+            当前关闭了版本隔离，这个文件在共享 mods 目录里，删除后所有实例都不再加载它。
           </div>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">

@@ -12,6 +12,43 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::{Emitter, Window};
 
+/// 只补这份版本 JSON 自己声明的库（不递归父版本），供加载器装完后补齐
+///
+/// Fabric/Quilt 的“安装”只是写一份 profile，库文件没人下，第一次启动就会提示缺文件；
+/// Forge/NeoForge 的安装器已经下过自己那批，这里按“文件已在位就跳过”空转
+pub async fn ensure_declared_libraries(
+    version_json: &serde_json::Value,
+    window: &Window,
+) -> Result<(), LauncherError> {
+    let config = load_config()?;
+    let libraries_base_dir = PathBuf::from(&config.game_dir).join("libraries");
+    let is_mirror = config.download_mirror.is_some();
+    let base_url = if is_mirror {
+        "https://bmclapi2.bangbang93.com"
+    } else {
+        "https://launchermeta.mojang.com"
+    };
+
+    let mut downloads = Vec::new();
+    collect_libraries(
+        version_json,
+        &libraries_base_dir,
+        is_mirror,
+        base_url,
+        &mut downloads,
+    )?;
+
+    // 按坐标拼出来的任务不看 downloads.artifact，这里统一按“文件已在位”再筛一次
+    downloads.retain(|job| !job.path.exists());
+
+    if downloads.is_empty() {
+        return Ok(());
+    }
+
+    info!("补下载加载器库文件: {} 个", downloads.len());
+    download_all_files(downloads, window).await
+}
+
 pub async fn process_and_download_version(
     version_id: String,
     mirror: Option<String>,
@@ -130,7 +167,6 @@ pub async fn process_and_download_version(
             let version_json_path = version_dir.join(format!("{}.json", actual_version_id));
             fs::write(version_json_path, text)?;
 
-            // 通知前端刷新版本列表
             if let Ok(game_dir_str) = config::get_game_dir() {
                 let _ = window.emit("game-dir-changed", &game_dir_str);
             }

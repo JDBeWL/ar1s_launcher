@@ -32,6 +32,8 @@ pub enum FindingKind {
     ClassReaderTooOld,
     JavaVersion,
     ClassVersion,
+    /// JVM 连主类都没找到（参数被拆开、classpath 缺件）
+    MainClass,
     MissingClass,
     Memory,
     Natives,
@@ -52,7 +54,7 @@ pub struct Evidence {
 pub enum FindingRole {
     /// 直接导致这次起不来的那条
     Root,
-    /// 被元凶带出来的下游报错
+    /// 被根因带出来的下游报错
     Symptom,
 }
 
@@ -91,6 +93,13 @@ pub struct ContextLine {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SuggestedJava {
+    pub path: String,
+    pub version: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CrashDiagnosis {
     pub exit_code: Option<i32>,
     pub headline: String,
@@ -102,6 +111,10 @@ pub struct CrashDiagnosis {
     pub raw_output: String,
     /// 复制按钮用的纯文本，与弹窗同源
     pub report_text: String,
+    /// 实例 id：弹窗里的“换 Java 重试”要拿它直接重启
+    pub instance: String,
+    /// 判据允许、且不是本次用过的那份 Java；有它才给得出重试按钮
+    pub suggested_java: Option<SuggestedJava>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -131,6 +144,12 @@ static RE_CLASS_VERSION: LazyLock<Regex> = LazyLock::new(|| {
     .expect("class 版本表达式合法")
 });
 
+/// JVM 自己的报错会跟着系统语言走，中英文都要认
+static RE_MAIN_CLASS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:Could not find or load main class|找不到或无法加载主类)\s*:?\s*([\w.$=/-]+)")
+        .expect("主类缺失表达式合法")
+});
+
 static RE_MISSING_CLASS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:NoClassDefFoundError|ClassNotFoundException): ([\w./$]+)")
         .expect("缺类表达式合法")
@@ -150,6 +169,11 @@ static RE_NATIVE_LIB: LazyLock<Regex> = LazyLock::new(|| {
 static RE_SECURITY_MANAGER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"UnsupportedOperationException: The Security Manager is \w+")
         .expect("SecurityManager 表达式合法")
+});
+
+/// Java 9+ 的模块系统：老加载器/模组靠反射摸 JDK 内部类，会被 opens 限制拦住
+static RE_MODULE_ACCESS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"InaccessibleObjectException|does not "opens "#).expect("模块访问表达式合法")
 });
 
 /// 最深层的 `Caused by:`，也就是日志真正想说的原因
@@ -179,7 +203,7 @@ fn jars_for_mod(mod_id: &str, ctx: &LaunchContext) -> Vec<String> {
         .cloned()
         .collect();
 
-    // 整合包裁过 mods 目录时按 id 点名，至少比只说「有个模组坏了」有用
+    // 整合包裁过 mods 目录时按 id 点名
     if hits.is_empty() {
         vec![mod_id.to_string()]
     } else {
@@ -263,9 +287,31 @@ fn rule_class_reader_too_old(lines: &[String], ctx: &LaunchContext) -> Option<Fi
     let java = super::java_requirement::class_file_to_java(major)?;
     let matches_runtime = ctx.used_java_version == Some(java);
 
-    let fallback = match ctx.declared_java {
-        Some(declared) => format!("把启动该实例的 Java 换成版本 JSON 声明的 Java {}", declared),
-        None => "换成该加载器支持的更老 Java 版本启动".to_string(),
+    // 本次 Java 正好就是编译该类的版本，矛盾不在“Java 太旧”，而在读类的那套工具（加载器自带的 ASM）
+    let upgrade_loader = format!(
+        "本次已经是 Java {}，不是 Java 选错，而是 {} 自带的 ASM 太旧、读不了新版本游戏的类。把 {} 升级到最新版再启动。",
+        java, ctx.loader, ctx.loader
+    );
+
+    let suggestion = if !matches_runtime {
+        // JVM 自己都认不了这个 class：确实是 Java 太旧
+        match ctx.declared_java {
+            Some(declared) => format!(
+                "把启动该实例的 Java 换成版本 JSON 声明的 Java {}。",
+                declared
+            ),
+            None => "换成该加载器支持的更老 Java 版本启动。".to_string(),
+        }
+    } else {
+        match ctx.declared_java {
+            Some(declared) if declared == java => upgrade_loader,
+            // 实例本来就声明了更老的 Java，退回声明版本同样能解决，优先给代价小的那条
+            Some(declared) => format!(
+                "把启动该实例的 Java 退回版本 JSON 声明的 Java {}；确实要用 Java {} 的话，得先把 {} 升级到支持它的版本。",
+                declared, java, ctx.loader
+            ),
+            None => upgrade_loader,
+        }
     };
 
     Some(Finding {
@@ -292,7 +338,7 @@ fn rule_class_reader_too_old(lines: &[String], ctx: &LaunchContext) -> Option<Fi
         culprit_label: "本次用的 Java",
         culprits: vec![ctx.used_java_path.clone()],
         evidence: vec![evidence_at(lines, idx)],
-        suggestion: format!("{}。", fallback),
+        suggestion,
     })
 }
 
@@ -339,6 +385,38 @@ fn rule_class_version(lines: &[String], ctx: &LaunchContext) -> Option<Finding> 
         culprits: vec![class],
         evidence: vec![evidence_at(lines, idx)],
         suggestion,
+    })
+}
+
+fn rule_main_class_missing(lines: &[String]) -> Option<Finding> {
+    let (idx, class) = find_signal(lines, |line| {
+        RE_MAIN_CLASS.captures(line).map(|cap| cap[1].to_string())
+    })?;
+
+    // 被当成主类的那串东西如果长得像 JVM 参数，说明开关和值在合并时被拆开了
+    let looks_like_value = class.contains('=') || class.contains('/');
+
+    Some(Finding {
+        kind: FindingKind::MainClass,
+        role: FindingRole::Root,
+        summary: "JVM 找不到要启动的主类".to_string(),
+        conclusion: if looks_like_value {
+            format!(
+                "JVM 把 `{}` 当成了主类 —— 这是某个 JVM 参数的值，说明它前面的开关丢了",
+                class
+            )
+        } else {
+            format!("JVM 找不到主类 `{}`，classpath 里可能缺了加载器 jar", class)
+        },
+        confidence: Confidence::High,
+        culprit_label: "主类",
+        culprits: vec![class],
+        evidence: vec![evidence_at(lines, idx)],
+        suggestion: if looks_like_value {
+            "启动参数的合并出了问题，重建这个实例通常就能恢复。".to_string()
+        } else {
+            "检查实例的版本 JSON 是否完整；重建实例通常能恢复。".to_string()
+        },
     })
 }
 
@@ -430,6 +508,34 @@ fn rule_security_manager(lines: &[String], ctx: &LaunchContext) -> Option<Findin
     })
 }
 
+/// 反射被模块系统拦下、且本次 Java 比声明的新 —— 基本可以断定是 JDK 太新，不是模组坏了
+fn rule_module_access(lines: &[String], ctx: &LaunchContext) -> Option<Finding> {
+    let (idx, _) = find_signal(lines, |line| RE_MODULE_ACCESS.is_match(line).then_some(()))?;
+    let used = ctx.used_java_version?;
+    let declared = ctx.declared_java?;
+    if used <= declared {
+        return None;
+    }
+
+    Some(Finding {
+        kind: FindingKind::JavaVersion,
+        role: FindingRole::Root,
+        summary: format!("Java {} 的模块系统拒绝了反射访问", used),
+        conclusion: format!(
+            "本次用 Java {} 启动，实例声明为 Java {}：加载器要反射 JDK 内部类，被模块系统的 opens 限制拦下了",
+            used, declared
+        ),
+        confidence: Confidence::High,
+        culprit_label: "本次用的 Java",
+        culprits: vec![ctx.used_java_path.clone()],
+        evidence: vec![evidence_at(lines, idx)],
+        suggestion: format!(
+            "改用 Java {} 启动；关模块系统或加 --add-opens 都不是正解",
+            declared
+        ),
+    })
+}
+
 /// JVM 自己崩了时的帧，V=JVM 本体，J=JIT，C=原生库
 static RE_HS_FRAME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"#\s+([A-Za-z])\s+\[([\w.-]+)").expect("帧表达式合法"));
@@ -475,22 +581,41 @@ fn rule_jvm_crash(hs_err: &str) -> Option<Finding> {
     })
 }
 
+/// 日志尾巴常常是一串栈帧，把最后一行当成“根因”只会得到 `at cpw.mods.modlauncher...`
+fn last_exception_line(lines: &[String]) -> Option<(usize, String)> {
+    lines.iter().enumerate().rev().find_map(|(idx, line)| {
+        let text = line.trim();
+        let looks_like_exception =
+            (text.contains("Exception") || text.contains("Error")) && !text.starts_with("at ");
+        looks_like_exception.then(|| (idx, text.to_string()))
+    })
+}
+
 /// 没有任何特征命中时唯一能诚实给出的东西：最深的 Caused by
 fn rule_unknown(lines: &[String], hs_err_present: bool) -> Option<Finding> {
     if hs_err_present {
         return None;
     }
 
-    let (idx, text) = root_cause(lines, 0).or_else(|| {
-        let last = lines.iter().rposition(|l| !l.trim().is_empty())?;
-        Some((last, lines[last].trim().to_string()))
-    })?;
+    let (idx, text) = root_cause(lines, 0)
+        .or_else(|| last_exception_line(lines))
+        .or_else(|| {
+            let last = lines.iter().rposition(|l| !l.trim().is_empty())?;
+            Some((last, lines[last].trim().to_string()))
+        })?;
+
+    // 只剩栈帧时别把它包装成“原因”，那会让人以为问题出在 modlauncher 这一行
+    let conclusion = if text.starts_with("at ") || text.starts_with("...") {
+        format!("日志里没有异常类型，最后一行是 {}", text)
+    } else {
+        format!("最深的异常原因：{}", text)
+    };
 
     Some(Finding {
         kind: FindingKind::Unknown,
         role: FindingRole::Root,
         summary: "未识别出已知的崩溃特征".to_string(),
-        conclusion: format!("最深的异常原因：{}", text),
+        conclusion,
         confidence: Confidence::Medium,
         culprit_label: "",
         culprits: Vec::new(),
@@ -653,10 +778,12 @@ pub fn diagnose(
         [
             rule_mixin(lines, ctx),
             rule_class_version(lines, ctx),
+            rule_main_class_missing(lines),
             rule_missing_class(lines),
             rule_memory(lines, ctx),
             rule_natives(lines),
             rule_security_manager(lines, ctx),
+            rule_module_access(lines, ctx),
         ]
         .into_iter()
         .flatten()
@@ -673,9 +800,11 @@ pub fn diagnose(
     let toolchain_root = findings
         .iter()
         .any(|f| f.kind == FindingKind::ClassReaderTooOld);
+    // 已经点名过 Java（模块访问被拒）就不再补一条更弱的同义推断
+    let java_already_named = findings.iter().any(|f| f.kind == FindingKind::JavaVersion);
     if toolchain_root {
         findings = findings.into_iter().map(as_symptom).collect();
-    } else if let Some(f) = rule_java_above_declared(ctx) {
+    } else if !java_already_named && let Some(f) = rule_java_above_declared(ctx) {
         findings.push(f);
     }
 
@@ -710,6 +839,8 @@ pub fn diagnose(
         excerpt,
         raw_output,
         report_text,
+        instance: ctx.version_id.clone(),
+        suggested_java: None,
     }
 }
 
@@ -1040,7 +1171,7 @@ Caused by: org.spongepowered.asm.mixin.throwables.ClassMetadataNotFoundException
         );
     }
 
-    /// 回归锁：Java 匹配是启动闸门负责的，崩溃报告里再列一遍「声明 Java」会把人引偏
+    /// Java 匹配由启动闸门负责，崩溃报告里再列一遍「声明 Java」会把人引偏
     #[test]
     fn test_context_reports_runtime_and_loader_not_the_java_gate_again() {
         let mut ctx = ctx_java_26();
@@ -1058,7 +1189,7 @@ Caused by: org.spongepowered.asm.mixin.throwables.ClassMetadataNotFoundException
         );
     }
 
-    /// 回归锁：Java 与声明一致时不该把它当成嫌疑，否则每条崩溃都带上同一句废话
+    /// Java 与声明一致时不该把它当成嫌疑，否则每条崩溃都带上同一句无关提示
     #[test]
     fn test_java_rule_stays_quiet_when_used_matches_declared() {
         let d = diagnose(Some(1), &lines(MIXIN_CRASH), &ctx_plain(), None);
@@ -1068,5 +1199,182 @@ Caused by: org.spongepowered.asm.mixin.throwables.ClassMetadataNotFoundException
                 .iter()
                 .any(|f| f.kind == FindingKind::JavaVersion)
         );
+    }
+
+    /// 1.13~1.16 的 Forge 撞上 Java 9+ 的模块系统时，日志里长这样
+    const MODULE_ACCESS_CRASH: &str = r#"Exception in thread "main" java.lang.reflect.InvocationTargetException
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at cpw.mods.modlauncher.Launcher.main(Launcher.java:62)
+Caused by: java.lang.reflect.InaccessibleObjectException: Unable to make field private final java.lang.String java.lang.Class.name accessible: module java.base does not "opens java.lang" to unnamed module @3d4eac69
+	at java.base/java.lang.reflect.AccessibleObject.checkCanSetAccessible(AccessibleObject.java:354)"#;
+
+    fn ctx_java_25_declared_8() -> LaunchContext {
+        LaunchContext {
+            version_id: "1.13.2-Forge".to_string(),
+            loader: "Forge".to_string(),
+            declared_java: Some(8),
+            used_java_path: "D:/Program Files/BellSoft/LibericaJDK-25/bin/java.exe".to_string(),
+            used_java_version: Some(25),
+            memory_mb: 9600,
+            mod_files: Vec::new(),
+            runtime_secs: Some(1),
+        }
+    }
+
+    #[test]
+    fn test_module_access_with_newer_java_is_a_high_confidence_root_cause() {
+        let d = diagnose(
+            Some(1),
+            &lines(MODULE_ACCESS_CRASH),
+            &ctx_java_25_declared_8(),
+            None,
+        );
+
+        assert!(d.recognized, "模块访问被拒应当算已识别");
+        let java = d
+            .findings
+            .iter()
+            .find(|f| f.kind == FindingKind::JavaVersion)
+            .expect("应当把 Java 版本列为根因");
+        assert_eq!(java.confidence, Confidence::High);
+        assert_eq!(java.role, FindingRole::Root);
+        assert!(java.conclusion.contains("25"));
+        assert!(java.conclusion.contains("8"));
+        assert!(java.suggestion.contains("Java 8"), "{}", java.suggestion);
+
+        // 已经点名 Java 之后不该再补一条更弱的同义推断
+        assert_eq!(
+            d.findings
+                .iter()
+                .filter(|f| f.kind == FindingKind::JavaVersion)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_module_access_is_not_blamed_on_java_when_versions_match() {
+        let mut ctx = ctx_java_25_declared_8();
+        ctx.declared_java = Some(25);
+        let d = diagnose(Some(1), &lines(MODULE_ACCESS_CRASH), &ctx, None);
+
+        // 声明与本次一致，那是模组自己要 add-opens，不是 JDK 太新
+        assert!(
+            !d.findings
+                .iter()
+                .any(|f| f.kind == FindingKind::JavaVersion)
+        );
+    }
+
+    #[test]
+    fn test_unknown_rule_prefers_the_exception_over_a_stack_frame() {
+        // 尾巴只剩栈帧时，把 at cpw.mods.modlauncher... 当根因没有意义
+        let text = "Exception in thread \"main\" java.lang.reflect.InvocationTargetException\n\tat cpw.mods.modlauncher.Launcher.main(Launcher.java:62)";
+        let d = diagnose(Some(1), &lines(text), &ctx_java_25_declared_8(), None);
+
+        let unknown = d
+            .findings
+            .iter()
+            .find(|f| f.kind == FindingKind::Unknown)
+            .expect("没有特征命中时应当给出未识别");
+        assert!(
+            unknown.conclusion.contains("InvocationTargetException"),
+            "{}",
+            unknown.conclusion
+        );
+        assert!(!unknown.conclusion.contains("最深的异常原因：at "));
+    }
+
+    #[test]
+    fn test_unknown_rule_does_not_call_a_frame_a_root_cause() {
+        let text = "\tat cpw.mods.modlauncher.Launcher.main(Launcher.java:62)";
+        let d = diagnose(Some(1), &lines(text), &ctx_java_25_declared_8(), None);
+
+        let unknown = d
+            .findings
+            .iter()
+            .find(|f| f.kind == FindingKind::Unknown)
+            .expect("应当给出未识别");
+        assert!(
+            unknown.conclusion.contains("没有异常类型"),
+            "{}",
+            unknown.conclusion
+        );
+    }
+
+    /// 参数被拆开后，JVM 会把某个 `-D` 的值当成主类；
+    /// 这条规则要能说清“不是缺文件，是参数拼坏了”
+    #[test]
+    fn test_orphan_jvm_value_is_reported_as_broken_arguments() {
+        let log = "Error: Could not find or load main class java.base/jdk.internal.misc=ALL-UNNAMED
+Caused by: java.lang.ClassNotFoundException: java.base/jdk.internal.misc=ALL-UNNAMED";
+        let d = diagnose(Some(1), &lines(log), &ctx_plain(), None);
+
+        let f = only(&d, FindingKind::MainClass);
+        assert_eq!(f.role, FindingRole::Root);
+        assert_eq!(f.confidence, Confidence::High);
+        assert!(f.conclusion.contains("参数"), "{}", f.conclusion);
+        assert!(f.suggestion.contains("重建"), "{}", f.suggestion);
+    }
+
+    #[test]
+    fn test_localized_main_class_error_is_recognized() {
+        let log = "错误: 找不到或无法加载主类 net.neoforged.fml.startup.Client
+原因: java.lang.ClassNotFoundException: net.neoforged.fml.startup.Client";
+        let d = diagnose(Some(1), &lines(log), &ctx_plain(), None);
+
+        let f = only(&d, FindingKind::MainClass);
+        assert!(f.conclusion.contains("classpath"), "{}", f.conclusion);
+        assert_eq!(
+            f.culprits,
+            vec!["net.neoforged.fml.startup.Client".to_string()]
+        );
+    }
+
+    fn ctx_quilt_26_3() -> LaunchContext {
+        LaunchContext {
+            version_id: "26.3-Quilt".to_string(),
+            loader: "Quilt".to_string(),
+            declared_java: Some(25),
+            used_java_path: "D:/Program Files/BellSoft/LibericaJDK-25/bin/java.exe".to_string(),
+            used_java_version: Some(25),
+            memory_mb: 9600,
+            mod_files: Vec::new(),
+            runtime_secs: Some(1),
+        }
+    }
+
+    /// Quilt 0.20.0-beta.9 自带 ASM 9.5，读不了 Java 25 的类。
+    /// 此时“换 Java”是句废话——本次就是 25，该换的是加载器。
+    #[test]
+    fn test_loader_too_old_advice_is_to_upgrade_loader_not_java() {
+        let log = "\
+[01:50:42] [main/INFO]: Loading Minecraft 26.3 with Quilt Loader 0.20.0-beta.9
+[01:50:42] [main/INFO]: Mappings not present!
+[01:50:42] [main/ERROR]: Uncaught exception in thread \"main\"
+java.lang.IllegalArgumentException: Unsupported class file major version 69
+\tat org.objectweb.asm.ClassReader.<init>(ClassReader.java:199)
+\tat org.quiltmc.loader.impl.entrypoint.GameTransformer.lambda$locateEntrypoints$0(GameTransformer.java:89)
+\tat org.quiltmc.loader.impl.game.minecraft.MinecraftGameProvider.initialize(MinecraftGameProvider.java:407)";
+
+        let d = diagnose(Some(1), &lines(log), &ctx_quilt_26_3(), None);
+        let finding = only(&d, FindingKind::ClassReaderTooOld);
+
+        assert!(
+            finding.suggestion.contains("升级"),
+            "应指向升级加载器: {}",
+            finding.suggestion
+        );
+        assert!(
+            finding.suggestion.contains("Quilt"),
+            "应点名是哪个加载器: {}",
+            finding.suggestion
+        );
+        assert!(
+            !finding.suggestion.contains("换成版本 JSON 声明的 Java 25"),
+            "本次已经是 Java 25，再说换 Java 是误导: {}",
+            finding.suggestion
+        );
+        assert_eq!(finding.role, FindingRole::Root);
     }
 }

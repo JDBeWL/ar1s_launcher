@@ -5,7 +5,7 @@
 mod arguments;
 mod classpath;
 pub mod crash_diagnosis;
-mod isolation;
+pub mod isolation;
 pub mod java;
 pub mod java_requirement;
 mod natives;
@@ -101,6 +101,16 @@ pub async fn launch_minecraft(
     let game_dir = java::resolve_game_dir(&config.game_dir);
     let version_dir = game_dir.join("versions").join(&options.version);
 
+    // Quilt 老版本自带的 ASM 读不了新游戏的类，这种实例放它启动只会秒崩；
+    // 能就地升级就升级，升级失败也不拦启动，交给崩溃诊断去解释
+    match crate::services::loaders::quilt::repair_if_unusable(&options.version, &game_dir, &window)
+        .await
+    {
+        Ok(Some(message)) => emit("log-warning", message),
+        Ok(None) => {}
+        Err(e) => emit("log-warning", format!("检查 Quilt 加载器版本时出错: {}", e)),
+    }
+
     emit("log-debug", format!("尝试启动版本: {}", options.version));
     emit("log-debug", format!("游戏目录: {}", game_dir.display()));
 
@@ -125,7 +135,47 @@ pub async fn launch_minecraft(
         std::env::consts::OS
     };
 
-    isolation::prepare_isolated_version_directory(&config, &game_dir, &version_dir)?;
+    let content_root = isolation::prepare_content_root(&config, &game_dir, &options.version)?;
+    if !config.version_isolation {
+        emit(
+            "log-warning",
+            format!(
+                "版本隔离已关闭：游戏工作目录是 {}，所有实例共用同一份 mods / 存档 / 配置",
+                content_root.display()
+            ),
+        );
+
+        // 关掉隔离后实例目录里的内容不会再生效，明确指出来，免得以为模组丢了
+        let stale_mods = version_dir.join("mods");
+        let stale_count = java_requirement::list_mod_files(&stale_mods).len();
+        if stale_count > 0 {
+            emit(
+                "log-warning",
+                format!(
+                    "实例目录下的 {} 个模组不会被加载（{}），需要的话请移到 {}/mods",
+                    stale_count,
+                    stale_mods.display(),
+                    content_root.display()
+                ),
+            );
+        }
+
+        let stale_saves = version_dir.join("saves");
+        let has_saves = std::fs::read_dir(&stale_saves)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(false);
+        if has_saves {
+            emit(
+                "log-warning",
+                format!(
+                    "该实例的存档在 {}，关闭隔离后游戏读不到；请把世界文件夹移到 {}/saves",
+                    stale_saves.display(),
+                    content_root.display()
+                ),
+            );
+        }
+    }
+
     let natives_dir = natives::extract_natives(
         &version_json,
         &version_dir,
@@ -201,46 +251,48 @@ pub async fn launch_minecraft(
     // 三条分支选出来的 Java 都要过同一道判据；版本 JSON 读不到时不硬拦
     if profile.resolved
         && let Some(ver) = java_version
+        && !java_requirement::java_allowed(&profile.requirement, ver)
     {
-        if !java_requirement::java_allowed(&profile.requirement, ver) {
-            let candidates = java::collect_candidates(&config);
-            match java::choose_java(&profile.requirement, &candidates) {
-                Some(better) => {
-                    emit(
-                        "log-warning",
-                        format!(
-                            "{} 实例要求 Java {}{}，当前 Java {} 不满足，已换成 Java {} ({})",
-                            profile.loader.label(),
-                            profile.requirement.min,
-                            match profile.requirement.hard_max {
-                                Some(max) => format!("~{}", max),
-                                None => "+".to_string(),
-                            },
-                            ver,
-                            better.version,
-                            better.path
-                        ),
-                    );
-                    java_path = better.path;
-                    java_version = Some(better.version);
-                }
-                None => {
-                    let report = java_requirement::build_report(
-                        &profile,
-                        Some((java_path.as_str(), ver)),
-                        &candidates,
-                    );
-                    // 判据没覆盖全，所以这不是否决而是确认：用户看过报告坚持要起，就带着风险起
-                    if options.force_java_mismatch {
-                        emit(
-                            "log-warning",
-                            format!("已按用户确认强制启动，风险自负：\n{}", report),
-                        );
-                    } else {
-                        emit("log-error", report.clone());
-                        return Err(LauncherError::Custom(report));
-                    }
-                }
+        let candidates = java::collect_candidates(&config);
+
+        match java::resolve_gate(
+            &profile,
+            (java_path.as_str(), ver),
+            options.force_java_mismatch,
+            &candidates,
+        ) {
+            // 用户已经在弹窗里点过“仍用当前 Java”：这里再替他换一份，等于那个选项没生效
+            java::JavaGate::KeepCurrent(report) => {
+                emit(
+                    "log-warning",
+                    format!(
+                        "按你的选择继续用 Java {} 启动（{}），风险自负：\n{}",
+                        ver, java_path, report
+                    ),
+                );
+            }
+            java::JavaGate::SwitchTo(better) => {
+                emit(
+                    "log-warning",
+                    format!(
+                        "{} 实例要求 Java {}{}，当前 Java {} 不满足，已换成 Java {} ({})",
+                        profile.loader.label(),
+                        profile.requirement.min,
+                        match profile.requirement.hard_max {
+                            Some(max) => format!("~{}", max),
+                            None => "+".to_string(),
+                        },
+                        ver,
+                        better.version,
+                        better.path
+                    ),
+                );
+                java_path = better.path;
+                java_version = Some(better.version);
+            }
+            java::JavaGate::Refuse(report) => {
+                emit("log-error", report.clone());
+                return Err(LauncherError::Custom(report));
             }
         }
     }
@@ -315,11 +367,7 @@ pub async fn launch_minecraft(
         final_args.push("--fullscreen".to_string());
     }
 
-    let working_dir = if config.version_isolation {
-        version_dir
-    } else {
-        game_dir
-    };
+    let working_dir = isolation::content_root_of(&config, &game_dir, &version_dir);
 
     if let Some(ref lang) = config.language {
         if let Err(e) = crate::utils::minecraft::set_game_language(&working_dir, lang) {
@@ -327,7 +375,11 @@ pub async fn launch_minecraft(
         }
     }
 
-    let mods_root = java_requirement::mods_dir(&profile.game_dir, &options.version);
+    let mods_root = java_requirement::mods_dir(
+        &profile.game_dir,
+        &options.version,
+        config.version_isolation,
+    );
     let launch_ctx = crash_diagnosis::LaunchContext {
         version_id: options.version.clone(),
         loader: profile.loader.label().to_string(),

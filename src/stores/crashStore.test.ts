@@ -1,6 +1,6 @@
 /**
  * 崩溃诊断弹窗状态测试
- * 每次崩溃都要覆盖上一份，否则第二次崩的结论会混着第一次的 findings 显示
+ * 每次崩溃覆盖上一份，否则第二次崩的结论会混着第一次的 findings 显示
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
@@ -29,6 +29,8 @@ function payload(over: Partial<CrashDiagnosis> = {}): CrashDiagnosis {
     excerpt: [],
     rawOutput: 'raw',
     reportText: 'report',
+    instance: 'pack',
+    suggestedJava: null,
     ...over,
   };
 }

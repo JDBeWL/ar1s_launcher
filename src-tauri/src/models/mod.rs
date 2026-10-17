@@ -117,12 +117,6 @@ pub struct GameConfig {
     #[serde(default = "default_download_threads")]
     pub download_threads: u8,
     pub language: Option<String>,
-    #[serde(default = "default_true")]
-    pub isolate_saves: bool,
-    #[serde(default = "default_true")]
-    pub isolate_resourcepacks: bool,
-    #[serde(default = "default_true")]
-    pub isolate_logs: bool,
     pub username: Option<String>,
     pub uuid: Option<String>,
     /// 正版皮肤原图地址，登录/刷新 token 时从 Mojang 个人资料接口取
@@ -169,9 +163,6 @@ impl Default for GameConfig {
             auto_match_java: false,
             download_threads: default_download_threads(),
             language: None,
-            isolate_saves: true,
-            isolate_resourcepacks: true,
-            isolate_logs: true,
             username: None,
             uuid: None,
             skin_url: None,

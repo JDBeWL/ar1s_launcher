@@ -56,7 +56,7 @@ pub async fn get_quilt_versions(
         .into_iter()
         .map(|v| LoaderVersionInfo {
             version: v.version,
-            stable: None,
+            stable: Some(v.stable),
         })
         .collect())
 }
@@ -70,7 +70,7 @@ pub async fn get_neoforge_versions(
         .into_iter()
         .map(|v| LoaderVersionInfo {
             version: v.version,
-            stable: None,
+            stable: Some(v.stable),
         })
         .collect())
 }

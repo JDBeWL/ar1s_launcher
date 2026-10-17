@@ -379,8 +379,8 @@ onMounted(async () => {
             <v-icon color="on-secondary-container" size="18">mdi-information-outline</v-icon>
           </template>
           <span class="text-on-secondary-container text-body-medium">
-            启用后，启动游戏时会自动选择匹配的 Java 版本（1.16.5 及以下 → Java 8，1.17~1.20.4 → Java 17，1.20.5+ → Java
-            21）
+            启用后，启动时按实例声明的 javaVersion 选 Java（读不到声明时按 MC 版本推断），mods
+            的字节码版本会抬高下限；同版本优先 64 位与正式版，选不到声明版本时会说明用的是哪份
           </span>
         </v-alert>
       </v-card-text>
@@ -396,6 +396,7 @@ onMounted(async () => {
       <ul class="text-body-small pl-4 mb-0 mt-1 text-on-secondary-container">
         <li>Minecraft 1.17+ 需要 Java 17 或更高版本</li>
         <li>Minecraft 1.16.5 及以下版本建议使用 Java 8</li>
+        <li>32 位 Java 最多只能分配约 1.5G 内存，同版本会优先选 64 位</li>
         <li>推荐使用 Adoptium (Eclipse Temurin) 或 Azul Zulu</li>
         <li>支持相对路径（相对于启动器目录），如 <code class="font-mono">./runtime/java/bin/java.exe</code></li>
       </ul>

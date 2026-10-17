@@ -15,4 +15,5 @@ pub use http::get_http_client;
 pub use manifest::VersionSizeInfo;
 pub use manifest::get_version_size;
 pub use manifest::get_versions;
+pub use version::ensure_declared_libraries;
 pub use version::process_and_download_version;

@@ -10,6 +10,9 @@ use std::path::Path;
 const DEFAULT_WINDOW_WIDTH: u32 = 854;
 const DEFAULT_WINDOW_HEIGHT: u32 = 480;
 
+/// 报给游戏的启动器名，会进 `-Dminecraft.launcher.brand`
+const LAUNCHER_NAME: &str = "ar1s_launcher";
+
 /// 用于 Forge 的 ignoreList 参数，需要原版 MC jar 文件名
 fn get_base_minecraft_version(version_json: &serde_json::Value, fallback: &str) -> String {
     if let Some(jar) = version_json.get("jar").and_then(|j| j.as_str()) {
@@ -56,8 +59,14 @@ pub fn build_arguments(
 ) -> (Vec<String>, Vec<String>) {
     let libraries_dir = game_dir.join("libraries");
     let classpath_separator = if cfg!(windows) { ";" } else { ":" };
+    let classpath_string = classpath
+        .iter()
+        .map(|p| p.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join(classpath_separator);
 
     let base_mc_version = get_base_minecraft_version(version_json, &options.version);
+    let primary_jar_name = format!("{}.jar", base_mc_version);
 
     let custom_width = options.window_width.or(config.window_width);
     let custom_height = options.window_height.or(config.window_height);
@@ -70,11 +79,9 @@ pub fn build_arguments(
     };
 
     let replace_placeholders = |arg: &str| -> String {
-        let actual_game_dir = if config.version_isolation {
-            version_dir.to_string_lossy().to_string()
-        } else {
-            game_dir.to_string_lossy().to_string()
-        };
+        let actual_game_dir = super::isolation::content_root_of(config, game_dir, version_dir)
+            .to_string_lossy()
+            .to_string();
 
         let auth_access_token = options.access_token.as_deref().unwrap_or("0");
 
@@ -108,21 +115,30 @@ pub fn build_arguments(
             .replace("${user_properties}", "{}")
             .replace("${resolution_width}", &resolution_width)
             .replace("${resolution_height}", &resolution_height)
-            // 新版 Forge (1.13+) 需要的占位符
             .replace("${library_directory}", &libraries_dir.to_string_lossy())
             .replace("${classpath_separator}", classpath_separator)
+            // 原版 1.20.2+ / NeoForge 还会问这些；漏一个就会把字面量喂给 JVM，
+            // 例如 -Djava.library.path=${natives_directory} 会顶掉我们设对的那条
+            .replace(
+                "${natives_directory}",
+                &version_dir.join("natives").to_string_lossy(),
+            )
+            .replace("${classpath}", &classpath_string)
+            .replace("${launcher_name}", LAUNCHER_NAME)
+            .replace("${launcher_version}", env!("CARGO_PKG_VERSION"))
+            .replace("${primary_jar_name}", &primary_jar_name)
+            // 我们没有 Xbox 的 user id / client id，给空串而不是留字面量
+            .replace("${auth_xuid}", "")
+            .replace("${clientid}", "")
     };
 
     let mut jvm_args = vec![];
     let mut game_args_vec = vec![];
 
-    // 处理新版 (1.13+) `arguments` 格式
     if let Some(arguments) = version_json.get("arguments") {
         jvm_args = parse_jvm_arguments(arguments, &replace_placeholders, &feature_support);
         game_args_vec = parse_game_arguments(arguments, &replace_placeholders, &feature_support);
-    }
-    // 处理旧版 `minecraftArguments` 格式
-    else if let Some(mc_args) = version_json["minecraftArguments"].as_str() {
+    } else if let Some(mc_args) = version_json["minecraftArguments"].as_str() {
         game_args_vec = mc_args.split(' ').map(&replace_placeholders).collect();
     }
 
@@ -257,4 +273,147 @@ fn auto_add_tweak_class(
 
     game_args.insert(0, tweaker.to_string());
     game_args.insert(0, "--tweakClass".to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn options() -> LaunchOptions {
+        LaunchOptions {
+            version: "26.3-NeoForge".to_string(),
+            username: "Steve".to_string(),
+            memory: None,
+            window_width: None,
+            window_height: None,
+            fullscreen: None,
+            auth_type: None,
+            access_token: None,
+            uuid: None,
+            override_java_path: None,
+            force_java_mismatch: false,
+        }
+    }
+
+    fn config() -> GameConfig {
+        GameConfig::default()
+    }
+
+    /// 关闭版本隔离后 `--gameDir` 必须是根目录。
+    /// 这一项要是和模组管理用的目录不一致，就会出现"列表里有模组、游戏里没有"
+    #[test]
+    fn test_game_directory_follows_isolation_setting() {
+        let json = serde_json::json!({
+            "id": "pack",
+            "arguments": { "game": ["--gameDir", "${game_directory}"] }
+        });
+
+        let root = tempfile::TempDir::new().unwrap();
+        let game_dir = root.path().to_path_buf();
+        let version_dir = game_dir.join("versions").join("pack");
+        let assets_dir = game_dir.join("assets");
+
+        let game_dir_arg = |isolated: bool| {
+            let cfg = GameConfig {
+                version_isolation: isolated,
+                ..GameConfig::default()
+            };
+            let (_, game) = build_arguments(
+                &json,
+                &cfg,
+                &options(),
+                "abc",
+                &version_dir,
+                &game_dir,
+                &assets_dir,
+                "26",
+                &[],
+                &|_: &str, _: String| {},
+            );
+            let index = game.iter().position(|arg| arg == "--gameDir").unwrap();
+            game[index + 1].clone()
+        };
+
+        assert_eq!(
+            game_dir_arg(true),
+            version_dir.to_string_lossy(),
+            "隔离时应指向实例目录"
+        );
+        assert_eq!(
+            game_dir_arg(false),
+            game_dir.to_string_lossy(),
+            "关闭隔离时应指向根目录"
+        );
+    }
+
+    /// 每个占位符都必须换掉，漏一个就把 ${...} 字面量原样喂给 JVM
+    #[test]
+    fn test_all_mojang_placeholders_get_resolved() {
+        let json = serde_json::json!({
+            "id": "26.3-NeoForge",
+            "mainClass": "net.neoforged.fml.startup.Client",
+            "arguments": {
+                "jvm": [
+                    "-Djava.library.path=${natives_directory}",
+                    "-Dminecraft.launcher.brand=${launcher_name}",
+                    "-Dminecraft.launcher.version=${launcher_version}",
+                    "-Dminecraft.client.jar=${primary_jar_name}",
+                    "-cp",
+                    "${classpath}"
+                ],
+                "game": [
+                    "--username", "${auth_player_name}",
+                    "--version", "${version_name}",
+                    "--gameDir", "${game_directory}",
+                    "--assetsDir", "${assets_root}",
+                    "--assetIndex", "${assets_index_name}",
+                    "--uuid", "${auth_uuid}",
+                    "--accessToken", "${auth_access_token}",
+                    "--userType", "${user_type}",
+                    "--versionType", "${version_type}",
+                    "--xuid", "${auth_xuid}",
+                    "--clientId", "${clientid}"
+                ]
+            }
+        });
+
+        let root = tempfile::TempDir::new().unwrap();
+        let game_dir = root.path().to_path_buf();
+        let version_dir = game_dir.join("versions").join("26.3-NeoForge");
+        let assets_dir = game_dir.join("assets");
+        let classpath = vec![PathBuf::from("a.jar"), PathBuf::from("b.jar")];
+
+        let (jvm, game) = build_arguments(
+            &json,
+            &config(),
+            &options(),
+            "abc",
+            &version_dir,
+            &game_dir,
+            &assets_dir,
+            "26",
+            &classpath,
+            &|_: &str, _: String| {},
+        );
+
+        let joined = jvm
+            .iter()
+            .chain(game.iter())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!joined.contains("${"), "仍有未替换的占位符: {}", joined);
+        assert!(
+            joined.contains("natives"),
+            "java.library.path 要指到解压目录: {}",
+            joined
+        );
+        assert!(joined.contains("a.jar") && joined.contains("b.jar"));
+        assert!(
+            joined.contains("26.3.jar") || joined.contains(".jar"),
+            "primary_jar_name 要给出文件名: {}",
+            joined
+        );
+    }
 }

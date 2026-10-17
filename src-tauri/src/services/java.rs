@@ -1,12 +1,14 @@
 //! Java 检测模块
 //!
-//! 扫描各发行版安装目录、PATH 与 JAVA_HOME，用 java -version 确认后去重缓存 1 小时
+//! 扫描各发行版安装目录、PATH 与 JAVA_HOME；探测结果（大版本 + 进程位数）按可执行文件缓存，
+//! 路径列表缓存 1 小时，避免每次启动都把本机每个 JVM 重启一遍问版本
 
 use crate::{LauncherError, load_config, save_config};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant};
 
 #[cfg(windows)]
@@ -14,21 +16,306 @@ use std::os::windows::process::CommandExt;
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const JAVA_BIN: &str = if cfg!(windows) { "java.exe" } else { "java" };
+
 struct JavaCache {
     paths: Vec<String>,
     cached_at: Instant,
 }
 
-static JAVA_CACHE: std::sync::LazyLock<RwLock<Option<JavaCache>>> =
-    std::sync::LazyLock::new(|| RwLock::new(None));
+static JAVA_CACHE: LazyLock<RwLock<Option<JavaCache>>> = LazyLock::new(|| RwLock::new(None));
 
 const JAVA_CACHE_DURATION: Duration = Duration::from_secs(3600);
+
+/// JVM 进程是 32 位还是 64 位：决定能开多大堆，同版本时优先 64 位
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JavaArch {
+    Bits64,
+    Bits32,
+    Unknown,
+}
+
+impl JavaArch {
+    /// 排序用，越小越优先
+    pub fn rank(self) -> u8 {
+        match self {
+            JavaArch::Bits64 => 0,
+            JavaArch::Unknown => 1,
+            JavaArch::Bits32 => 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JavaProbe {
+    /// 大版本；解析不出来时仍是 None，但 arch/raw 可能有效
+    pub version: Option<u32>,
+    /// 发行版自己报的版本串，界面直接显示
+    pub raw: Option<String>,
+    pub arch: JavaArch,
+    /// `java.home`：转发器（Oracle javapath）会把它指向真正的安装目录
+    pub home: Option<String>,
+}
+
+impl JavaProbe {
+    /// 预览版（`23-ea`、`24-ea+1`）：同版本时排在正式版之后
+    pub fn is_ea(&self) -> bool {
+        self.raw.as_deref().is_some_and(|raw| {
+            let raw = raw.to_lowercase();
+            raw.contains("-ea") || raw.contains("ea+") || raw.contains("-early")
+        })
+    }
+}
+
+struct CachedProbe {
+    probe: JavaProbe,
+    cached_at: Instant,
+}
+
+/// 一个 JVM 的启动成本在 Windows 上是百毫秒级，启动一次游戏要问好几轮，
+/// 所以按可执行文件路径缓存，只有刷新扫描时才清空
+static JAVA_PROBE_CACHE: LazyLock<RwLock<HashMap<String, CachedProbe>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+const JAVA_PROBE_DURATION: Duration = Duration::from_secs(6 * 3600);
 
 pub fn invalidate_java_cache() {
     if let Ok(mut cache) = JAVA_CACHE.write() {
         *cache = None;
     }
+    if let Ok(mut probes) = JAVA_PROBE_CACHE.write() {
+        probes.clear();
+    }
     log::info!("Java 检测缓存已清除");
+}
+
+/// `1.8.0_432` → 8，`17.0.8` → 17，`24-ea` → 24，`21.0.5+11-LTS` → 21
+pub fn parse_major(version: &str) -> Option<u32> {
+    let head = version
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .find(|part| !part.is_empty())?;
+
+    let mut parts = head.split('.');
+    let first: u32 = parts.next()?.parse().ok()?;
+
+    match first {
+        // 1.8.0_x / 1.7.0_80 这种老写法，第二位才是大版本
+        1 => parts.next()?.parse().ok(),
+        // 9 起直接是大版本；0 与 1 一样是历史写法，不该出现在 JDK 9+
+        2.. => Some(first),
+        _ => None,
+    }
+}
+
+fn parse_arch(value: &str) -> JavaArch {
+    match value.trim().to_lowercase().as_str() {
+        "amd64" | "x86_64" | "x64" | "aarch64" | "arm64" | "ppc64" | "ppc64le" | "s390x"
+        | "riscv64" => JavaArch::Bits64,
+        "x86" | "i386" | "i486" | "i586" | "i686" | "arm" | "ppc" => JavaArch::Bits32,
+        _ => JavaArch::Unknown,
+    }
+}
+
+/// `openjdk version "17.0.8" 2023-07-18` 里引号内那段
+fn quoted_version(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        if !line.to_lowercase().contains("version") {
+            return None;
+        }
+        // 这一行里没有引号就继续看下一行，别整段放弃
+        let start = line.find('"')?;
+        let end = line[start + 1..].find('"')?;
+        Some(line[start + 1..start + 1 + end].to_string())
+    })
+}
+
+fn run_capture(exe: &Path, args: &[&str]) -> Option<(String, String)> {
+    let mut command = Command::new(exe);
+    command.args(args);
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = command.output().ok()?;
+    Some((
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    ))
+}
+
+/// 从 `-XshowSettings:properties` 的输出里取一个键。
+/// 必须是真的 `key = value`：`java.version.date` 也以 `java.version` 开头，不能认错
+fn property_value(text: &str, key: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix(key)?.trim_start();
+        let value = rest.strip_prefix('=')?.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
+/// 一次调用同时拿 java.version、os.arch 与 java.home；老 JRE 不认 `-XshowSettings` 时退回 `-version`
+fn probe_uncached(exe: &Path) -> Option<JavaProbe> {
+    if let Some((stderr, stdout)) = run_capture(exe, &["-XshowSettings:properties", "-version"]) {
+        let text = format!("{}\n{}", stderr, stdout);
+
+        if let Some(raw) = property_value(&text, "java.version") {
+            return Some(JavaProbe {
+                version: parse_major(&raw),
+                raw: Some(raw),
+                arch: property_value(&text, "os.arch")
+                    .map(|value| parse_arch(&value))
+                    .unwrap_or(JavaArch::Unknown),
+                home: property_value(&text, "java.home"),
+            });
+        }
+    }
+
+    let (stderr, stdout) = run_capture(exe, &["-version"])
+        .or_else(|| run_capture(exe, &["-XshowSettings:properties", "-version"]))?;
+    let text = format!("{}\n{}", stderr, stdout);
+    let raw = quoted_version(&text)?;
+
+    Some(JavaProbe {
+        version: parse_major(&raw),
+        raw: Some(raw),
+        arch: JavaArch::Unknown,
+        home: None,
+    })
+}
+
+fn comparable(path: &Path) -> String {
+    let mut text = path.to_string_lossy().replace('\\', "/").to_lowercase();
+    if !text.ends_with('/') {
+        text.push('/');
+    }
+    text
+}
+
+/// exe 是不是就装在这个 home 里（Java 8 的 JDK 会报 `<jdk>/jre`，父目录也算）
+fn lives_in_home(exe: &Path, home: &Path) -> bool {
+    let exe = comparable(exe);
+    if exe.starts_with(&comparable(home)) {
+        return true;
+    }
+
+    home.file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("jre"))
+        && home
+            .parent()
+            .is_some_and(|parent| exe.starts_with(&comparable(parent)))
+}
+
+/// Oracle 的 `javapath`/`java8path` 里那个 java.exe 只是个转发器（1.4MB，和真实那份不是同一个文件），
+/// canonicalize 到不了同一条路径，于是同一个 JVM 会被列两遍。按它自己报的 java.home 换回真身
+pub fn real_java_exe(exe: &Path, home: Option<&str>) -> PathBuf {
+    let Some(home) = home else {
+        return exe.to_path_buf();
+    };
+    let home = PathBuf::from(home);
+    if lives_in_home(exe, &home) {
+        return exe.to_path_buf();
+    }
+
+    let candidate = home.join("bin").join(JAVA_BIN);
+    if candidate.is_file() {
+        candidate
+    } else {
+        exe.to_path_buf()
+    }
+}
+
+/// 探测并换回真身：转发器报的 java.home 才指向真正的安装
+pub fn probe_java_resolved(path: &str) -> Option<(PathBuf, JavaProbe)> {
+    let exe = resolve_java_exe(path);
+    let probe = probe_java_exe(&exe)?;
+
+    let real = real_java_exe(&exe, probe.home.as_deref());
+    if real == exe {
+        return Some((exe, probe));
+    }
+
+    // 换过去的那份必须自己也能跑，否则保留原路径
+    match probe_java_exe(&real) {
+        Some(probe) => Some((real, probe)),
+        None => Some((exe, probe)),
+    }
+}
+
+/// 路径 → 真正的 java 可执行文件：目录按 `<dir>/bin/java` 解释，相对路径落在启动器目录
+pub fn resolve_java_exe(path: &str) -> PathBuf {
+    let resolved = crate::services::launcher::java::resolve_path(path);
+    let base = if resolved.exists() {
+        resolved
+    } else {
+        PathBuf::from(path)
+    };
+
+    if base.is_dir() {
+        base.join("bin").join(JAVA_BIN)
+    } else if cfg!(windows) && base.extension().is_none() && !base.exists() {
+        // 有人会把 `.../bin/java` 直接粘进来，Windows 上实际是 java.exe
+        base.with_extension("exe")
+    } else {
+        base
+    }
+}
+
+/// 去重与缓存共用的键：真实路径 + 小写。
+/// 同一份 JVM 被目录、`bin/java.exe`、符号链接三种写法命中时必须落到同一个键
+pub fn exe_key(exe: &Path) -> String {
+    match exe.canonicalize() {
+        Ok(real) => real.to_string_lossy().replace("\\", "/").to_lowercase(),
+        Err(_) => exe.to_string_lossy().replace("\\", "/").to_lowercase(),
+    }
+}
+
+/// 探测指定 Java（带缓存）；路径可以指向可执行文件、安装目录，或 PATH 上的 `java`
+pub fn probe_java(path: &str) -> Option<JavaProbe> {
+    probe_java_exe(&resolve_java_exe(path))
+}
+
+/// 探测缓存键：按“调用方给的那条路径”记，不做 canonicalize。
+///
+/// `java.home` 是跟着启动路径走的（同一个 JVM 经符号链接启动会报链接那边的 home），
+/// 若按规范化路径共用缓存项，两条写法会互相污染，进而把真身又改回链接
+fn probe_cache_key(exe: &Path) -> String {
+    exe.to_string_lossy()
+        .replace('\\', "/")
+        .trim_start_matches("//?/")
+        .to_lowercase()
+}
+
+/// 已知可执行文件路径时的入口，扫描时用它省掉一次路径解析
+pub fn probe_java_exe(exe: &Path) -> Option<JavaProbe> {
+    if !exe.is_file() {
+        // `java` 这种纯命令名交给 PATH 去找，不做文件存在性判断
+        if exe.components().count() != 1 {
+            return None;
+        }
+    }
+
+    let key = probe_cache_key(exe);
+
+    if let Ok(cache) = JAVA_PROBE_CACHE.read()
+        && let Some(hit) = cache.get(&key)
+        && hit.cached_at.elapsed() < JAVA_PROBE_DURATION
+    {
+        return Some(hit.probe.clone());
+    }
+
+    let probe = probe_uncached(exe)?;
+
+    if let Ok(mut cache) = JAVA_PROBE_CACHE.write() {
+        cache.insert(
+            key,
+            CachedProbe {
+                probe: probe.clone(),
+                cached_at: Instant::now(),
+            },
+        );
+    }
+
+    Some(probe)
 }
 
 fn get_cached_java_paths() -> Option<Vec<String>> {
@@ -61,36 +348,10 @@ fn normalize_path(path: &str) -> String {
     }
 }
 
+/// 扫描阶段的“这个 exe 是不是 Java”：直接复用探测结果，
+/// 一次启动就把版本和位数一起留下，后面选 Java 时不必再启一遍
 fn is_valid_java_executable(java_path: &Path) -> bool {
-    if !java_path.exists() {
-        return false;
-    }
-
-    let mut command = Command::new(java_path);
-    command.arg("-version");
-
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-
-    match command.output() {
-        Ok(output) => {
-            if !output.status.success() {
-                return false;
-            }
-
-            // 版本信息通常在 stderr，两路都要查
-            let stderr_str = String::from_utf8_lossy(&output.stderr);
-            let stdout_str = String::from_utf8_lossy(&output.stdout);
-
-            stderr_str.contains("java version")
-                || stderr_str.contains("openjdk version")
-                || stderr_str.contains("Java(TM)")
-                || stdout_str.contains("java version")
-                || stdout_str.contains("openjdk version")
-                || stdout_str.contains("Java(TM)")
-        }
-        Err(_) => false,
-    }
+    probe_java_exe(java_path).is_some_and(|probe| probe.version.is_some())
 }
 
 fn find_java_in_path(java_cmd: &str) -> bool {
@@ -403,7 +664,12 @@ pub fn find_java_installations_command_sync() -> Result<Vec<String>, LauncherErr
     if let Some(cached_paths) = get_cached_java_paths() {
         return Ok(cached_paths);
     }
-    Ok(scan_java_installations_parallel())
+
+    let paths = scan_java_installations_parallel();
+    // 扫一次几百毫秒，同步路径以前不回填缓存，导致每次选 Java 都要重扫一遍
+    update_java_cache(paths.clone());
+
+    Ok(paths)
 }
 
 /// 并行扫描 Java 安装，须在阻塞线程池中调用
@@ -489,7 +755,28 @@ fn scan_java_installations_parallel() -> Vec<String> {
         }
     }
 
+    // javapath 转发器换回真身，同一个 JVM 才不会在列表里出现两次
+    let paths: Vec<String> = paths
+        .into_iter()
+        .map(|path| real_java_path(&path))
+        .collect();
+
     dedup_by_canonical(paths)
+}
+
+/// 路径对应的真实安装：转发器（Oracle javapath / java8path）换到 java.home 下那份
+fn real_java_path(path: &str) -> String {
+    let exe = PathBuf::from(path);
+    let Some(probe) = probe_java_exe(&exe) else {
+        return path.to_string();
+    };
+
+    let real = real_java_exe(&exe, probe.home.as_deref());
+    if real == exe {
+        return path.to_string();
+    }
+
+    real.to_string_lossy().replace('\\', "/")
 }
 
 /// 按真实路径去重；同一份安装被符号链接二次命中时保留实体路径，界面上才不会指着链接
@@ -540,42 +827,29 @@ pub async fn set_java_path_command(path: String) -> Result<(), LauncherError> {
     Ok(())
 }
 
-/// 验证 Java 路径，支持相对路径
+/// 验证 Java 路径，支持相对路径、安装目录（含 bin/）与 PATH 上的 java
 pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
     if path == "java" || path == "java.exe" {
         let java_cmd = if cfg!(windows) { "java.exe" } else { "java" };
         return Ok(find_java_in_path(java_cmd));
     }
 
-    let path_buf = crate::services::launcher::java::resolve_path(&path);
-
-    if path_buf.is_file() {
-        Ok(is_valid_java_executable(&path_buf))
-    } else if path_buf.is_dir() {
-        let java_exe = path_buf
-            .join("bin")
-            .join(if cfg!(windows) { "java.exe" } else { "java" });
-        Ok(java_exe.exists() && is_valid_java_executable(&java_exe))
-    } else {
-        Ok(false)
-    }
+    let exe = resolve_java_exe(&path);
+    Ok(exe.is_file() && is_valid_java_executable(&exe))
 }
 
 /// 获取 Java 版本信息，支持相对路径
 pub async fn get_java_version(path: String) -> Result<String, LauncherError> {
-    let resolved = crate::services::launcher::java::resolve_path(&path);
+    // 走探测缓存：设置页会为每个已检测安装各问一次，缓存后第二次起是纯内存读取
+    if let Some(probe) = probe_java(&path) {
+        if let Some(raw) = probe.raw {
+            return Ok(raw);
+        }
+    }
 
-    let java_path = if path == "java" || path == "java.exe" {
-        PathBuf::from(&path)
-    } else if resolved.is_dir() {
-        resolved
-            .join("bin")
-            .join(if cfg!(windows) { "java.exe" } else { "java" })
-    } else {
-        resolved
-    };
+    let resolved = resolve_java_exe(&path);
 
-    let mut command = Command::new(&java_path);
+    let mut command = Command::new(&resolved);
     command.arg("-version");
 
     #[cfg(windows)]
@@ -688,7 +962,130 @@ pub fn auto_detect_java() -> Result<Vec<String>, LauncherError> {
 
 #[cfg(test)]
 mod tests {
-    use super::dedup_by_canonical;
+    use super::{
+        JavaArch, JavaProbe, dedup_by_canonical, parse_arch, parse_major, property_value,
+        quoted_version, real_java_exe,
+    };
+    use std::fs;
+
+    #[test]
+    fn test_property_value_matches_the_exact_key() {
+        // 真实输出里 java.version 与 java.version.date 挨着，前缀匹配会取错
+        let text =
+            "    java.version = 25.0.4.1\n    java.version.date = 2026-08-18\n    os.arch = amd64";
+        assert_eq!(
+            property_value(text, "java.version").as_deref(),
+            Some("25.0.4.1")
+        );
+        assert_eq!(property_value(text, "os.arch").as_deref(), Some("amd64"));
+        assert_eq!(property_value(text, "java.home"), None);
+    }
+
+    #[test]
+    fn test_parse_major_covers_the_shapes_vendors_print() {
+        // 老写法：第二位才是大版本
+        assert_eq!(parse_major("1.8.0_432"), Some(8));
+        assert_eq!(parse_major("1.7.0_80"), Some(7));
+        // 9 起直接是大版本
+        assert_eq!(parse_major("17.0.8"), Some(17));
+        assert_eq!(parse_major("21"), Some(21));
+        // 预览版：这里以前 `24-ea` 直接解析失败，候选被静默丢掉
+        assert_eq!(parse_major("24-ea"), Some(24));
+        assert_eq!(parse_major("23-ea+1-32"), Some(23));
+        // 带 build 号与 LTS 尾巴
+        assert_eq!(parse_major("21.0.5+11-LTS"), Some(21));
+        assert_eq!(parse_major("11.0.9.1"), Some(11));
+    }
+
+    #[test]
+    fn test_parse_major_rejects_garbage() {
+        assert_eq!(parse_major(""), None);
+        assert_eq!(parse_major("garbage"), None);
+        assert_eq!(parse_major("0"), None);
+    }
+
+    #[test]
+    fn test_parse_arch_distinguishes_32_bit() {
+        assert_eq!(parse_arch("amd64"), JavaArch::Bits64);
+        assert_eq!(parse_arch("x86_64"), JavaArch::Bits64);
+        assert_eq!(parse_arch("aarch64"), JavaArch::Bits64);
+        // 32 位 JRE 是历史上最容易选错的一类：能起来但开不了大堆
+        assert_eq!(parse_arch("x86"), JavaArch::Bits32);
+        assert_eq!(parse_arch("i386"), JavaArch::Bits32);
+        assert_eq!(parse_arch(""), JavaArch::Unknown);
+    }
+
+    #[test]
+    fn test_quoted_version_reads_the_vendor_line() {
+        let text = "Picked up JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8\nopenjdk version \"17.0.8\" 2023-07-18\nOpenJDK Runtime Environment";
+        assert_eq!(quoted_version(text).as_deref(), Some("17.0.8"));
+
+        let java8 = "java version \"1.8.0_432\"\nJava(TM) SE Runtime Environment";
+        assert_eq!(quoted_version(java8).as_deref(), Some("1.8.0_432"));
+    }
+
+    #[test]
+    fn test_ea_probe_is_ranked_below_release_builds() {
+        let ea = JavaProbe {
+            version: Some(24),
+            raw: Some("24-ea".to_string()),
+            arch: JavaArch::Bits64,
+            home: None,
+        };
+        let release = JavaProbe {
+            version: Some(24),
+            raw: Some("24.0.1".to_string()),
+            arch: JavaArch::Bits64,
+            home: None,
+        };
+        assert!(ea.is_ea());
+        assert!(!release.is_ea());
+    }
+
+    #[test]
+    fn test_real_java_exe_rewrites_the_oracle_stub() {
+        // Oracle 的 javapath 里那份只是转发器，java.home 才是真身
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("jdk8");
+        fs::create_dir_all(home.join("bin")).unwrap();
+        fs::write(home.join("bin").join("java.exe"), b"x").unwrap();
+
+        let stub = tmp
+            .path()
+            .join("Common Files/Oracle/Java/java8path/java.exe");
+        fs::create_dir_all(stub.parent().unwrap()).unwrap();
+        fs::write(&stub, b"stub").unwrap();
+
+        let real = real_java_exe(&stub, Some(&home.to_string_lossy()));
+        assert_eq!(real, home.join("bin").join("java.exe"));
+    }
+
+    #[test]
+    fn test_real_java_exe_keeps_paths_already_inside_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("jdk17");
+        fs::create_dir_all(home.join("bin")).unwrap();
+        let exe = home.join("bin").join("java.exe");
+        fs::write(&exe, b"x").unwrap();
+
+        assert_eq!(real_java_exe(&exe, Some(&home.to_string_lossy())), exe);
+
+        // Java 8 的 JDK：java.home 报的是 <jdk>/jre，用户填的却是 <jdk>/bin/java.exe
+        let jre = home.join("jre");
+        fs::create_dir_all(jre.join("bin")).unwrap();
+        fs::write(jre.join("bin").join("java.exe"), b"x").unwrap();
+        assert_eq!(real_java_exe(&exe, Some(&jre.to_string_lossy())), exe);
+    }
+
+    #[test]
+    fn test_real_java_exe_without_home_is_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = tmp.path().join("bin/java.exe");
+        fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        fs::write(&exe, b"x").unwrap();
+
+        assert_eq!(real_java_exe(&exe, None), exe);
+    }
 
     #[test]
     fn test_dedup_keeps_one_representative_per_real_path() {

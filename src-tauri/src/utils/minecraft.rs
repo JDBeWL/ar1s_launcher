@@ -30,15 +30,30 @@ pub fn parse_mc_version(version: &str) -> Option<(u32, u32)> {
 
 /// 坐标不足三段返回 None；classifier 缺省时取坐标的第四段
 pub fn maven_name_to_path(name: &str, classifier: Option<&str>, extension: &str) -> Option<String> {
-    let parts: Vec<&str> = name.split(':').collect();
+    // Maven 的 `@ext` 语法：`net.minecraft:client:1.21.11:mappings@txt`。
+    // 不认它就会生成 `client-1.21.11-mappings@txt.jar`，processor 拿去当输出路径必然出错
+    let mut extension = extension.to_string();
+    let parts: Vec<String> = name
+        .split(':')
+        .map(|part| match part.split_once('@') {
+            Some((head, ext)) if !ext.is_empty() => {
+                extension = ext.to_string();
+                head.to_string()
+            }
+            _ => part.to_string(),
+        })
+        .collect();
+
     if parts.len() < 3 {
         return None;
     }
 
     let group = parts[0].replace('.', "/");
-    let artifact = parts[1];
-    let version = parts[2];
-    let resolved_classifier = classifier.or_else(|| parts.get(3).copied());
+    let artifact = &parts[1];
+    let version = &parts[2];
+    let resolved_classifier = classifier
+        .map(str::to_string)
+        .or_else(|| parts.get(3).cloned());
 
     let filename = if let Some(c) = resolved_classifier {
         format!("{}-{}-{}.{}", artifact, version, c, extension)
@@ -220,6 +235,29 @@ pub fn set_game_language(instance_dir: &std::path::Path, lang: &str) -> std::io:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// NeoForge 的 processor 数据里有 `net.minecraft:client:1.21.11:mappings@txt` 这种坐标，
+    /// `@` 后面是扩展名而不是分类符
+    #[test]
+    fn test_maven_name_honours_ext_suffix() {
+        assert_eq!(
+            maven_name_to_path("net.minecraft:client:1.21.11:mappings@txt", None, "jar").as_deref(),
+            Some("net/minecraft/client/1.21.11/client-1.21.11-mappings.txt")
+        );
+        assert_eq!(
+            maven_name_to_path(
+                "net.neoforged:neoform:1.21.11:mappings@tsrg.lzma",
+                None,
+                "jar"
+            )
+            .as_deref(),
+            Some("net/neoforged/neoform/1.21.11/neoform-1.21.11-mappings.tsrg.lzma")
+        );
+        assert_eq!(
+            maven_name_to_path("com.mojang:brigadier:1.3.11", None, "jar").as_deref(),
+            Some("com/mojang/brigadier/1.3.11/brigadier-1.3.11.jar")
+        );
+    }
 
     #[test]
     fn test_is_new_version() {

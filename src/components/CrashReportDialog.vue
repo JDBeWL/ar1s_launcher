@@ -2,22 +2,28 @@
 import { computed, ref } from 'vue';
 import { useCrashStore } from '../stores/crashStore';
 import { useNotificationStore } from '../stores/notificationStore';
+import { useGameLaunch } from '../composables/useGameLaunch';
 import { copyText } from '../utils/clipboard';
 import type { CrashFinding } from '../types/events';
 
 const crash = useCrashStore();
 const notifications = useNotificationStore();
+const { relaunchWithJava } = useGameLaunch();
 
 const showExcerpt = ref(false);
+const relaunching = ref(false);
 
 const diagnosis = computed(() => crash.diagnosis);
 const findings = computed(() => diagnosis.value?.findings ?? []);
 const context = computed(() => diagnosis.value?.context ?? []);
 const excerpt = computed(() => diagnosis.value?.excerpt ?? []);
 
-const title = computed(() =>
-  diagnosis.value?.recognized ? '启动失败 · 已定位到可疑环节' : '启动失败 · 未识别出已知特征',
-);
+/** 只命中“Java 比声明新”这类推断时，别在标题上写“未识别”——下面明明有线索 */
+const title = computed(() => {
+  if (diagnosis.value?.recognized) return '启动失败 · 已定位到可疑环节';
+  const hasJavaHint = findings.value.some((finding) => finding.kind === 'javaVersion');
+  return hasJavaHint ? '启动失败 · 线索指向 Java 版本' : '启动失败 · 未识别出已知特征';
+});
 
 const rawLineCount = computed(() => diagnosis.value?.rawOutput.split('\n').length ?? 0);
 
@@ -25,7 +31,7 @@ function roleLabel(role: CrashFinding['role']) {
   return role === 'root' ? '根因' : '表象';
 }
 
-/** 表象压成中性灰，避免和真正的元凶抢注意力 */
+/** 表象压成中性灰，避免和真正的根因抢注意力 */
 function alertColor(finding: CrashFinding) {
   if (finding.role === 'symptom') return 'grey';
   return finding.confidence === 'high' ? 'error' : 'warning';
@@ -38,6 +44,20 @@ async function copyReport() {
     notifications.success('已复制诊断报告', '结论、证据行和原始输出都在里面，可直接贴给上游');
   } else {
     notifications.error('复制失败，请在弹窗里手动选中文字');
+  }
+}
+
+/** 诊断里点名了 Java，且本机确有一份能用的：直接用它重启，别让人自己去设置页翻 */
+async function relaunch() {
+  const current = diagnosis.value;
+  if (!current?.suggestedJava) return;
+
+  relaunching.value = true;
+  crash.close();
+  try {
+    await relaunchWithJava(current.instance, current.suggestedJava.path);
+  } finally {
+    relaunching.value = false;
   }
 }
 </script>
@@ -127,7 +147,17 @@ async function copyReport() {
       <v-card-actions class="pa-4">
         <v-btn variant="text" prepend-icon="mdi-content-copy" @click="copyReport">复制诊断报告</v-btn>
         <v-spacer />
-        <v-btn color="primary" @click="crash.close()">关闭</v-btn>
+        <v-btn variant="text" @click="crash.close()">关闭</v-btn>
+        <v-btn
+          v-if="diagnosis.suggestedJava"
+          color="primary"
+          variant="flat"
+          prepend-icon="mdi-restart"
+          :loading="relaunching"
+          @click="relaunch"
+        >
+          用 Java {{ diagnosis.suggestedJava.version }} 重新启动
+        </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

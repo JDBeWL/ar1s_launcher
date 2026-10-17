@@ -151,9 +151,6 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         auto_match_java: false,
         download_threads: 8,
         language: Some("zh_cn".to_string()),
-        isolate_saves: true,
-        isolate_resourcepacks: true,
-        isolate_logs: true,
         username: None,
         uuid: None,
         skin_url: None,
@@ -243,9 +240,6 @@ enum ConfigKey {
     VersionIsolation,
     DownloadThreads,
     Language,
-    IsolateSaves,
-    IsolateResourcepacks,
-    IsolateLogs,
     Username,
     Uuid,
     MaxMemory,
@@ -269,9 +263,6 @@ impl ConfigKey {
             "versionIsolation" => Some(Self::VersionIsolation),
             "downloadThreads" => Some(Self::DownloadThreads),
             "language" => Some(Self::Language),
-            "isolateSaves" => Some(Self::IsolateSaves),
-            "isolateResourcepacks" => Some(Self::IsolateResourcepacks),
-            "isolateLogs" => Some(Self::IsolateLogs),
             "username" => Some(Self::Username),
             "uuid" => Some(Self::Uuid),
             "maxMemory" => Some(Self::MaxMemory),
@@ -296,9 +287,6 @@ impl ConfigKey {
             Self::VersionIsolation => Some(config.version_isolation.to_string()),
             Self::DownloadThreads => Some(config.download_threads.to_string()),
             Self::Language => config.language.clone(),
-            Self::IsolateSaves => Some(config.isolate_saves.to_string()),
-            Self::IsolateResourcepacks => Some(config.isolate_resourcepacks.to_string()),
-            Self::IsolateLogs => Some(config.isolate_logs.to_string()),
             Self::Username => config.username.clone(),
             Self::Uuid => config.uuid.clone(),
             Self::MaxMemory => Some(config.max_memory.to_string()),
@@ -333,21 +321,6 @@ impl ConfigKey {
                     .map_err(|_| LauncherError::Custom("下载线程数设置值无效".to_string()))?
             }
             Self::Language => config.language = Some(value),
-            Self::IsolateSaves => {
-                config.isolate_saves = value
-                    .parse()
-                    .map_err(|_| LauncherError::Custom("存档隔离设置值无效".to_string()))?
-            }
-            Self::IsolateResourcepacks => {
-                config.isolate_resourcepacks = value
-                    .parse()
-                    .map_err(|_| LauncherError::Custom("资源包隔离设置值无效".to_string()))?
-            }
-            Self::IsolateLogs => {
-                config.isolate_logs = value
-                    .parse()
-                    .map_err(|_| LauncherError::Custom("日志隔离设置值无效".to_string()))?
-            }
             Self::Username => config.username = Some(value),
             Self::Uuid => config.uuid = Some(value),
             Self::MaxMemory => {
@@ -451,6 +424,14 @@ where
 
 pub fn get_game_dir() -> Result<String, LauncherError> {
     get_config_value(|config| config.game_dir.clone())
+}
+
+/// 启动、模组管理、整合包安装都靠它决定内容落到实例目录还是共享根目录；
+/// 配置读不出来时按默认（隔离）处理
+pub fn is_version_isolated() -> bool {
+    load_config()
+        .map(|config| config.version_isolation)
+        .unwrap_or(true)
 }
 
 pub fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {

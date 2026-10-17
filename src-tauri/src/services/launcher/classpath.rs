@@ -3,11 +3,10 @@
 //! 按 rules 挑库、优先 downloads.artifact.path 定位 jar，LaunchWrapper 主类下递归补依赖
 
 use crate::errors::LauncherError;
-use crate::utils::minecraft::{evaluate_rules, find_jar_version};
+use crate::utils::minecraft::{evaluate_rules, find_jar_version, maven_name_to_path};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 递归扫描目录，查找匹配模式的 JAR 文件
 pub fn find_library_jar(dir: &Path, patterns: &[&str]) -> Option<PathBuf> {
     let read_dir = fs::read_dir(dir).ok()?;
 
@@ -77,6 +76,53 @@ pub fn precheck_and_heal_library(
     }
 }
 
+enum Resolved {
+    Path(PathBuf),
+    Missing(String),
+    Skip,
+}
+
+/// 只取 common artifact：natives 的 classifier 由 natives.rs 解压，不该进 classpath。
+/// 带 natives 键的库照样有自己那份 common jar，跳过它会丢类（1.12.2 的 text2speech 就是这样）
+fn resolve_library(lib: &serde_json::Value, libraries_base_dir: &Path) -> Resolved {
+    if let Some(path) = lib["downloads"]
+        .get("artifact")
+        .and_then(|a| a.get("path"))
+        .and_then(|p| p.as_str())
+    {
+        let lib_path = libraries_base_dir.join(path);
+        return if lib_path.exists() {
+            Resolved::Path(lib_path)
+        } else {
+            Resolved::Missing(path.to_string())
+        };
+    }
+
+    let Some(name) = lib.get("name").and_then(|n| n.as_str()) else {
+        return Resolved::Skip;
+    };
+
+    // 有 downloads 却没 artifact，说明这条只贡献 classifier（jinput/twitch-platform），
+    // 按坐标硬拼一个 common jar 会把好端端的实例判成装坏了
+    if lib.get("downloads").is_some() {
+        return Resolved::Skip;
+    }
+
+    // 老格式（Forge 1.12 及更早的 install_profile）没有 downloads，只能按 maven 坐标拼；
+    // classifier 也认，和安装侧的 maven_name_to_path 保持一致
+    match maven_name_to_path(name, None, "jar") {
+        Some(rel) => {
+            let candidate = libraries_base_dir.join(&rel);
+            if candidate.exists() {
+                Resolved::Path(candidate)
+            } else {
+                Resolved::Missing(rel)
+            }
+        }
+        None => Resolved::Missing(format!("{}（坐标无法解析）", name)),
+    }
+}
+
 pub fn build_classpath(
     version_json: &serde_json::Value,
     libraries_base_dir: &Path,
@@ -85,22 +131,42 @@ pub fn build_classpath(
     emit: &impl Fn(&str, String),
 ) -> Result<Vec<PathBuf>, LauncherError> {
     let mut classpath = vec![];
+    let mut missing: Vec<String> = vec![];
 
     if let Some(libraries) = version_json["libraries"].as_array() {
         for lib in libraries {
-            // 跳过 Natives 库
-            if lib.get("natives").is_some() {
-                continue;
-            }
-
             if !evaluate_rules(lib.get("rules")) {
                 continue;
             }
 
-            if let Some(lib_path) = resolve_library_path(lib, libraries_base_dir, emit) {
-                classpath.push(lib_path);
+            match resolve_library(lib, libraries_base_dir) {
+                Resolved::Path(path) => {
+                    emit(
+                        "log-debug",
+                        format!("添加到Classpath的库: {}", path.display()),
+                    );
+                    classpath.push(path);
+                }
+                Resolved::Missing(rel) => missing.push(rel),
+                Resolved::Skip => {}
             }
         }
+    }
+
+    // 缺库必须当场说：静默丢进 classpath 只会在很久之后变成一个 NoClassDefFoundError
+    if !missing.is_empty() {
+        let list = missing
+            .iter()
+            .map(|m| format!("  · {}", m))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let msg = format!(
+            "libraries 里缺 {} 个文件，这个实例装得不完整：\n{}\n用「修复实例」重新补齐后再启动。",
+            missing.len(),
+            list
+        );
+        emit("log-error", msg.clone());
+        return Err(LauncherError::Custom(msg));
     }
 
     let versions_dir = version_dir
@@ -141,76 +207,6 @@ pub fn build_classpath(
 
     classpath.push(main_game_jar_path);
     Ok(classpath)
-}
-
-fn resolve_library_path(
-    lib: &serde_json::Value,
-    libraries_base_dir: &Path,
-    emit: &impl Fn(&str, String),
-) -> Option<PathBuf> {
-    if let Some(path) = lib["downloads"]
-        .get("artifact")
-        .and_then(|a| a.get("path"))
-        .and_then(|p| p.as_str())
-    {
-        let lib_path = libraries_base_dir.join(path);
-        emit(
-            "log-debug",
-            format!("添加到Classpath的库: {}", lib_path.display()),
-        );
-
-        if !lib_path.exists() {
-            emit(
-                "log-error",
-                format!("Classpath中的库文件不存在: {}", lib_path.display()),
-            );
-            return None;
-        }
-        return Some(lib_path);
-    }
-
-    // 回退：根据 maven 坐标构建本地路径
-    let name = lib.get("name").and_then(|n| n.as_str())?;
-    let parts: Vec<&str> = name.split(':').collect();
-
-    if parts.len() < 3 {
-        emit(
-            "log-error",
-            format!(
-                "库条目缺少 downloads.artifact.path，且 name 非法: {:?}",
-                lib
-            ),
-        );
-        return None;
-    }
-
-    let group = parts[0].replace('.', "/");
-    let artifact = parts[1];
-    let version = parts[2];
-    let candidate = libraries_base_dir
-        .join(&group)
-        .join(artifact)
-        .join(version)
-        .join(format!("{}-{}.jar", artifact, version));
-
-    emit(
-        "log-debug",
-        format!("尝试回退解析库路径: {}", candidate.display()),
-    );
-
-    if candidate.exists() {
-        Some(candidate)
-    } else {
-        emit(
-            "log-error",
-            format!(
-                "库文件缺失（maven 回退也未找到）: name={}，期望路径: {}",
-                name,
-                candidate.display()
-            ),
-        );
-        None
-    }
 }
 
 pub fn precheck_launchwrapper_libraries(
@@ -269,4 +265,138 @@ pub fn precheck_launchwrapper_libraries(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_classpath;
+    use std::fs;
+
+    /// 造一个最小可启动的目录树：versions/<v>/<v>.jar 必须存在
+    fn fixture(json: serde_json::Value) -> (tempfile::TempDir, serde_json::Value) {
+        let root = tempfile::TempDir::new().unwrap();
+        let version_dir = root.path().join("versions").join("1.12.2");
+        fs::create_dir_all(&version_dir).unwrap();
+        fs::write(version_dir.join("1.12.2.jar"), b"jar").unwrap();
+        fs::create_dir_all(root.path().join("libraries")).unwrap();
+        (root, json)
+    }
+
+    fn touch(root: &std::path::Path, rel: &str) {
+        let path = root.join("libraries").join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"x").unwrap();
+    }
+
+    fn build(
+        root: &std::path::Path,
+        json: &serde_json::Value,
+    ) -> Result<Vec<std::path::PathBuf>, crate::errors::LauncherError> {
+        build_classpath(
+            json,
+            &root.join("libraries"),
+            &root.join("versions").join("1.12.2"),
+            "1.12.2",
+            &|_: &str, _: String| {},
+        )
+    }
+
+    #[test]
+    fn test_natives_library_keeps_its_common_jar_on_classpath() {
+        let (dir, json) = fixture(serde_json::json!({
+            "id": "1.12.2",
+            "libraries": [{
+                "name": "com.mojang:text2speech:1.10.3",
+                "natives": { "windows": "natives-windows" },
+                "downloads": { "artifact": { "path": "com/mojang/text2speech/1.10.3/text2speech-1.10.3.jar" } }
+            }]
+        }));
+        touch(
+            dir.path(),
+            "com/mojang/text2speech/1.10.3/text2speech-1.10.3.jar",
+        );
+
+        let cp = build(dir.path(), &json).unwrap();
+
+        assert!(
+            cp.iter()
+                .any(|p| p.to_string_lossy().contains("text2speech-1.10.3.jar")),
+            "带 natives 的库，它的 common jar 也要进 classpath：{:?}",
+            cp
+        );
+    }
+
+    #[test]
+    fn test_maven_fallback_honours_classifier() {
+        let (dir, json) = fixture(serde_json::json!({
+            "id": "1.12.2",
+            "libraries": [{ "name": "net.minecraftforge:mergetool:1.1.5:api" }]
+        }));
+        touch(
+            dir.path(),
+            "net/minecraftforge/mergetool/1.1.5/mergetool-1.1.5-api.jar",
+        );
+
+        let cp = build(dir.path(), &json).unwrap();
+
+        assert!(
+            cp.iter()
+                .any(|p| p.to_string_lossy().ends_with("mergetool-1.1.5-api.jar")),
+            "maven 回退要认 classifier，和安装侧一致：{:?}",
+            cp
+        );
+    }
+
+    /// 只有 classifier 的条目（jinput / twitch-platform）上游没有 common jar
+    #[test]
+    fn test_classifier_only_entry_is_skipped_not_demanded() {
+        let (dir, json) = fixture(serde_json::json!({
+            "id": "1.12.2",
+            "libraries": [{
+                "name": "net.java.jinput:jinput-platform:2.0.5",
+                "natives": { "windows": "natives-windows" },
+                "downloads": { "classifiers": {
+                    "natives-windows": { "path": "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-windows.jar" }
+                } }
+            }]
+        }));
+        touch(
+            dir.path(),
+            "net/java/jinput/jinput-platform/2.0.5/jinput-platform-2.0.5-natives-windows.jar",
+        );
+
+        let cp = build(dir.path(), &json).unwrap();
+
+        assert!(
+            !cp.iter()
+                .any(|p| p.to_string_lossy().ends_with("jinput-platform-2.0.5.jar")),
+            "不该凭空要求一个不存在的 common jar：{:?}",
+            cp
+        );
+        assert!(
+            !cp.iter()
+                .any(|p| p.to_string_lossy().contains("natives-windows")),
+            "classifier jar 由 natives.rs 解压，不进 classpath"
+        );
+    }
+
+    #[test]
+    fn test_missing_library_fails_with_the_expected_path() {
+        let (dir, json) = fixture(serde_json::json!({
+            "id": "1.12.2",
+            "libraries": [{
+                "name": "org.example:gone:1.0",
+                "downloads": { "artifact": { "path": "org/example/gone/1.0/gone-1.0.jar" } }
+            }]
+        }));
+
+        let err = build(dir.path(), &json).expect_err("缺库不该静默丢进 classpath");
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains("org/example/gone/1.0/gone-1.0.jar"),
+            "要说清缺的是哪个文件: {}",
+            msg
+        );
+    }
 }

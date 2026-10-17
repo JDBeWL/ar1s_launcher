@@ -158,6 +158,21 @@ pub async fn create_instance(
             return Err(e);
         }
 
+        // 装完就得能直接启动：Fabric/Quilt 只写了一份 profile，库文件只能在这里补
+        // （Forge/NeoForge 的安装器已经下过自己那批，这里按“文件已在位”跳过）
+        send_progress(65, "补全加载器文件...", true);
+        match fs::read_to_string(&new_json_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        {
+            Some(json) => {
+                if let Err(e) = download::ensure_declared_libraries(&json, window).await {
+                    warn!("加载器库文件没补全，首次启动前可能需要「修复实例」: {}", e);
+                }
+            }
+            None => warn!("读不到实例 JSON，跳过加载器库补全"),
+        }
+
         if let LoaderType::Forge {
             mc_version,
             loader_version,
@@ -211,7 +226,6 @@ pub async fn create_instance(
 
     send_progress(100, "实例创建完成！", false);
 
-    // 通知前端刷新版本列表
     if let Ok(game_dir_str) = config::get_game_dir() {
         let _ = window.emit("game-dir-changed", &game_dir_str);
     }
@@ -221,17 +235,18 @@ pub async fn create_instance(
 
 pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
     let (_, versions_dir) = get_dirs()?;
+    // 关闭隔离时所有实例共用根目录的 mods，计数要按共享目录来
+    let isolated = config::is_version_isolated();
 
     // 目录遍历加 JSON 解析耗时，放阻塞线程池执行
-    let instances = tokio::task::spawn_blocking(move || get_instances_sync(&versions_dir))
-        .await
-        .map_err(|e| LauncherError::Custom(format!("获取实例列表失败: {}", e)))??;
+    let instances =
+        tokio::task::spawn_blocking(move || get_instances_sync(&versions_dir, isolated))
+            .await
+            .map_err(|e| LauncherError::Custom(format!("获取实例列表失败: {}", e)))??;
 
     Ok(instances)
 }
 
-/// 从版本 JSON 的 arguments 中提取 FML 参数
-///
 /// Forge/NeoForge 把加载器信息写在 arguments.game 的 `--fml.*` 参数里，
 /// 旧版 JSON 则在 minecraftArguments 字符串中
 fn parse_fml_arguments(json_value: &Value) -> (Option<String>, Option<String>, Option<String>) {
@@ -320,8 +335,6 @@ fn parse_fml_arguments(json_value: &Value) -> (Option<String>, Option<String>, O
     (None, None, None)
 }
 
-/// 从版本 JSON 的 patches 数组中提取加载器版本和游戏版本
-///
 /// Fabric/Quilt 的版本 JSON 用 patches 分别记录 game 与加载器条目
 fn parse_patches(json_value: &Value) -> (Option<String>, Option<String>, Option<String>) {
     let patches = match json_value["patches"].as_array() {
@@ -371,8 +384,6 @@ fn parse_patches(json_value: &Value) -> (Option<String>, Option<String>, Option<
     (None, None, None)
 }
 
-/// 从版本 JSON 的 libraries 数组中提取加载器类型和版本
-///
 /// 按 Maven 坐标的 group/artifact 识别各加载器
 fn parse_loader_from_libraries(json_value: &Value) -> (Option<String>, Option<String>) {
     let libs = match json_value["libraries"].as_array() {
@@ -472,12 +483,21 @@ fn find_real_minecraft_version(
     }
 }
 
-fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, LauncherError> {
+fn get_instances_sync(
+    versions_dir: &Path,
+    isolated: bool,
+) -> Result<Vec<InstanceInfo>, LauncherError> {
     let mut instances = Vec::new();
 
     if !versions_dir.exists() {
         return Ok(instances);
     }
+
+    // 关闭隔离时内容是共享的，各实例的模组数都来自这里
+    let shared_root = versions_dir
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| versions_dir.to_path_buf());
 
     if let Ok(entries) = fs::read_dir(versions_dir) {
         for entry in entries.flatten() {
@@ -498,7 +518,8 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
                             .and_then(|v| v["id"].as_str().map(String::from))
                             .unwrap_or_else(|| name.clone());
 
-                        let mod_count = count_mods(&path);
+                        let content_dir = if isolated { &path } else { &shared_root };
+                        let mod_count = count_mods(content_dir);
 
                         let main_class = json_value
                             .as_ref()
@@ -655,8 +676,9 @@ fn get_instances_sync(versions_dir: &Path) -> Result<Vec<InstanceInfo>, Launcher
     Ok(instances)
 }
 
-fn count_mods(instance_path: &Path) -> Option<u32> {
-    let mods_dir = instance_path.join("mods");
+/// 内容目录下的模组数量（隔离时是实例目录，否则是共享根目录）
+fn count_mods(content_dir: &Path) -> Option<u32> {
+    let mods_dir = content_dir.join("mods");
     if !mods_dir.is_dir() {
         return None;
     }
@@ -690,12 +712,12 @@ fn resolve_mod_path(
     instance_name: &str,
     file_name: &str,
 ) -> Result<(PathBuf, PathBuf), LauncherError> {
-    let (_, versions_dir) = get_dirs()?;
-    let mods_dir = versions_dir.join(instance_name).join("mods");
+    let (game_dir, _) = get_dirs()?;
+    let mods_dir = launcher::isolation::content_root_for(&game_dir, instance_name).join("mods");
     if !mods_dir.is_dir() {
         return Err(LauncherError::Custom(format!(
-            "实例 '{}' 没有 mods 目录",
-            instance_name
+            "没有找到 mods 目录: {}",
+            mods_dir.display()
         )));
     }
 
@@ -801,8 +823,8 @@ fn parse_mods_toml_name(text: &str) -> Option<String> {
 pub fn get_instance_mods(instance_name: String) -> Result<Vec<ModInfo>, LauncherError> {
     validate_instance_name_or_error(&instance_name)?;
 
-    let (_, versions_dir) = get_dirs()?;
-    let mods_dir = versions_dir.join(&instance_name).join("mods");
+    let (game_dir, _) = get_dirs()?;
+    let mods_dir = launcher::isolation::content_root_for(&game_dir, &instance_name).join("mods");
     if !mods_dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -1350,7 +1372,37 @@ fn collect_download_jobs(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_mods_toml_name;
+    use super::{get_instances_sync, parse_mods_toml_name};
+    use std::fs;
+
+    /// 关闭隔离后，实例卡片上的模组数必须来自共享根目录，
+    /// 而不是实例目录里那些根本不会被加载的旧文件
+    #[test]
+    fn test_shared_mode_counts_mods_from_game_root() {
+        let game = tempfile::TempDir::new().unwrap();
+        let versions = game.path().join("versions");
+        let instance = versions.join("1.20.1-Forge");
+        fs::create_dir_all(&instance).unwrap();
+        fs::write(
+            instance.join("1.20.1-Forge.json"),
+            r#"{"id":"1.20.1-Forge","inheritsFrom":"1.20.1","mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher"}"#,
+        )
+        .unwrap();
+
+        // 实例目录里残留一个模组，共享目录里有两个
+        fs::create_dir_all(instance.join("mods")).unwrap();
+        fs::write(instance.join("mods/stale.jar"), b"x").unwrap();
+        fs::create_dir_all(game.path().join("mods")).unwrap();
+        for name in ["a.jar", "b.jar"] {
+            fs::write(game.path().join("mods").join(name), b"x").unwrap();
+        }
+
+        let isolated = get_instances_sync(&versions, true).unwrap();
+        assert_eq!(isolated[0].mod_count, Some(1), "隔离时应看实例目录");
+
+        let shared = get_instances_sync(&versions, false).unwrap();
+        assert_eq!(shared[0].mod_count, Some(2), "关闭隔离时应看根目录");
+    }
 
     #[test]
     fn test_mods_toml_name_survives_table_headers() {

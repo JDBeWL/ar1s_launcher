@@ -7,22 +7,15 @@ import { useSettingsStore } from '../../stores/settings';
 import { configApi } from '../../services';
 import { logError } from '../../utils/logger';
 import { getThemePalette } from '../../utils/storage';
+import ThemePalettePicker from './ThemePalettePicker.vue';
 
 const settingsStore = useSettingsStore();
 const gameDir = ref('');
 const versionIsolation = ref(true);
 const downloadThreads = ref(32);
-const isolateSaves = ref(true);
-const isolateResourcepacks = ref(true);
-const isolateLogs = ref(true);
 const isInitialized = ref(false);
 const appVersion = __APP_VERSION__;
 const themePalette = ref(getThemePalette());
-const themePalettes = [
-  { title: 'MD3 经典紫', value: 'indigo' },
-  { title: 'MD3 清新青', value: 'emerald' },
-  { title: 'MD3 玫瑰', value: 'rose' },
-];
 
 const gameLanguage = ref('zh_cn');
 const gameLanguages = [
@@ -88,21 +81,6 @@ async function loadVersionIsolation() {
     if (isolation !== null) {
       versionIsolation.value = isolation === 'true';
     }
-
-    const saves = await configApi.loadConfigKey('isolateSaves');
-    if (saves !== null) {
-      isolateSaves.value = saves === 'true';
-    }
-
-    const resourcepacks = await configApi.loadConfigKey('isolateResourcepacks');
-    if (resourcepacks !== null) {
-      isolateResourcepacks.value = resourcepacks === 'true';
-    }
-
-    const logs = await configApi.loadConfigKey('isolateLogs');
-    if (logs !== null) {
-      isolateLogs.value = logs === 'true';
-    }
   } catch (err) {
     logError('Failed to load isolation settings', err, 'GeneralSettings');
   }
@@ -120,18 +98,6 @@ async function saveIsolationSetting(key: string, value: boolean) {
 watch(versionIsolation, (v) => {
   if (!isInitialized.value) return;
   saveIsolationSetting('versionIsolation', v);
-});
-watch(isolateSaves, (v) => {
-  if (!isInitialized.value) return;
-  saveIsolationSetting('isolateSaves', v);
-});
-watch(isolateResourcepacks, (v) => {
-  if (!isInitialized.value) return;
-  saveIsolationSetting('isolateResourcepacks', v);
-});
-watch(isolateLogs, (v) => {
-  if (!isInitialized.value) return;
-  saveIsolationSetting('isolateLogs', v);
 });
 watch(gameLanguage, async (v) => {
   if (!isInitialized.value) return;
@@ -218,24 +184,13 @@ onUnmounted(() => {
             color="primary"
           />
         </div>
-        <p class="text-body-medium text-on-surface-variant mb-0">为每个游戏版本创建独立的文件夹，避免配置冲突</p>
+        <p class="text-body-medium text-on-surface-variant mb-0">
+          开启后每个版本使用独立目录，存档、模组、配置互不影响；关闭后所有版本共用根目录的 mods、存档与配置。
+        </p>
 
-        <v-expand-transition>
-          <div v-if="versionIsolation" class="mt-4 pt-4 isolation-options">
-            <div class="text-body-medium text-on-surface-variant mb-3">选择需要隔离的内容：</div>
-            <div class="d-flex flex-wrap ga-6 isolation-checks">
-              <v-checkbox v-model="isolateSaves" label="存档" density="compact" hide-details color="primary" />
-              <v-checkbox
-                v-model="isolateResourcepacks"
-                label="资源包"
-                density="compact"
-                hide-details
-                color="primary"
-              />
-              <v-checkbox v-model="isolateLogs" label="日志" density="compact" hide-details color="primary" />
-            </div>
-          </div>
-        </v-expand-transition>
+        <v-alert v-if="!versionIsolation" type="warning" variant="tonal" density="compact" class="mt-3 text-body-small">
+          关闭隔离后游戏读取的是根目录，启动器会把模组装到根目录的 mods；实例目录里已有的模组不会被加载。
+        </v-alert>
       </v-card-text>
     </v-card>
 
@@ -321,17 +276,9 @@ onUnmounted(() => {
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-palette-outline</v-icon>
           <span class="text-title-medium">外观</span>
         </div>
-        <v-select
-          density="comfortable"
-          v-model="themePalette"
-          :items="themePalettes"
-          item-title="title"
-          item-value="value"
-          label="主题色方案（MD3）"
-          hide-details
-        />
-        <div class="text-body-small text-on-surface-variant mt-2">
-          主题色方案会在浅色/深色模式之间保持一致的 MD3 色调风格
+        <ThemePalettePicker v-model="themePalette" />
+        <div class="text-body-small text-on-surface-variant mt-3">
+          配色由种子色推导，浅色与深色模式共用同一套色调关系
         </div>
       </v-card-text>
     </v-card>
@@ -354,8 +301,4 @@ onUnmounted(() => {
   </div>
 </template>
 
-<style scoped>
-.isolation-options {
-  border-top: 1px solid rgb(var(--v-theme-outline-variant));
-}
-</style>
+<style scoped></style>

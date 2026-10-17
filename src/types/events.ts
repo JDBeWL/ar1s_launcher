@@ -231,6 +231,10 @@ export interface JavaCompatibilityResult {
   currentJavaPath: string | null;
   recommendedJavaPath: string | null;
   recommendedJavaVersion: number | null;
+  /** 推荐项是否正好满足判据（被模组抬高下限后仍算满足） */
+  recommendedJavaOptimal: boolean;
+  /** 只能退而求其次时的说明，例如本机缺声明版本、或模组把下限抬高了 */
+  recommendedJavaWarning: string | null;
   autoMatchEnabled: boolean;
 }
 
@@ -242,9 +246,6 @@ export interface GameConfig {
   auto_match_java: boolean;
   download_threads: number;
   language: string | null;
-  isolate_saves: boolean;
-  isolate_resourcepacks: boolean;
-  isolate_logs: boolean;
   username: string | null;
   uuid: string | null;
   skin_url: string | null;
@@ -263,8 +264,10 @@ export type CrashConfidence = 'high' | 'medium';
 
 export type CrashFindingKind =
   | 'mixin'
+  | 'classReaderTooOld'
   | 'javaVersion'
   | 'classVersion'
+  | 'mainClass'
   | 'missingClass'
   | 'memory'
   | 'natives'
@@ -279,7 +282,7 @@ export interface CrashEvidence {
 
 export interface CrashFinding {
   kind: CrashFindingKind;
-  /** root = 元凶，symptom = 被根因带出来的表象 */
+  /** root = 根因，symptom = 被根因带出来的表象 */
   role: 'root' | 'symptom';
   conclusion: string;
   confidence: CrashConfidence;
@@ -298,6 +301,11 @@ export interface CrashContextLine {
   value: string;
 }
 
+export interface CrashSuggestedJava {
+  path: string;
+  version: number;
+}
+
 export interface CrashDiagnosis {
   exitCode: number | null;
   headline: string;
@@ -308,4 +316,8 @@ export interface CrashDiagnosis {
   rawOutput: string;
   /** 复制给上游用的纯文本，与弹窗同源 */
   reportText: string;
+  /** 实例 id，供「换 Java 重试」直接重启 */
+  instance: string;
+  /** 判据允许、且不是本次用过的那份 Java */
+  suggestedJava: CrashSuggestedJava | null;
 }

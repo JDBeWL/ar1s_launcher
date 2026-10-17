@@ -156,12 +156,11 @@ fn spawn_monitor_thread(
 
     let (log_tx, log_rx) = mpsc::sync_channel::<LogItem>(LOG_QUEUE_CAPACITY);
 
-    // 读取线程只入队，不做逐行 IPC
     let tx_stdout: SyncSender<LogItem> = log_tx.clone();
-    let is_running_stdout = is_running.clone();
     let capture_stdout = captured.clone();
     std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
+        // 读到 EOF 为止：进程秒退时管道里还压着最后几行报错，提前 break 会让崩溃弹窗没有输出
         for line in reader.lines() {
             match line {
                 Ok(l) => {
@@ -170,14 +169,10 @@ fn spawn_monitor_thread(
                 }
                 Err(_) => break,
             }
-            if !is_running_stdout.load(Ordering::SeqCst) {
-                break;
-            }
         }
     });
 
     let tx_stderr: SyncSender<LogItem> = log_tx;
-    let is_running_stderr = is_running.clone();
     let capture_stderr = captured.clone();
     std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
@@ -188,9 +183,6 @@ fn spawn_monitor_thread(
                     let _ = tx_stderr.try_send((LogStream::Stderr, l));
                 }
                 Err(_) => break,
-            }
-            if !is_running_stderr.load(Ordering::SeqCst) {
-                break;
             }
         }
     });
@@ -419,7 +411,9 @@ fn handle_process_exit(
         let mut ctx = launch_ctx.clone();
         ctx.runtime_secs = Some(runtime_secs);
 
-        let diagnosis = crash_diagnosis::diagnose(exit_code, output_lines, &ctx, hs_err.as_deref());
+        let mut diagnosis =
+            crash_diagnosis::diagnose(exit_code, output_lines, &ctx, hs_err.as_deref());
+        attach_suggested_java(&mut diagnosis, &ctx);
         let _ = window.emit("minecraft-crash", &diagnosis);
     }
 
@@ -427,6 +421,39 @@ fn handle_process_exit(
         "minecraft-exited",
         format!("游戏已退出，状态码: {:?}", exit_code),
     );
+}
+
+/// 诊断点到 Java 时，顺手挑一份判据允许、且不是本次用的 Java。
+/// 弹窗靠它给出「换 Java 重试」，而不是只让用户自己去设置页翻
+fn attach_suggested_java(diagnosis: &mut crash_diagnosis::CrashDiagnosis, ctx: &LaunchContext) {
+    let java_related = diagnosis.findings.iter().any(|finding| {
+        matches!(
+            finding.kind,
+            crash_diagnosis::FindingKind::JavaVersion
+                | crash_diagnosis::FindingKind::ClassReaderTooOld
+                | crash_diagnosis::FindingKind::ClassVersion
+                | crash_diagnosis::FindingKind::SecurityManager
+        )
+    });
+    if !java_related {
+        return;
+    }
+
+    let Ok(config) = crate::services::config::load_config() else {
+        return;
+    };
+    let game_dir = super::java::resolve_game_dir(&config.game_dir);
+    let profile = super::java_requirement::analyze(&ctx.version_id, &game_dir);
+
+    let mut candidates = super::java::collect_candidates(&config);
+    candidates.retain(|candidate| candidate.path != ctx.used_java_path);
+
+    if let Some(matched) = super::java::choose_java(&profile.requirement, &candidates) {
+        diagnosis.suggested_java = Some(crash_diagnosis::SuggestedJava {
+            path: matched.path,
+            version: matched.version,
+        });
+    }
 }
 
 #[cfg(test)]

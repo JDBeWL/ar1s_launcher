@@ -1,8 +1,9 @@
 //! Java 需求判定模块
 //!
-//! 下限取 Mojang 版本 JSON 声明的 javaVersion，mods 目录实测抬高下限；
+//! 下限取 Mojang 版本 JSON 声明的 javaVersion（读不到时按 MC 版本号推断），mods 目录实测抬高下限；
 //! 只有 LaunchWrapper 时代的老 Forge 另设硬上限（等于声明值），其余加载器不设上限
 
+use super::java::JavaCandidate;
 use serde_json::Value;
 use std::fs;
 use std::io::Read;
@@ -13,6 +14,9 @@ pub const FALLBACK_JAVA: u32 = 8;
 
 /// 允许向下搜索 inheritsFrom 的层数，实例 → 加载器 → 原版
 const INHERITS_DEPTH: u32 = 4;
+
+/// 一个 jar 里取样多少个 class 就够判断它的编译目标；整包全扫在大 mod 上是白费
+const CLASS_SAMPLE_LIMIT: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoaderKind {
@@ -38,9 +42,24 @@ impl LoaderKind {
     }
 
     /// 上限只给旧版 Forge：它的声明值就是实际能用的最高 JDK，不是最低要求。
-    /// modlauncher 之后的 Forge（1.13+）能往上走（1.16.5 支持 Java 8 与 11），NeoForge 更没有历史包袱。
+    /// modlauncher 之后的 Forge（1.13+）能往上走，NeoForge 没有历史包袱；具体上限见 `loader_ceiling`
     fn caps_at_declared(self) -> bool {
         matches!(self, LoaderKind::ForgeLegacy)
+    }
+}
+
+/// 加载器自身的兼容上限：高于这条线确定起不来，不是「不推荐」。
+/// 1.13~1.15 的 modlauncher 仍依赖被 Java 9+ 模块系统切断的反射，实测只能在 8 上跑；
+/// 1.16 的官方范围是 8 与 11；17 以后没有「确定不兼容」的组合，不设上限
+fn loader_ceiling(loader: LoaderKind, declared: u32, mc: Option<(u32, u32)>) -> Option<u32> {
+    if loader.caps_at_declared() {
+        return Some(declared);
+    }
+
+    match (loader, mc) {
+        (LoaderKind::Forge, Some((1, 13..=15))) => Some(8),
+        (LoaderKind::Forge, Some((1, 16))) => Some(11),
+        _ => None,
     }
 }
 
@@ -90,6 +109,32 @@ pub fn class_file_to_java(major: u32) -> Option<u32> {
     }
 }
 
+/// 版本 JSON 读不到 javaVersion 时（整合包自带 JSON、父版本没装、手写实例）按 MC 版本号推断，
+/// 兜底成 8 会让 1.21 实例选到 Java 8 然后在启动瞬间崩
+pub fn infer_java_for_version(version_id: &str) -> Option<u32> {
+    let base = version_id.split('-').next()?.trim();
+    let mut parts = base.split('.');
+
+    if parts.next()?.parse::<u32>().ok()? != 1 {
+        return None;
+    }
+
+    let minor: u32 = parts.next()?.parse().ok()?;
+    let patch: u32 = parts
+        .next()
+        .and_then(|p| p.parse::<u32>().ok())
+        .unwrap_or(0);
+
+    Some(match minor {
+        0..=16 => 8,
+        17..=19 => 17,
+        // 1.20.5 起 Mojang 把声明改成了 21
+        20 if patch >= 5 => 21,
+        20 => 17,
+        _ => 21,
+    })
+}
+
 pub fn declared_major(json: &Value) -> Option<u32> {
     json.get("javaVersion")?
         .get("majorVersion")?
@@ -131,11 +176,12 @@ pub fn detect_loader(json: &Value, version_id: &str) -> LoaderKind {
     if has_library(json, "net.minecraftforge") {
         return forge_kind(json);
     }
-    if has_library(json, "net.fabricmc") {
-        return LoaderKind::Fabric;
-    }
+    // Quilt 自己依赖一堆 net.fabricmc 的库，必须先认 quilt-loader，否则会被当成 Fabric
     if has_library(json, "org.quiltmc") {
         return LoaderKind::Quilt;
+    }
+    if has_library(json, "net.fabricmc") {
+        return LoaderKind::Fabric;
     }
 
     let id = version_id.to_lowercase();
@@ -152,19 +198,33 @@ pub fn detect_loader(json: &Value, version_id: &str) -> LoaderKind {
     }
 }
 
-/// 读 jar 里第一个 .class 的主版本号
+/// 读 jar 里 class 的最高主版本号（取样上限内）
+///
+/// 只看第一个 entry 会被 `module-info.class`、签名文件或字母序靠前的低版本类带偏；
+/// `META-INF/versions/` 是多版本 jar 的高版本实现，运行时不一定加载，跳过才不会误判
 pub fn jar_java_version(jar: &Path) -> Option<u32> {
     let file = fs::File::open(jar).ok()?;
     let mut archive = zip::ZipArchive::new(file).ok()?;
 
+    let mut highest: Option<u32> = None;
+    let mut sampled = 0usize;
+
     for i in 0..archive.len() {
+        if sampled >= CLASS_SAMPLE_LIMIT {
+            break;
+        }
+
         let Ok(mut entry) = archive.by_index(i) else {
             continue;
         };
         let Ok(name) = entry.name() else { continue };
-        if !name.ends_with(".class") {
+        if !name.ends_with(".class")
+            || name.starts_with("META-INF/")
+            || name.ends_with("module-info.class")
+        {
             continue;
         }
+        sampled += 1;
 
         let mut head = [0u8; 8];
         if entry.read_exact(&mut head).is_err() {
@@ -174,10 +234,12 @@ pub fn jar_java_version(jar: &Path) -> Option<u32> {
             continue;
         }
 
-        return class_file_to_java(u16::from_be_bytes([head[6], head[7]]) as u32);
+        if let Some(java) = class_file_to_java(u16::from_be_bytes([head[6], head[7]]) as u32) {
+            highest = Some(highest.map_or(java, |best| best.max(java)));
+        }
     }
 
-    None
+    highest
 }
 
 /// 禁用中的 *.jar.disabled 不算
@@ -210,27 +272,56 @@ pub fn build_requirement(
     loader: LoaderKind,
     mods: &[ModProbe],
 ) -> JavaRequirement {
-    let target = declared.unwrap_or(FALLBACK_JAVA);
+    build_requirement_with_fallback(declared, None, loader, None, mods)
+}
+
+/// `inferred` 是按 MC 版本号推出来的目标版本，只在 JSON 没有声明时生效；
+/// `mc` 用来判断这一代加载器自己还能不能吃到新 JDK
+pub fn build_requirement_with_fallback(
+    declared: Option<u32>,
+    inferred: Option<u32>,
+    loader: LoaderKind,
+    mc: Option<(u32, u32)>,
+    mods: &[ModProbe],
+) -> JavaRequirement {
+    let target = declared.or(inferred).unwrap_or(FALLBACK_JAVA);
     let mut reasons = Vec::new();
 
-    match declared {
-        Some(v) => reasons.push(format!("Mojang 声明 javaVersion.majorVersion = {}", v)),
-        None => reasons.push(format!(
+    match (declared, inferred) {
+        (Some(v), _) => reasons.push(format!("Mojang 声明 javaVersion.majorVersion = {}", v)),
+        (None, Some(v)) => reasons.push(format!(
+            "版本 JSON 没有 javaVersion 声明，按 MC 版本号推定为 Java {}",
+            v
+        )),
+        (None, None) => reasons.push(format!(
             "版本 JSON 没有 javaVersion 声明，按 Java {} 兜底",
             FALLBACK_JAVA
         )),
     }
 
-    let hard_max = if loader.caps_at_declared() {
-        reasons.push(format!(
-            "{} 实例不高于声明的 Java {} 运行：旧类加载与反射依赖被 Java 9+ 的模块系统切断",
-            loader.label(),
-            target
-        ));
-        Some(target)
-    } else {
-        reasons.push(format!("{} 实例不设上限，较新的 JDK 可用", loader.label()));
-        None
+    let hard_max = match loader_ceiling(loader, target, mc) {
+        Some(max) if loader.caps_at_declared() => {
+            reasons.push(format!(
+                "{} 实例不高于声明的 Java {} 运行：旧类加载与反射依赖被 Java 9+ 的模块系统切断",
+                loader.label(),
+                target
+            ));
+            Some(max)
+        }
+        Some(max) => {
+            reasons.push(format!(
+                "{} 在 MC {} 上只能用到 Java {}：再新的 JDK 会切断它依赖的反射",
+                loader.label(),
+                mc.map(|(a, b)| format!("{}.{}", a, b))
+                    .unwrap_or_else(|| "该版本".to_string()),
+                max
+            ));
+            Some(max)
+        }
+        None => {
+            reasons.push(format!("{} 实例不设上限，较新的 JDK 可用", loader.label()));
+            None
+        }
     };
 
     let mut min = target;
@@ -265,28 +356,34 @@ fn read_version_json(game_dir: &Path, version_id: &str) -> Option<Value> {
     serde_json::from_str(&content).ok()
 }
 
-/// 沿 inheritsFrom 找第一个带 javaVersion 声明的 JSON
-fn resolve_declared(game_dir: &Path, version_id: &str) -> Option<(u32, String)> {
+/// 沿 inheritsFrom 走到底：带回第一个 javaVersion 声明，以及链尾那个版本 id（推断目标版本用）
+fn resolve_declaration(game_dir: &Path, version_id: &str) -> (Option<u32>, String) {
     let mut current = version_id.to_string();
+    let mut declared = None;
 
     for _ in 0..=INHERITS_DEPTH {
-        let json = read_version_json(game_dir, &current)?;
-        if let Some(major) = declared_major(&json) {
-            return Some((major, current));
+        let Some(json) = read_version_json(game_dir, &current) else {
+            break;
+        };
+
+        if declared.is_none() {
+            declared = declared_major(&json);
         }
 
-        let parent = json["inheritsFrom"].as_str()?;
-        current = parent.to_string();
+        match json["inheritsFrom"].as_str() {
+            Some(parent) => current = parent.to_string(),
+            None => break,
+        }
     }
 
-    None
+    (declared, current)
 }
 
-/// 开了版本隔离时 mods 在实例目录里，否则落在游戏根目录
-pub fn mods_dir(game_dir: &Path, version_id: &str) -> PathBuf {
-    let isolated = game_dir.join("versions").join(version_id).join("mods");
-    if isolated.is_dir() {
-        isolated
+/// 模组目录跟着版本隔离走：开启时在实例目录，关闭时是共享的根目录。
+/// 判错会把共享目录的模组算进这个实例，Java 下限与模组清单因此指向没被加载的文件
+pub fn mods_dir(game_dir: &Path, version_id: &str, isolated: bool) -> PathBuf {
+    if isolated {
+        game_dir.join("versions").join(version_id).join("mods")
     } else {
         game_dir.join("mods")
     }
@@ -314,12 +411,19 @@ pub fn analyze(version_id: &str, game_dir: &Path) -> InstanceProfile {
         .map(|json| detect_loader(json, version_id))
         .unwrap_or(LoaderKind::Vanilla);
 
-    let declared = resolve_declared(game_dir, version_id).map(|pair| pair.0);
+    let (declared, base_version_id) = resolve_declaration(game_dir, version_id);
+    let inferred = infer_java_for_version(&base_version_id);
+    // 兼容上限按这一代加载器算：1.13 的 Forge 换到 Java 25 是必崩，不是“不推荐”
+    let mc = crate::utils::minecraft::parse_mc_version(&base_version_id);
 
-    let mods = scan_mods(&mods_dir(game_dir, version_id));
+    let mods = scan_mods(&mods_dir(
+        game_dir,
+        version_id,
+        crate::services::config::is_version_isolated(),
+    ));
 
     InstanceProfile {
-        requirement: build_requirement(declared, loader, &mods),
+        requirement: build_requirement_with_fallback(declared, inferred, loader, mc, &mods),
         loader,
         mods,
         declared_java: declared,
@@ -333,7 +437,7 @@ pub fn analyze(version_id: &str, game_dir: &Path) -> InstanceProfile {
 pub fn build_report(
     profile: &InstanceProfile,
     current: Option<(&str, u32)>,
-    candidates: &[(String, u32)],
+    candidates: &[JavaCandidate],
 ) -> String {
     let req = &profile.requirement;
     let mut lines: Vec<String> = Vec::new();
@@ -388,13 +492,41 @@ pub fn build_report(
         lines.push("本机可用 Java：一个都没扫到".to_string());
     } else {
         lines.push("本机可用 Java：".to_string());
-        for (path, ver) in candidates {
-            let mark = if java_allowed(req, *ver) {
+        for candidate in candidates {
+            let mark = if java_allowed(req, candidate.version) {
                 "可用"
             } else {
                 "不行"
             };
-            lines.push(format!("  · Java {} [{}] {}", ver, mark, path));
+            let arch = if candidate.arch == crate::services::java::JavaArch::Bits32 {
+                " · 32 位"
+            } else {
+                ""
+            };
+            lines.push(format!(
+                "  · Java {} [{}]{}{} {}",
+                candidate.version,
+                mark,
+                arch,
+                if candidate.is_ea { " · 预览版" } else { "" },
+                candidate.path
+            ));
+        }
+
+        // 有候选、但一个都进不了允许区间：这时候真正该做的是去装一份，而不是重试
+        let any_allowed = candidates
+            .iter()
+            .any(|candidate| java_allowed(req, candidate.version));
+        if !req.unsatisfiable() && !any_allowed {
+            let band = match req.hard_max {
+                Some(max) if max == req.min => format!("Java {}", req.min),
+                Some(max) => format!("Java {}~{}", req.min, max),
+                None => format!("Java {}+", req.min),
+            };
+            lines.push(format!(
+                "这里没有能用的：该实例需要 {}，先在设置里补一份再来启动。",
+                band
+            ));
         }
     }
 
@@ -404,6 +536,89 @@ pub fn build_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::launcher::java::{JavaArch, JavaCandidate};
+
+    fn cand(path: &str, version: u32) -> JavaCandidate {
+        JavaCandidate {
+            path: path.to_string(),
+            version,
+            arch: JavaArch::Bits64,
+            is_ea: false,
+            from_config: false,
+        }
+    }
+
+    #[test]
+    fn test_infer_java_for_version_covers_the_boundaries() {
+        // 整合包父版本没装、JSON 里没有 javaVersion 时靠这条兜住
+        assert_eq!(infer_java_for_version("1.12.2"), Some(8));
+        assert_eq!(infer_java_for_version("1.16.5"), Some(8));
+        assert_eq!(infer_java_for_version("1.17"), Some(17));
+        assert_eq!(infer_java_for_version("1.20.1"), Some(17));
+        // 1.20.5 起 Mojang 改声明成 21
+        assert_eq!(infer_java_for_version("1.20.4"), Some(17));
+        assert_eq!(infer_java_for_version("1.20.5"), Some(21));
+        assert_eq!(infer_java_for_version("1.21.4"), Some(21));
+        // 实例 id 上带加载器后缀也要认
+        assert_eq!(infer_java_for_version("1.21.4-Fabric"), Some(21));
+        assert_eq!(infer_java_for_version("1.20.1-forge-47.2.0"), Some(17));
+        // 快照认不出来就交给兜底，不能乱猜
+        assert_eq!(infer_java_for_version("24w14a"), None);
+    }
+
+    #[test]
+    fn test_inferred_target_replaces_the_blind_java8_fallback() {
+        let req = build_requirement_with_fallback(None, Some(21), LoaderKind::Vanilla, None, &[]);
+        assert_eq!(req.target, 21);
+        assert_eq!(req.min, 21);
+        assert!(!java_allowed(&req, 8));
+        assert!(java_allowed(&req, 21));
+        assert!(
+            req.reasons.iter().any(|r| r.contains("推定")),
+            "{:?}",
+            req.reasons
+        );
+    }
+
+    #[test]
+    fn test_jar_scan_ignores_module_info_and_multirelease() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // module-info 是 9+ 的产物，不代表这个 jar 需要 Java 9 才能跑
+        let with_module_info = tmp.path().join("a.jar");
+        write_jar_entries(
+            &with_module_info,
+            &[("module-info.class", 53), ("com/example/A.class", 52)],
+        );
+        assert_eq!(jar_java_version(&with_module_info), Some(8));
+
+        // 多版本 jar 的 META-INF/versions 只在对应 JVM 上加载，不该抬高下限
+        let multi_release = tmp.path().join("b.jar");
+        write_jar_entries(
+            &multi_release,
+            &[
+                ("com/example/A.class", 52),
+                ("META-INF/versions/21/com/example/A.class", 65),
+            ],
+        );
+        assert_eq!(jar_java_version(&multi_release), Some(8));
+    }
+
+    #[test]
+    fn test_jar_scan_takes_the_highest_sampled_class() {
+        // 只看第一个 entry 时，字母序靠前的低版本类会把要求压回旧版本
+        let tmp = tempfile::tempdir().unwrap();
+        let jar = tmp.path().join("mod.jar");
+        write_jar_entries(
+            &jar,
+            &[
+                ("aaa/Old.class", 52),
+                ("zzz/New.class", 65),
+                ("mmm/Mid.class", 61),
+            ],
+        );
+        assert_eq!(jar_java_version(&jar), Some(21));
+    }
 
     #[test]
     fn test_list_mod_files_keeps_only_enabled_jars() {
@@ -417,16 +632,21 @@ mod tests {
         assert_eq!(files, ["C.JAR", "a.jar"]);
     }
 
+    /// 目录位置只看设置：关闭隔离后游戏读根目录，实例目录里残留的模组不该被算进来
     #[test]
-    fn test_mods_dir_prefers_isolated_then_shared() {
+    fn test_mods_dir_follows_isolation_setting() {
         let dir = tempfile::TempDir::new().unwrap();
         let shared = dir.path().join("mods");
         let isolated = dir.path().join("versions").join("pack").join("mods");
-        fs::create_dir_all(&shared).unwrap();
 
-        assert_eq!(mods_dir(dir.path(), "pack"), shared);
+        assert_eq!(mods_dir(dir.path(), "pack", true), isolated);
+        assert_eq!(mods_dir(dir.path(), "pack", false), shared);
+
+        // 两个目录都建出来也不改变判定
+        fs::create_dir_all(&shared).unwrap();
         fs::create_dir_all(&isolated).unwrap();
-        assert_eq!(mods_dir(dir.path(), "pack"), isolated);
+        assert_eq!(mods_dir(dir.path(), "pack", true), isolated);
+        assert_eq!(mods_dir(dir.path(), "pack", false), shared);
     }
 
     fn vanilla_json(mc: &str, java: u64) -> Value {
@@ -472,9 +692,38 @@ mod tests {
         assert_eq!((req.min, req.target), (8, 8));
         assert_eq!(req.hard_max, None);
         assert!(java_allowed(&req, 8));
-        // 这就是他提的那条：原版 1.12.2 没用到旧 Forge 的那些依赖，新 JDK 能起
+        // 原版 1.12.2 没用到旧 Forge 的那些依赖，新 JDK 能起
         assert!(java_allowed(&req, 17));
         assert!(java_allowed(&req, 26));
+    }
+
+    /// 那一代 modlauncher 在 Java 9+ 上必崩：1.13.2-Forge 用 Java 25 会在 1 秒内挂
+    #[test]
+    fn test_forge_era_caps_the_jdk() {
+        let r =
+            build_requirement_with_fallback(Some(8), None, LoaderKind::Forge, Some((1, 13)), &[]);
+        assert_eq!(r.hard_max, Some(8));
+        assert!(java_allowed(&r, 8));
+        assert!(!java_allowed(&r, 25));
+
+        // 1.16 的官方范围是 8 与 11
+        let r =
+            build_requirement_with_fallback(Some(8), None, LoaderKind::Forge, Some((1, 16)), &[]);
+        assert_eq!(r.hard_max, Some(11));
+        assert!(java_allowed(&r, 11));
+        assert!(!java_allowed(&r, 17));
+
+        // 1.17 起没有「确定不兼容」的组合，不设上限
+        let r =
+            build_requirement_with_fallback(Some(17), None, LoaderKind::Forge, Some((1, 20)), &[]);
+        assert_eq!(r.hard_max, None);
+        assert!(java_allowed(&r, 21));
+
+        // 原版不受加载器的世代限制影响
+        let r =
+            build_requirement_with_fallback(Some(8), None, LoaderKind::Vanilla, Some((1, 13)), &[]);
+        assert_eq!(r.hard_max, None);
+        assert!(java_allowed(&r, 17));
     }
 
     #[test]
@@ -568,7 +817,7 @@ mod tests {
         let report = build_report(
             &profile,
             Some(("C:/jdk-26/bin/java.exe", 26)),
-            &[("C:/jdk-26/bin/java.exe".to_string(), 26u32)],
+            &[cand("C:/jdk-26/bin/java.exe", 26)],
         );
         assert!(report.contains("无法同时满足"), "{}", report);
         assert!(report.contains("Java 26 [不行]"), "{}", report);
@@ -585,14 +834,46 @@ mod tests {
     fn test_fabric_and_quilt_are_detected_and_uncapped() {
         let fabric =
             serde_json::json!({ "libraries": [{ "name": "net.fabricmc:fabric-loader:0.15.0" }] });
-        let quilt =
-            serde_json::json!({ "libraries": [{ "name": "org.quiltmc:quilt-loader:0.23.1" }] });
+        // Quilt 的真实 profile 一定同时带 net.fabricmc 的库（mixin/tiny-remapper），
+        // 所以只认 org.quiltmc 而不先判 fabric 是不行的
+        let quilt = serde_json::json!({
+            "libraries": [
+                { "name": "net.fabricmc:sponge-mixin:0.12.5+mixin.0.8.5" },
+                { "name": "net.fabricmc:tiny-remapper:0.8.6" },
+                { "name": "org.quiltmc:quilt-loader:0.30.1" }
+            ]
+        });
         assert_eq!(detect_loader(&fabric, ""), LoaderKind::Fabric);
         assert_eq!(detect_loader(&quilt, ""), LoaderKind::Quilt);
         assert_eq!(
             build_requirement(Some(17), LoaderKind::Fabric, &[]).hard_max,
             None
         );
+    }
+
+    /// 1.13.2-Forge 撞上 Java 25 时，报告要直接说“去装一份 Java 8”，而不是只列一堆 [不行]
+    #[test]
+    fn test_report_tells_you_to_install_java_when_none_is_allowed() {
+        let req =
+            build_requirement_with_fallback(Some(8), None, LoaderKind::Forge, Some((1, 13)), &[]);
+        let profile = InstanceProfile {
+            requirement: req,
+            loader: LoaderKind::Forge,
+            mods: Vec::new(),
+            declared_java: Some(8),
+            resolved: true,
+            version_id: "1.13.2-Forge".to_string(),
+            game_dir: PathBuf::from("/tmp"),
+        };
+
+        let report = build_report(
+            &profile,
+            Some(("D:/jdk25/bin/java.exe", 25)),
+            &[cand("D:/jdk25/bin/java.exe", 25)],
+        );
+
+        assert!(report.contains("先在设置里补一份"), "{}", report);
+        assert!(report.contains("Java 8"), "{}", report);
     }
 
     #[test]
@@ -614,8 +895,8 @@ mod tests {
             game_dir: PathBuf::from("/tmp"),
         };
         let candidates = vec![
-            ("C:/java-17/bin/java.exe".to_string(), 17u32),
-            ("C:/java-21/bin/java.exe".to_string(), 21u32),
+            cand("C:/java-17/bin/java.exe", 17),
+            cand("C:/java-21/bin/java.exe", 21),
         ];
         let report = build_report(&profile, Some(("C:/java-17/bin/java.exe", 17)), &candidates);
 
@@ -656,6 +937,33 @@ mod tests {
             ],
         )
         .unwrap();
+        zip.finish().unwrap();
+    }
+
+    fn write_jar_entries(path: &Path, entries: &[(&str, u16)]) {
+        use zip::write::SimpleFileOptions;
+        let file = fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+
+        for (name, class_major) in entries {
+            let major = *class_major;
+            zip.start_file(*name, SimpleFileOptions::default()).unwrap();
+            std::io::Write::write_all(
+                &mut zip,
+                &[
+                    0xCA,
+                    0xFE,
+                    0xBA,
+                    0xBE,
+                    0,
+                    0,
+                    (major >> 8) as u8,
+                    major as u8,
+                ],
+            )
+            .unwrap();
+        }
+
         zip.finish().unwrap();
     }
 

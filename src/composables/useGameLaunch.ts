@@ -48,9 +48,12 @@ export function useGameLaunch() {
     const currentVer = result.currentJavaVersion != null ? `Java ${result.currentJavaVersion}` : '未知';
     const requiredVer = `Java ${result.requiredJavaVersion}`;
 
+    // 推荐项也是退而求其次时，把原因一起说清楚，用户才知道该不该去补一份
+    const note = result.recommendedJavaWarning ? `\n\n${result.recommendedJavaWarning}` : '';
+
     const content = result.hardBlock
       ? `当前 Java 起不了这个实例，后端给出的诊断如下：\n\n${result.diagnostic}\n\n请选择如何处理：`
-      : `当前 Java 版本 (${currentVer}) 不满足 Minecraft ${instanceName} 的要求 (需要 ${requiredVer})。\n\n请选择如何处理：`;
+      : `当前 Java 版本 (${currentVer}) 不满足 Minecraft ${instanceName} 的要求 (需要 ${requiredVer})。${note}\n\n请选择如何处理：`;
 
     const options: Array<{
       id: string;
@@ -82,18 +85,19 @@ export function useGameLaunch() {
       variant: 'outlined',
     });
 
-    // 判据没覆盖全部情形，所以坚持要起时起得来；hardBlock 时这一条就是带风险的确认
+    // 能走到这个弹窗就说明当前 Java 不满足判据，选“继续”必须把 force 传下去：
+    // 否则后端会自己挑一份更合适的，用户的选择等于没生效
     options.push({
       id: 'continue',
-      label: result.recommendedJavaPath ? '继续启动' : '仍用当前 Java 启动（风险自负）',
-      color: result.recommendedJavaPath ? 'info' : 'error',
+      label: result.hardBlock ? '仍用当前 Java 启动' : result.recommendedJavaPath ? '继续启动' : '仍用当前 Java 启动',
+      color: result.hardBlock ? 'error' : result.recommendedJavaPath ? 'info' : 'error',
       variant: 'text',
     });
 
     const selected = await notificationStore.choice('Java 版本提示', content, options, 'warning');
 
     if (selected === 'continue') {
-      return { shouldLaunch: true, forceJavaMismatch: result.hardBlock };
+      return { shouldLaunch: true, forceJavaMismatch: true };
     }
 
     if (selected === 'temp' && result.recommendedJavaPath) {
@@ -137,7 +141,6 @@ export function useGameLaunch() {
     }
   }
 
-  // 唯一启动入口；认证与内存设置由后端 launch_instance 从配置读取，这里只做前置校验
   async function launchInstance(instanceName: string): Promise<boolean> {
     if (!instanceName) {
       notificationStore.warning('请先选择一个实例');
@@ -187,10 +190,30 @@ export function useGameLaunch() {
     }
   }
 
+  /**
+   * 崩溃诊断里换过 Java 之后的重启入口：跳过兼容性前置校验，
+   * 用户刚在诊断弹窗里看过原因并做了选择，再弹一次是重复
+   */
+  async function relaunchWithJava(instanceName: string, javaPath: string): Promise<boolean> {
+    try {
+      loading.value = true;
+      await instanceApi.launchInstance(instanceName, javaPath, false);
+      notificationStore.success('正在重新启动', `${instanceName} 已改用指定的 Java`);
+      return true;
+    } catch (err) {
+      logError('Failed to relaunch with another Java', err, 'useGameLaunch');
+      notificationStore.error('启动失败', getErrorMessage(err), true);
+      return false;
+    } finally {
+      loading.value = false;
+    }
+  }
+
   return {
     loading,
     isRepairing,
     repairProgress,
     launchInstance,
+    relaunchWithJava,
   };
 }
