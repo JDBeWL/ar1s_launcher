@@ -2,8 +2,8 @@
 //!
 //! 派生隐藏控制台的 Java 子进程，日志经有界队列批量转发，退出时回显日志尾巴与 hs_err_pid
 
+use super::crash_diagnosis::{self, LaunchContext};
 use crate::errors::LauncherError;
-use std::collections::VecDeque;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -12,13 +12,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tauri::Emitter;
 
 const MAX_GAME_RUNTIME: Duration = Duration::from_secs(24 * 60 * 60);
-
-/// 崩溃/异常退出时回显给前端的最近日志行数（含 stdout）
-const MAX_LOG_TAIL_LINES: usize = 100;
 
 /// 队列满时直接丢弃，绝不阻塞读取线程——堵住会让管道写满，游戏日志线程卡住，表现为周期性掉帧
 const LOG_QUEUE_CAPACITY: usize = 4096;
@@ -36,6 +33,55 @@ enum LogStream {
 }
 
 type LogItem = (LogStream, String);
+
+/// 诊断要读完整输出，4 MiB 足够装下一次启动的全部输出
+const MAX_CAPTURED_BYTES: usize = 4 * 1024 * 1024;
+
+/// 崩溃时供诊断使用的输出缓冲：到上限后停止收集，只报丢了多少行
+pub struct OutputCapture {
+    lines: Vec<String>,
+    bytes: usize,
+    cap: usize,
+    dropped: usize,
+}
+
+impl Default for OutputCapture {
+    fn default() -> Self {
+        Self::with_cap(MAX_CAPTURED_BYTES)
+    }
+}
+
+impl OutputCapture {
+    pub fn with_cap(cap: usize) -> Self {
+        Self {
+            lines: Vec::new(),
+            bytes: 0,
+            cap,
+            dropped: 0,
+        }
+    }
+
+    pub fn push(&mut self, line: String) {
+        if self.bytes + line.len() > self.cap {
+            self.dropped += 1;
+            return;
+        }
+        self.bytes += line.len();
+        self.lines.push(line);
+    }
+
+    /// 溢出时把真实丢弃行数补成最后一行，诊断和原文都看得到
+    pub fn finish(&self) -> Vec<String> {
+        let mut out = self.lines.clone();
+        if self.dropped > 0 {
+            out.push(format!(
+                "… 输出达到 {} 字节上限，另有 {} 行未收集",
+                self.cap, self.dropped
+            ));
+        }
+        out
+    }
+}
 
 /// argv 里 --accessToken 后面跟的是真实的 Minecraft bearer token，进 IPC 之前必须掩掉
 fn redacted_args(args: &[String]) -> Vec<&str> {
@@ -63,6 +109,7 @@ pub fn spawn_and_monitor_process(
     java_path: &str,
     final_args: Vec<String>,
     working_dir: &Path,
+    launch_ctx: LaunchContext,
     window: tauri::Window,
 ) -> Result<(), LauncherError> {
     let mut command = Command::new(java_path);
@@ -89,7 +136,7 @@ pub fn spawn_and_monitor_process(
 
     window.emit("minecraft-launched", format!("游戏已启动，PID: {}", pid))?;
 
-    spawn_monitor_thread(child, window, pid, working_dir.to_path_buf());
+    spawn_monitor_thread(child, window, pid, working_dir.to_path_buf(), launch_ctx);
 
     Ok(())
 }
@@ -99,25 +146,26 @@ fn spawn_monitor_thread(
     window: tauri::Window,
     pid: u32,
     working_dir: std::path::PathBuf,
+    launch_ctx: crash_diagnosis::LaunchContext,
 ) {
     let stdout = child.stdout.take().expect("Failed to open stdout");
     let stderr = child.stderr.take().expect("Failed to open stderr");
 
     let is_running = Arc::new(AtomicBool::new(true));
-    let stderr_lines: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let captured: Arc<Mutex<OutputCapture>> = Arc::new(Mutex::new(OutputCapture::default()));
 
     let (log_tx, log_rx) = mpsc::sync_channel::<LogItem>(LOG_QUEUE_CAPACITY);
 
     // 读取线程只入队，不做逐行 IPC
     let tx_stdout: SyncSender<LogItem> = log_tx.clone();
     let is_running_stdout = is_running.clone();
-    let tail_stdout = stderr_lines.clone();
+    let capture_stdout = captured.clone();
     std::thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
             match line {
                 Ok(l) => {
-                    push_tail(&tail_stdout, &l);
+                    push_line(&capture_stdout, &l);
                     let _ = tx_stdout.try_send((LogStream::Stdout, l));
                 }
                 Err(_) => break,
@@ -130,13 +178,13 @@ fn spawn_monitor_thread(
 
     let tx_stderr: SyncSender<LogItem> = log_tx;
     let is_running_stderr = is_running.clone();
-    let tail_stderr = stderr_lines.clone();
+    let capture_stderr = captured.clone();
     std::thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for line in reader.lines() {
             match line {
                 Ok(l) => {
-                    push_tail(&tail_stderr, &l);
+                    push_line(&capture_stderr, &l);
                     let _ = tx_stderr.try_send((LogStream::Stderr, l));
                 }
                 Err(_) => break,
@@ -190,11 +238,17 @@ fn spawn_monitor_thread(
                 if forwarder_done.load(Ordering::SeqCst) {
                     let _ = forwarder.join();
                 }
-                let stderr_buf: Vec<String> = stderr_lines
-                    .lock()
-                    .map(|buf| buf.iter().cloned().collect())
-                    .unwrap_or_default();
-                handle_process_exit(status, &window, &stderr_buf, &working_dir);
+                let lines = captured.lock().map(|buf| buf.finish()).unwrap_or_default();
+                let elapsed = start_time.elapsed();
+                handle_process_exit(
+                    status,
+                    &window,
+                    &lines,
+                    &working_dir,
+                    &launch_ctx,
+                    elapsed.as_secs(),
+                    SystemTime::now() - elapsed,
+                );
             }
             Ok(None) => {
                 is_running_main.store(false, Ordering::SeqCst);
@@ -221,13 +275,10 @@ fn spawn_monitor_thread(
     });
 }
 
-/// 追加一行到环形缓冲（保留最近 MAX_LOG_TAIL_LINES 行）
-fn push_tail(tail: &Mutex<VecDeque<String>>, line: &str) {
-    if let Ok(mut buf) = tail.lock() {
-        if buf.len() >= MAX_LOG_TAIL_LINES {
-            buf.pop_front();
-        }
-        buf.push_back(line.to_string());
+/// 追加一行到诊断缓冲；锁被占用时丢这一行，绝不阻塞读线程
+fn push_line(captured: &Mutex<OutputCapture>, line: &str) {
+    if let Ok(mut buf) = captured.lock() {
+        buf.push(line.to_string());
     }
 }
 
@@ -306,7 +357,8 @@ fn wait_for_process_with_timeout(
     }
 }
 
-fn find_hs_err_log(working_dir: &Path) -> Option<String> {
+/// 只认本次运行之后写下的 hs_err，上次崩溃留下的那份不能当本次证据
+fn find_hs_err_log(working_dir: &Path, launched_after: SystemTime) -> Option<String> {
     if let Ok(entries) = fs::read_dir(working_dir) {
         let mut latest: Option<(std::time::SystemTime, String)> = None;
         for entry in entries.flatten() {
@@ -315,7 +367,10 @@ fn find_hs_err_log(working_dir: &Path) -> Option<String> {
             if name_str.starts_with("hs_err_pid") && name_str.ends_with(".log") {
                 if let Ok(metadata) = entry.metadata() {
                     if let Ok(modified) = metadata.modified() {
-                        if latest.as_ref().map_or(true, |(t, _)| modified > *t) {
+                        if modified < launched_after {
+                            continue;
+                        }
+                        if latest.as_ref().is_none_or(|(t, _)| modified > *t) {
                             if let Ok(content) = fs::read_to_string(entry.path()) {
                                 latest = Some((modified, content));
                             }
@@ -329,11 +384,17 @@ fn find_hs_err_log(working_dir: &Path) -> Option<String> {
     None
 }
 
+/// hs_err 全文几十 KB，报告里只留头部这些行
+const HS_ERR_MAX_LINES: usize = 200;
+
 fn handle_process_exit(
     status: ExitStatus,
     window: &tauri::Window,
-    stderr_lines: &[String],
+    output_lines: &[String],
     working_dir: &Path,
+    launch_ctx: &LaunchContext,
+    runtime_secs: u64,
+    launched_at: SystemTime,
 ) {
     let exit_code = status.code();
     let _ = window.emit(
@@ -342,37 +403,24 @@ fn handle_process_exit(
     );
 
     if exit_code.unwrap_or(-1) != 0 {
-        let mut error_msg = format!("游戏以非零状态码退出: {:?}", exit_code);
-
-        if !stderr_lines.is_empty() {
-            error_msg.push_str("\n\n--- 游戏错误输出 ---\n");
-            for line in stderr_lines {
-                error_msg.push_str(line);
-                error_msg.push('\n');
+        let hs_err = find_hs_err_log(working_dir, launched_at).and_then(|text| {
+            let total = text.lines().count();
+            let mut head = text
+                .lines()
+                .take(HS_ERR_MAX_LINES)
+                .collect::<Vec<_>>()
+                .join("\n");
+            if total > HS_ERR_MAX_LINES {
+                head.push_str("\n… hs_err 其余部分见工作目录里的原文件");
             }
-        }
+            Some(head)
+        });
 
-        if let Some(hs_err) = find_hs_err_log(working_dir) {
-            error_msg.push_str("\n--- JVM 崩溃日志 (hs_err_pid) ---\n");
-            // 只取前 30 行，避免消息过长
-            let lines: Vec<&str> = hs_err.lines().take(30).collect();
-            error_msg.push_str(&lines.join("\n"));
-            if hs_err.lines().count() > 30 {
-                error_msg.push_str("\n... (日志已截断)");
-            }
-        }
+        let mut ctx = launch_ctx.clone();
+        ctx.runtime_secs = Some(runtime_secs);
 
-        if exit_code == Some(-1) || exit_code == Some(1) {
-            error_msg.push_str("\n\n--- 常见原因 ---\n");
-            error_msg.push_str("• Java 版本不兼容（如用 Java 8 启动 1.17+ 版本）\n");
-            error_msg.push_str("• 缺少 Natives 库（LWJGL）或 Natives 与 Java 版本不兼容\n");
-            error_msg.push_str("• 缺少关键库文件或主游戏 JAR\n");
-            error_msg.push_str("• 内存分配超出系统可用内存\n");
-            error_msg.push_str("• 显卡驱动问题（游戏窗口创建失败）\n");
-            error_msg.push_str("建议：检查 Java 版本是否匹配，尝试删除 versions/<版本>/natives 目录后重新启动，或尝试修复游戏文件。");
-        }
-
-        let _ = window.emit("minecraft-error", error_msg);
+        let diagnosis = crash_diagnosis::diagnose(exit_code, output_lines, &ctx, hs_err.as_deref());
+        let _ = window.emit("minecraft-crash", &diagnosis);
     }
 
     let _ = window.emit(
@@ -383,10 +431,52 @@ fn handle_process_exit(
 
 #[cfg(test)]
 mod tests {
-    use super::redacted_args;
+    use super::{OutputCapture, find_hs_err_log, redacted_args};
+    use std::fs;
+    use std::path::Path;
+    use std::time::{Duration, SystemTime};
 
     fn args(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn write_hs_err(dir: &Path, name: &str, body: &str, age: Duration) -> std::io::Result<()> {
+        let path = dir.join(name);
+        fs::write(&path, body)?;
+        let file = fs::OpenOptions::new().append(true).open(&path)?;
+        file.set_modified(SystemTime::now() - age)
+    }
+
+    #[test]
+    fn test_find_hs_err_log_ignores_previous_runs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_hs_err(
+            dir.path(),
+            "hs_err_pid111.log",
+            "OLD",
+            Duration::from_secs(3600),
+        )
+        .unwrap();
+        write_hs_err(
+            dir.path(),
+            "hs_err_pid222.log",
+            "FRESH",
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let launched = SystemTime::now() - Duration::from_secs(60);
+        assert_eq!(
+            find_hs_err_log(dir.path(), launched).as_deref(),
+            Some("FRESH")
+        );
+
+        let future = SystemTime::now() + Duration::from_secs(3600);
+        assert_eq!(
+            find_hs_err_log(dir.path(), future),
+            None,
+            "上一次运行留下的 hs_err 不能当本次的证据"
+        );
     }
 
     #[test]
@@ -420,5 +510,18 @@ mod tests {
             ["--accessToken=***", "--gameDir", "dir"]
         );
         assert!(redacted_args(&Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn test_capture_keeps_head_and_reports_the_overflow() {
+        let mut cap = OutputCapture::with_cap(8);
+        for _ in 0..3 {
+            cap.push("abcd".to_string());
+        }
+
+        let lines = cap.finish();
+        assert_eq!(lines.len(), 3, "最后一行是溢出说明");
+        assert_eq!(lines[0], "abcd");
+        assert!(lines[2].contains("另有 1 行未收集"));
     }
 }

@@ -239,12 +239,19 @@ pub struct LaunchOptions {
     pub uuid: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub override_java_path: Option<String>,
+    /// 判据不过、但用户已经看过诊断报告并坚持启动
+    #[serde(default)]
+    pub force_java_mismatch: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JavaCompatibilityResult {
     pub compatible: bool,
+    /// 已知起不来（违反硬上限、或低于 mods 实测出的下限），界面不应再给"继续启动"
+    pub hard_block: bool,
+    /// hard_block 时的纯文本诊断报告，其余情况为空
+    pub diagnostic: String,
     pub current_java_version: Option<u32>,
     pub required_java_version: u32,
     pub recommended_min_java_version: u32,

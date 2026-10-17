@@ -11,6 +11,7 @@ import { configApi } from './services';
 import { logError } from './utils/logger';
 import GlobalDownloadStatus from './components/GlobalDownloadStatus.vue';
 import GlobalNotification from './components/GlobalNotification.vue';
+import CrashReportDialog from './components/CrashReportDialog.vue';
 
 const appWindow = Window.getCurrent();
 const isMaximized = ref(false);
@@ -272,6 +273,7 @@ onUnmounted(() => {
 
     <GlobalDownloadStatus />
     <GlobalNotification />
+    <CrashReportDialog />
 
     <v-dialog v-model="shortcutHelpVisible" max-width="380">
       <v-card color="surface-container-high">

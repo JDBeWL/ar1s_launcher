@@ -989,6 +989,7 @@ pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherE
 pub async fn launch_instance(
     instance_name: String,
     override_java_path: Option<String>,
+    force_java_mismatch: bool,
     window: Window,
 ) -> Result<(), LauncherError> {
     let config = config::load_config()?;
@@ -1096,6 +1097,7 @@ pub async fn launch_instance(
         access_token,
         uuid,
         override_java_path,
+        force_java_mismatch,
     };
 
     launcher::launch_minecraft(launch_options, window).await

@@ -15,6 +15,7 @@ import type { DownloadProgress, JavaCompatibilityResult } from '../types/events'
 interface JavaResolveResult {
   shouldLaunch: boolean;
   overrideJavaPath?: string;
+  forceJavaMismatch?: boolean;
 }
 
 export function useGameLaunch() {
@@ -39,14 +40,17 @@ export function useGameLaunch() {
       return { shouldLaunch: true };
     }
 
-    if (result.compatible || result.autoMatchEnabled) {
+    // 能自动换到兼容 Java 的话交给后端换，不用打扰用户；换不到就必须让人确认
+    if (result.compatible || (result.autoMatchEnabled && result.recommendedJavaPath)) {
       return { shouldLaunch: true };
     }
 
     const currentVer = result.currentJavaVersion != null ? `Java ${result.currentJavaVersion}` : '未知';
     const requiredVer = `Java ${result.requiredJavaVersion}`;
 
-    const content = `当前 Java 版本 (${currentVer}) 不满足 Minecraft ${instanceName} 的要求 (需要 ${requiredVer})。\n\n请选择如何处理：`;
+    const content = result.hardBlock
+      ? `当前 Java 起不了这个实例，后端给出的诊断如下：\n\n${result.diagnostic}\n\n请选择如何处理：`
+      : `当前 Java 版本 (${currentVer}) 不满足 Minecraft ${instanceName} 的要求 (需要 ${requiredVer})。\n\n请选择如何处理：`;
 
     const options: Array<{
       id: string;
@@ -78,17 +82,18 @@ export function useGameLaunch() {
       variant: 'outlined',
     });
 
+    // 判据没覆盖全部情形，所以坚持要起时起得来；hardBlock 时这一条就是带风险的确认
     options.push({
       id: 'continue',
-      label: '继续启动',
-      color: 'info',
+      label: result.recommendedJavaPath ? '继续启动' : '仍用当前 Java 启动（风险自负）',
+      color: result.recommendedJavaPath ? 'info' : 'error',
       variant: 'text',
     });
 
     const selected = await notificationStore.choice('Java 版本提示', content, options, 'warning');
 
     if (selected === 'continue') {
-      return { shouldLaunch: true };
+      return { shouldLaunch: true, forceJavaMismatch: result.hardBlock };
     }
 
     if (selected === 'temp' && result.recommendedJavaPath) {
@@ -170,7 +175,7 @@ export function useGameLaunch() {
         return false;
       }
 
-      await instanceApi.launchInstance(instanceName, javaResolve.overrideJavaPath);
+      await instanceApi.launchInstance(instanceName, javaResolve.overrideJavaPath, javaResolve.forceJavaMismatch);
       notificationStore.success('启动成功', `${instanceName} 正在启动`);
       return true;
     } catch (err) {

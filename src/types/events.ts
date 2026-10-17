@@ -224,6 +224,8 @@ export interface MicrosoftLoginResult {
 
 export interface JavaCompatibilityResult {
   compatible: boolean;
+  hardBlock: boolean;
+  diagnostic: string;
   currentJavaVersion: number | null;
   requiredJavaVersion: number;
   currentJavaPath: string | null;
@@ -254,4 +256,56 @@ export interface GameConfig {
   fullscreen: boolean;
   last_selected_version: string | null;
   auth_type: 'offline' | 'microsoft';
+}
+
+/** 对应后端 crash_diagnosis，camelCase */
+export type CrashConfidence = 'high' | 'medium';
+
+export type CrashFindingKind =
+  | 'mixin'
+  | 'javaVersion'
+  | 'classVersion'
+  | 'missingClass'
+  | 'memory'
+  | 'natives'
+  | 'jvmCrash'
+  | 'securityManager'
+  | 'unknown';
+
+export interface CrashEvidence {
+  lineNo: number;
+  text: string;
+}
+
+export interface CrashFinding {
+  kind: CrashFindingKind;
+  /** root = 元凶，symptom = 被根因带出来的表象 */
+  role: 'root' | 'symptom';
+  conclusion: string;
+  confidence: CrashConfidence;
+  /** 一句话摘要，弹窗顶部只用它 */
+  summary: string;
+  /** 「问题模组」「问题类」这类人话标签，与 culprits 配套 */
+  culpritLabel: string;
+  /** 能定位到的 jar 文件名或类名 */
+  culprits: string[];
+  evidence: CrashEvidence[];
+  suggestion: string;
+}
+
+export interface CrashContextLine {
+  label: string;
+  value: string;
+}
+
+export interface CrashDiagnosis {
+  exitCode: number | null;
+  headline: string;
+  recognized: boolean;
+  findings: CrashFinding[];
+  context: CrashContextLine[];
+  excerpt: CrashEvidence[];
+  rawOutput: string;
+  /** 复制给上游用的纯文本，与弹窗同源 */
+  reportText: string;
 }

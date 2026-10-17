@@ -4,8 +4,10 @@
 
 mod arguments;
 mod classpath;
+pub mod crash_diagnosis;
 mod isolation;
 pub mod java;
+pub mod java_requirement;
 mod natives;
 mod process;
 mod version_json;
@@ -165,17 +167,16 @@ pub async fn launch_minecraft(
         &emit,
     );
 
-    // 实例 ID 未必是 MC 版本号，解析真实版本供 Java 匹配和 JVM 参数优化
-    let actual_mc_version = java::resolve_actual_mc_version(&options.version, &config.game_dir);
+    let profile = java::profile_for(&options.version, &game_dir);
 
-    let java_path = if let Some(ref override_path) = options.override_java_path {
+    let mut java_path = if let Some(ref override_path) = options.override_java_path {
         emit(
             "log-info",
             format!("使用临时指定的 Java: {}", override_path),
         );
         override_path.clone()
     } else if config.auto_match_java {
-        if let Some(matched) = java::auto_match_java_for_version(&actual_mc_version) {
+        if let Some(matched) = java::auto_match_java(&profile) {
             emit(
                 "log-info",
                 format!("自动匹配 Java: {} (版本 {})", matched.path, matched.version),
@@ -194,9 +195,57 @@ pub async fn launch_minecraft(
     } else {
         java::resolve_java_path(&config)?
     };
-    emit("log-debug", format!("使用的Java路径: {}", java_path));
 
-    let java_version = java::detect_java_version(&java_path);
+    let mut java_version = java::detect_java_version(&java_path);
+
+    // 三条分支选出来的 Java 都要过同一道判据；版本 JSON 读不到时不硬拦
+    if profile.resolved
+        && let Some(ver) = java_version
+    {
+        if !java_requirement::java_allowed(&profile.requirement, ver) {
+            let candidates = java::collect_candidates(&config);
+            match java::choose_java(&profile.requirement, &candidates) {
+                Some(better) => {
+                    emit(
+                        "log-warning",
+                        format!(
+                            "{} 实例要求 Java {}{}，当前 Java {} 不满足，已换成 Java {} ({})",
+                            profile.loader.label(),
+                            profile.requirement.min,
+                            match profile.requirement.hard_max {
+                                Some(max) => format!("~{}", max),
+                                None => "+".to_string(),
+                            },
+                            ver,
+                            better.version,
+                            better.path
+                        ),
+                    );
+                    java_path = better.path;
+                    java_version = Some(better.version);
+                }
+                None => {
+                    let report = java_requirement::build_report(
+                        &profile,
+                        Some((java_path.as_str(), ver)),
+                        &candidates,
+                    );
+                    // 判据没覆盖全，所以这不是否决而是确认：用户看过报告坚持要起，就带着风险起
+                    if options.force_java_mismatch {
+                        emit(
+                            "log-warning",
+                            format!("已按用户确认强制启动，风险自负：\n{}", report),
+                        );
+                    } else {
+                        emit("log-error", report.clone());
+                        return Err(LauncherError::Custom(report));
+                    }
+                }
+            }
+        }
+    }
+
+    emit("log-debug", format!("使用的Java路径: {}", java_path));
     if let Some(v) = java_version {
         emit("log-debug", format!("检测到Java版本: {}", v));
     } else {
@@ -278,5 +327,17 @@ pub async fn launch_minecraft(
         }
     }
 
-    process::spawn_and_monitor_process(&java_path, final_args, &working_dir, window)
+    let mods_root = java_requirement::mods_dir(&profile.game_dir, &options.version);
+    let launch_ctx = crash_diagnosis::LaunchContext {
+        version_id: options.version.clone(),
+        loader: profile.loader.label().to_string(),
+        declared_java: profile.declared_java,
+        used_java_path: java_path.clone(),
+        used_java_version: java_version,
+        memory_mb,
+        mod_files: java_requirement::list_mod_files(&mods_root),
+        runtime_secs: None,
+    };
+
+    process::spawn_and_monitor_process(&java_path, final_args, &working_dir, launch_ctx, window)
 }

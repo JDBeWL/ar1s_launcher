@@ -1,11 +1,12 @@
 //! Java 解析与玩家 UUID 模块
 //!
-//! 相对路径解析、java -version 探测、MC 版本到推荐 Java 范围的映射与多安装自动挑选
+//! 相对路径解析、java -version 探测、候选装配与按判据自动挑选
 
+use super::java_requirement::{self, JavaRequirement};
 use crate::errors::LauncherError;
 use crate::models::GameConfig;
 use crate::services::config::load_config;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
 
@@ -126,141 +127,12 @@ pub fn detect_java_version(java_path: &str) -> Option<u32> {
     None
 }
 
-/// 所需最低 Java 版本，即 recommended_java_version_range 的下界
-pub fn required_java_version(mc_version: &str) -> u32 {
-    recommended_java_version_range(mc_version).0
-}
+/// 没有已知上限时的哨兵值，沿用本仓库既有的写法
+pub const NO_UPPER_BOUND: u32 = 99;
 
-use crate::utils::minecraft::parse_mc_version;
-
-/// 推荐 Java 版本范围 (min, max)；范围外的 Java 也会用，但带警告
-/// 下界依据：≤1.16.5 用 Java 17+ 启动 Forge 会报错，1.17~1.20.4 用 Java 21+ 有兼容风险，1.20.5+ 用 Java 24+ 有 mod/库兼容风险，26.x 需 Java 25+
-pub fn recommended_java_version_range(mc_version: &str) -> (u32, u32) {
-    if let Some((major, minor)) = parse_mc_version(mc_version) {
-        if major >= 26 {
-            return (25, 99);
-        }
-        if major > 1 || (major == 1 && minor > 20) {
-            // parse_mc_version 不返回 patch，1.20.5 只能靠 minor 判定
-            return (21, 23);
-        }
-        if major == 1 && minor == 20 {
-            let parts: Vec<&str> = mc_version.split('.').collect();
-            if parts.len() >= 3 {
-                if let Ok(patch) = parts[2].split('-').next().unwrap_or("0").parse::<u32>() {
-                    if patch >= 5 {
-                        return (21, 23);
-                    }
-                }
-            }
-            return (17, 17);
-        }
-        if major == 1 && minor >= 17 {
-            return (17, 17);
-        }
-        if major == 1 && minor <= 7 {
-            // 某些极旧模组可能只能用 Java 7，故下界放到 7
-            return (7, 8);
-        }
-        // 1.8 ~ 1.16.5
-        return (8, 8);
-    }
-
-    // 无法解析时按多数现代版本取 17
-    (17, 17)
-}
-
-/// 把实例 ID 解析为真实 MC 版本，提取顺序：版本 ID 本身 → --fml.mcVersion → patches game 版本 → inheritsFrom 递归
-pub fn resolve_actual_mc_version(version_id: &str, game_dir: &str) -> String {
-    if parse_mc_version(version_id).is_some() {
-        return version_id.to_string();
-    }
-
-    let version_dir = std::path::PathBuf::from(game_dir)
-        .join("versions")
-        .join(version_id);
-    let json_path = version_dir.join(format!("{}.json", version_id));
-
-    if !json_path.exists() {
-        return version_id.to_string();
-    }
-
-    if let Ok(content) = std::fs::read_to_string(&json_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(mc_ver) = extract_fml_mc_version(&json) {
-                return mc_ver;
-            }
-
-            if let Some(mc_ver) = extract_patches_game_version(&json) {
-                return mc_ver;
-            }
-
-            if let Some(inherits) = json["inheritsFrom"].as_str() {
-                if parse_mc_version(inherits).is_some() {
-                    return inherits.to_string();
-                }
-                return resolve_actual_mc_version_recursive(inherits, game_dir, 0);
-            }
-        }
-    }
-
-    version_id.to_string()
-}
-
-fn extract_fml_mc_version(json: &serde_json::Value) -> Option<String> {
-    let args = json
-        .get("arguments")
-        .and_then(|a| a.get("game"))
-        .and_then(|g| g.as_array())?;
-
-    for (i, arg) in args.iter().enumerate() {
-        if arg.as_str() == Some("--fml.mcVersion") {
-            if let Some(next) = args.get(i + 1).and_then(|v| v.as_str()) {
-                return Some(next.to_string());
-            }
-        }
-    }
-    None
-}
-
-fn extract_patches_game_version(json: &serde_json::Value) -> Option<String> {
-    let patches = json["patches"].as_array()?;
-
-    for patch in patches {
-        if patch["id"].as_str() == Some("game") {
-            return patch["version"].as_str().map(String::from);
-        }
-    }
-    None
-}
-
-fn resolve_actual_mc_version_recursive(version_id: &str, game_dir: &str, depth: u32) -> String {
-    if depth > 5 {
-        return version_id.to_string();
-    }
-
-    if parse_mc_version(version_id).is_some() {
-        return version_id.to_string();
-    }
-
-    let version_dir = std::path::PathBuf::from(game_dir)
-        .join("versions")
-        .join(version_id);
-    let json_path = version_dir.join(format!("{}.json", version_id));
-
-    if !json_path.exists() {
-        return version_id.to_string();
-    }
-
-    if let Ok(content) = std::fs::read_to_string(&json_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(inherits) = json["inheritsFrom"].as_str() {
-                return resolve_actual_mc_version_recursive(inherits, game_dir, depth + 1);
-            }
-        }
-    }
-
-    version_id.to_string()
+/// 实例的 Java 判据：读版本 JSON 声明 + mods 实测，不再靠版本表猜
+pub fn profile_for(version_id: &str, game_dir: &Path) -> java_requirement::InstanceProfile {
+    java_requirement::analyze(version_id, game_dir)
 }
 
 #[derive(Debug, Clone)]
@@ -271,17 +143,8 @@ pub struct JavaMatchResult {
     pub warning: Option<String>,
 }
 
-/// 选取策略：优先推荐范围内最高版本（兼容性最好），否则取满足下界的最低版本
-pub fn auto_match_java_for_version(mc_version: &str) -> Option<JavaMatchResult> {
-    let (min_ver, max_ver) = recommended_java_version_range(mc_version);
-    log::info!(
-        "Minecraft {} 推荐 Java 版本范围: {} ~ {}",
-        mc_version,
-        min_ver,
-        max_ver
-    );
-
-    let config = load_config().ok()?;
+/// 候选 = 配置指定 + 手动添加的路径 + 全盘扫描结果，附带各自的 Java 大版本
+pub fn collect_candidates(config: &GameConfig) -> Vec<(String, u32)> {
     let mut candidates: Vec<(String, u32)> = Vec::new();
 
     let mut try_add = |path: &str| {
@@ -306,51 +169,53 @@ pub fn auto_match_java_for_version(mc_version: &str) -> Option<JavaMatchResult> 
         }
     }
 
+    candidates
+}
+
+/// 选取策略：正好等于声明版本最好，否则在允许区间里取最低的；一个都不允许则 None
+pub fn choose_java(req: &JavaRequirement, candidates: &[(String, u32)]) -> Option<JavaMatchResult> {
+    let allowed: Vec<&(String, u32)> = candidates
+        .iter()
+        .filter(|c| java_requirement::java_allowed(req, c.1))
+        .collect();
+
+    let chosen = allowed
+        .iter()
+        .copied()
+        .find(|c| c.1 == req.target)
+        .or_else(|| allowed.iter().copied().min_by_key(|c| c.1))?;
+
+    let is_optimal = chosen.1 == req.target;
+    let warning = (!is_optimal).then(|| {
+        let band = match req.hard_max {
+            Some(max) => format!("{}~{}", req.min, max),
+            None => format!("{}+", req.min),
+        };
+        let text = format!(
+            "本机没有该实例声明的 Java {}，改用 Java {}（允许区间 {}）",
+            req.target, chosen.1, band
+        );
+        log::warn!("{}", text);
+        text
+    });
+
+    Some(JavaMatchResult {
+        path: chosen.0.clone(),
+        version: chosen.1,
+        is_optimal,
+        warning,
+    })
+}
+
+/// 装配候选并按实例判据挑选
+pub fn auto_match_java(profile: &java_requirement::InstanceProfile) -> Option<JavaMatchResult> {
+    let config = load_config().ok()?;
+    let candidates = collect_candidates(&config);
+
     if candidates.is_empty() {
         log::warn!("未找到任何可用的 Java 安装");
         return None;
     }
 
-    let optimal = candidates
-        .iter()
-        .filter(|(_, ver)| *ver >= min_ver && *ver <= max_ver)
-        .max_by_key(|(_, ver)| *ver);
-
-    if let Some((path, ver)) = optimal {
-        log::info!("自动匹配 Java: {} (版本 {}, 在推荐范围内)", path, ver);
-        return Some(JavaMatchResult {
-            path: path.clone(),
-            version: *ver,
-            is_optimal: true,
-            warning: None,
-        });
-    }
-
-    // 范围外优先取满足下界的最低版本，避免版本过高
-    let fallback = candidates
-        .iter()
-        .filter(|(_, ver)| *ver >= min_ver)
-        .min_by_key(|(_, ver)| *ver)
-        .or_else(|| candidates.iter().max_by_key(|(_, ver)| *ver));
-
-    fallback.map(|(path, ver)| {
-        let warning = if *ver > max_ver {
-            format!(
-                "当前使用 Java {} 启动 Minecraft {}，推荐 Java {}~{} 以获得最佳兼容性。如遇到异常可尝试切换 Java 版本。",
-                ver, mc_version, min_ver, max_ver
-            )
-        } else {
-            format!(
-                "未找到推荐的 Java 版本范围 ({}~{}) 内的安装，当前使用 Java {}。如遇到异常可尝试安装推荐版本的 Java。",
-                min_ver, max_ver, ver
-            )
-        };
-        log::warn!("{}", warning);
-        JavaMatchResult {
-            path: path.clone(),
-            version: *ver,
-            is_optimal: false,
-            warning: Some(warning),
-        }
-    })
+    choose_java(&profile.requirement, &candidates)
 }

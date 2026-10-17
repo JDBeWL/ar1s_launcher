@@ -23,9 +23,7 @@ tauri-build = { version = "2.7", features = [] }
 uuid = { version = "1.28", features = ["v3"] }
 tauri = { version = "2.12", features = [] }
 tauri-plugin-opener = "2.7"
-tauri-plugin-fs = "2.7"
 tauri-plugin-dialog = "2.8"
-tauri-plugin-http = "2.8"
 reqwest = { version = "0.13", features = ["json", "form", "query"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -47,4 +45,15 @@ opener = "0.9"
 tempfile = "3"
 
 [dev-dependencies]
+
+# dev 只留行号表：编译与链接更快，panic 回溯仍带文件名和行号
+[profile.dev]
+debug = "line-tables-only"
+
+# 刻意不设 panic = "abort"：下载与安装的容错依赖 tokio 任务 panic 后返回 JoinError，
+# abort 会让整个进程一起崩掉
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
 

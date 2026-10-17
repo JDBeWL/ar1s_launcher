@@ -255,12 +255,26 @@ fn get_windows_drives() -> Vec<char> {
     Vec::new()
 }
 
+/// 一个目录若直接就是 JDK/JRE 家目录，返回它的 java 可执行文件路径（只判存在，不验证）
+fn java_home_exe(dir: &Path) -> Option<PathBuf> {
+    let exe = dir
+        .join("bin")
+        .join(if cfg!(windows) { "java.exe" } else { "java" });
+
+    exe.is_file().then_some(exe)
+}
+
 fn find_java_in_directory(dir: &Path) -> Vec<String> {
     let mut paths = Vec::new();
 
+    // 根目录自己可能就是 JDK 家目录（有人把 JDK 直接装进 Program Files\Java）
+    if let Some(exe) = java_home_exe(dir).filter(|exe| is_valid_java_executable(exe)) {
+        paths.push(exe.to_string_lossy().replace("\\", "/"));
+    }
+
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
-            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            if entry.path().is_dir() {
                 let dir_name = entry.file_name().to_string_lossy().to_lowercase();
 
                 if is_java_directory_name(&dir_name) {
@@ -309,7 +323,7 @@ fn find_java_in_subdirectory(dir: &Path) -> Vec<String> {
 
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
-            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            if entry.path().is_dir() {
                 let sub_dir_name = entry.file_name().to_string_lossy().to_lowercase();
 
                 if is_java_directory_name(&sub_dir_name) {
@@ -475,21 +489,28 @@ fn scan_java_installations_parallel() -> Vec<String> {
         }
     }
 
+    dedup_by_canonical(paths)
+}
+
+/// 按真实路径去重；同一份安装被符号链接二次命中时保留实体路径，界面上才不会指着链接
+fn dedup_by_canonical(paths: Vec<String>) -> Vec<String> {
     let mut unique_paths = Vec::new();
     let mut seen_paths = std::collections::HashSet::new();
 
     for path in paths {
-        let normalized = match PathBuf::from(&path).canonicalize() {
-            Ok(canonical) => canonical
-                .to_string_lossy()
-                .to_lowercase()
-                .replace("\\", "/"),
-            Err(_) => path.to_lowercase(),
-        };
+        let canonical = PathBuf::from(&path).canonicalize().ok().map(|real| {
+            let raw = real.to_string_lossy();
+            let stripped = raw.strip_prefix(r"\\?\").unwrap_or(&raw);
+            stripped.replace("\\", "/")
+        });
 
-        if !seen_paths.contains(&normalized) {
-            seen_paths.insert(normalized);
-            unique_paths.push(path);
+        let key = canonical
+            .as_ref()
+            .map(|c| c.to_lowercase())
+            .unwrap_or_else(|| path.to_lowercase());
+
+        if seen_paths.insert(key) {
+            unique_paths.push(canonical.unwrap_or(path));
         }
     }
 
@@ -663,4 +684,28 @@ pub fn auto_detect_java() -> Result<Vec<String>, LauncherError> {
     }
 
     Ok(unique_paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dedup_by_canonical;
+
+    #[test]
+    fn test_dedup_keeps_one_representative_per_real_path() {
+        let out = dedup_by_canonical(vec![
+            "C:/Program Files/Zulu/zulu-26/bin/java.exe".to_string(),
+            "C:/Program Files/Zulu/zulu-26/bin/java.exe".to_string(),
+        ]);
+        assert_eq!(out.len(), 1, "{:?}", out);
+    }
+
+    #[test]
+    fn test_dedup_keeps_unresolvable_paths() {
+        // canonicalize 失败时不能顺手把候选丢掉，否则新装的 JDK 直接看不见
+        let out = dedup_by_canonical(vec![
+            "Q:/does/not/exist/bin/java.exe".to_string(),
+            "R:/does/not/exist/bin/java.exe".to_string(),
+        ]);
+        assert_eq!(out.len(), 2, "{:?}", out);
+    }
 }

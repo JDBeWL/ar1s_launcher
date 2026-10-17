@@ -53,9 +53,16 @@ pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherE
 pub async fn launch_instance(
     instance_name: String,
     override_java_path: Option<String>,
+    force_java_mismatch: Option<bool>,
     window: tauri::Window,
 ) -> Result<(), LauncherError> {
-    instance::launch_instance(instance_name, override_java_path, window).await
+    instance::launch_instance(
+        instance_name,
+        override_java_path,
+        force_java_mismatch.unwrap_or(false),
+        window,
+    )
+    .await
 }
 
 #[tauri::command]

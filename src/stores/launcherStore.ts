@@ -1,10 +1,12 @@
 /**
  * 游戏进程事件存储
- * 把 launched / exited / error 三个后端事件转成通知
+ * launched / exited / error 转成通知，minecraft-crash 转成崩溃诊断弹窗
  */
 import { defineStore } from 'pinia';
 import { useMultiEventSubscription } from '../composables/useEventSubscription';
 import { useNotificationStore } from './notificationStore';
+import { useCrashStore } from './crashStore';
+import type { CrashDiagnosis } from '../types/events';
 import { logError } from '../utils/logger';
 
 export const useLauncherStore = defineStore('launcher', () => {
@@ -27,6 +29,14 @@ export const useLauncherStore = defineStore('launcher', () => {
     logError('Minecraft 运行错误', msg, 'LauncherStore');
     const notificationStore = useNotificationStore();
     notificationStore.error('Minecraft 运行错误', msg, true);
+  });
+
+  eventSubs.add<CrashDiagnosis>('minecraft-crash', (event) => {
+    const diagnosis = event.payload;
+    if (!diagnosis) return;
+
+    logError('Minecraft 启动失败', diagnosis.headline, 'LauncherStore');
+    useCrashStore().open(diagnosis);
   });
 
   async function subscribe() {

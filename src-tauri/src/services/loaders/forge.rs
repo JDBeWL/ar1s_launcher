@@ -172,6 +172,36 @@ fn compare_forge_versions(a: &str, b: &str) -> std::cmp::Ordering {
     std::cmp::Ordering::Equal
 }
 
+/// Forge 安装器的候选下载地址。
+/// maven 坐标在 1.8 与 1.9 之间换过形式（≤1.8 带 -{mc} 后缀，≥1.9 不带），
+/// 所以两种形式都进候选表，版本判断只决定先试哪个；只靠判断挑一种，漏掉的版本就永远装不上
+fn forge_installer_sources(mc: &str, v: &str) -> Vec<String> {
+    let suffixed = format!("{mc}-{v}-{mc}");
+    let plain = format!("{mc}-{v}");
+
+    let prefer_suffixed = crate::utils::minecraft::parse_mc_version(mc)
+        .map_or(false, |(major, minor)| major == 1 && minor <= 8);
+
+    let coords = if prefer_suffixed {
+        vec![suffixed, plain]
+    } else {
+        vec![plain, suffixed]
+    };
+
+    let mut sources = Vec::with_capacity(coords.len() * 2);
+    for coord in &coords {
+        sources.push(format!(
+            "{}/net/minecraftforge/forge/{coord}/forge-{coord}-installer.jar",
+            BMCL_LIBRARIES_URL
+        ));
+        sources.push(format!(
+            "{}/net/minecraftforge/forge/{coord}/forge-{coord}-installer.jar",
+            MAVEN_FORGE
+        ));
+    }
+    sources
+}
+
 async fn download_forge_installer(
     forge_version: &ForgeVersion,
 ) -> Result<tempfile::TempPath, LauncherError> {
@@ -180,47 +210,7 @@ async fn download_forge_installer(
         forge_version.mcversion, forge_version.version
     );
 
-    let needs_old_format = forge_version.mcversion.starts_with("1.7")
-        || forge_version.mcversion.starts_with("1.9")
-        || forge_version.mcversion == "1.10";
-
-    let sources = if needs_old_format {
-        vec![
-            format!(
-                "{}/net/minecraftforge/forge/{mc}-{v}-{mc}/forge-{mc}-{v}-{mc}-installer.jar",
-                BMCL_LIBRARIES_URL,
-                mc = forge_version.mcversion,
-                v = forge_version.version
-            ),
-            format!(
-                "{}/net/minecraftforge/forge/{mc}-{v}-{mc}/forge-{mc}-{v}-{mc}-installer.jar",
-                MAVEN_FORGE,
-                mc = forge_version.mcversion,
-                v = forge_version.version
-            ),
-            format!(
-                "{}/net/minecraftforge/forge/{mc}-{v}/forge-{mc}-{v}-installer.jar",
-                BMCL_LIBRARIES_URL,
-                mc = forge_version.mcversion,
-                v = forge_version.version
-            ),
-        ]
-    } else {
-        vec![
-            format!(
-                "{}/net/minecraftforge/forge/{mc}-{v}/forge-{mc}-{v}-installer.jar",
-                BMCL_LIBRARIES_URL,
-                mc = forge_version.mcversion,
-                v = forge_version.version
-            ),
-            format!(
-                "{}/net/minecraftforge/forge/{mc}-{v}/forge-{mc}-{v}-installer.jar",
-                MAVEN_FORGE,
-                mc = forge_version.mcversion,
-                v = forge_version.version
-            ),
-        ]
-    };
+    let sources = forge_installer_sources(&forge_version.mcversion, &forge_version.version);
 
     let client = http_client::get_client();
 
@@ -950,4 +940,51 @@ fn get_jar_main_class(jar_path: &Path) -> Result<String, LauncherError> {
     Err(LauncherError::Custom(
         "MANIFEST 中没有 Main-Class".to_string(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::forge_installer_sources;
+
+    #[test]
+    fn test_installer_sources_cover_both_coordinate_forms() {
+        // 实测边界：1.7.10 / 1.8.9 在 maven 上只有带 -{mc} 后缀的坐标
+        let old = forge_installer_sources("1.8.9", "11.15.1.2318");
+        assert!(
+            old.iter().any(|u| u
+                .contains("1.8.9-11.15.1.2318-1.8.9/forge-1.8.9-11.15.1.2318-1.8.9-installer.jar")),
+            "1.8.9 必须有带后缀的候选：{:?}",
+            old
+        );
+
+        // 1.9 起改成不带后缀
+        let new = forge_installer_sources("1.12.2", "14.23.5.2861");
+        assert!(
+            new.iter()
+                .any(|u| u.ends_with("1.12.2-14.23.5.2861/forge-1.12.2-14.23.5.2861-installer.jar")),
+            "1.12.2 必须有不带后缀的候选：{:?}",
+            new
+        );
+
+        // 先试实测有效的那种，省掉整轮无谓重试
+        assert!(
+            old[0]
+                .contains("1.8.9-11.15.1.2318-1.8.9/forge-1.8.9-11.15.1.2318-1.8.9-installer.jar"),
+            "1.8.9 应优先带后缀：{:?}",
+            old
+        );
+        assert!(
+            new[0].contains("1.12.2-14.23.5.2861/forge-1.12.2-14.23.5.2861-installer.jar"),
+            "1.12.2 应优先不带后缀：{:?}",
+            new
+        );
+
+        // 1.9 以前被误判成旧格式，实测只有不带后缀的存在
+        let f19 = forge_installer_sources("1.9", "12.16.1.1934");
+        assert!(
+            f19[0].contains("/1.9-12.16.1.1934/forge-1.9-12.16.1.1934-installer.jar"),
+            "1.9 应优先不带后缀：{:?}",
+            f19
+        );
+    }
 }

@@ -332,6 +332,17 @@ fn create_library_job_from_name(
     base_url: &str,
 ) -> Option<DownloadJob> {
     let name = lib["name"].as_str()?;
+
+    // 有 classifiers 却没有 artifact 的库（lwjgl-platform 的 *-nightly 就是）本身没有主 jar，
+    // 硬拼一个 .jar 在任何源上都是 404；这类库只需要下 natives，由 collect_natives_library 负责
+    let downloads = lib.get("downloads");
+    let classifiers_only = downloads.is_some()
+        && downloads.and_then(|d| d.get("artifact")).is_none()
+        && downloads.and_then(|d| d.get("classifiers")).is_some();
+    if classifiers_only {
+        return None;
+    }
+
     let maven_path = maven_name_to_path(name, None, "jar")?;
 
     let target_path = libraries_base_dir.join(&maven_path);
@@ -383,15 +394,6 @@ fn create_library_job_from_name(
 }
 
 fn should_download_library(lib: &serde_json::Value) -> bool {
-    // LWJGL natives 无视 rules 评估，始终下载
-    if lib["name"]
-        .as_str()
-        .map_or(false, |name| name.contains("lwjgl"))
-        && lib.get("natives").is_some()
-    {
-        return true;
-    }
-
     crate::utils::minecraft::evaluate_rules(lib.get("rules"))
 }
 
@@ -447,10 +449,6 @@ fn collect_natives_library(
         return;
     };
 
-    let is_lwjgl = lib["name"]
-        .as_str()
-        .map_or(false, |name| name.contains("lwjgl"));
-
     let current_os = std::env::consts::OS;
     let os_key = if current_os == "macos" {
         "osx"
@@ -467,7 +465,7 @@ fn collect_natives_library(
             continue;
         };
 
-        if os_name != os_key && !is_lwjgl {
+        if os_name != os_key {
             continue;
         }
 
@@ -554,4 +552,131 @@ fn create_natives_job_from_name(
         size: 0,
         hash: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn libraries_dir() -> PathBuf {
+        PathBuf::from("ar1s-test-libraries-not-created")
+    }
+
+    #[test]
+    fn test_classifiers_only_library_creates_no_main_jar_job() {
+        // 1.8.9 官方 JSON 里 lwjgl-platform 2.9.2-nightly 只有 classifiers，主 jar 在任何源上都不存在
+        let lib = serde_json::json!({
+            "downloads": {
+                "classifiers": {
+                    "natives-windows": {
+                        "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.2-nightly-20140822/lwjgl-platform-2.9.2-nightly-20140822-natives-windows.jar",
+                        "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.2-nightly-20140822/lwjgl-platform-2.9.2-nightly-20140822-natives-windows.jar"
+                    }
+                }
+            },
+            "extract": { "exclude": ["META-INF/"] },
+            "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.2-nightly-20140822",
+            "natives": { "linux": "natives-linux", "osx": "natives-osx", "windows": "natives-windows" }
+        });
+
+        assert!(
+            create_library_job_from_name(&lib, &libraries_dir(), false, "").is_none(),
+            "只有 classifiers 的库被硬拼出主 jar 任务，下载必然 404"
+        );
+    }
+
+    #[test]
+    fn test_plain_library_still_creates_main_jar_job() {
+        let lib = serde_json::json!({
+            "name": "com.example:tool:1.0",
+            "url": "https://libraries.minecraft.net/"
+        });
+
+        let job = create_library_job_from_name(&lib, &libraries_dir(), false, "")
+            .expect("普通库应该照旧生成主 jar 任务");
+        assert!(
+            job.url.ends_with("com/example/tool/1.0/tool-1.0.jar"),
+            "{}",
+            job.url
+        );
+    }
+
+    /// 1.8.9 官方 JSON 里两条真实的 lwjgl-platform 条目：
+    /// 2.9.4 带 artifact（22 字节的桩 jar），2.9.2 只有 classifiers
+    fn version_json() -> serde_json::Value {
+        serde_json::json!({
+            "libraries": [
+                {
+                    "downloads": {
+                        "artifact": {
+                            "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209.jar",
+                            "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209.jar"
+                        },
+                        "classifiers": {
+                            "natives-windows": {
+                                "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar",
+                                "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar"
+                            }
+                        }
+                    },
+                    "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
+                    "natives": { "windows": "natives-windows" },
+                    "rules": [ { "action": "allow" }, { "action": "disallow", "os": { "name": "osx" } } ]
+                },
+                {
+                    "downloads": {
+                        "classifiers": {
+                            "natives-windows": {
+                                "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.2-nightly-20140822/lwjgl-platform-2.9.2-nightly-20140822-natives-windows.jar",
+                                "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.2-nightly-20140822/lwjgl-platform-2.9.2-nightly-20140822-natives-windows.jar"
+                            }
+                        }
+                    },
+                    "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.2-nightly-20140822",
+                    "natives": { "windows": "natives-windows" },
+                    "rules": [ { "action": "allow", "os": { "name": "osx" } } ]
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn test_no_fabricated_main_jar_but_natives_still_downloaded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let libs: PathBuf = tmp.path().join("libraries");
+        let mut jobs: Vec<DownloadJob> = Vec::new();
+
+        collect_libraries(&version_json(), &libs, false, "", &mut jobs).unwrap();
+        let urls: Vec<&str> = jobs.iter().map(|j| j.url.as_str()).collect();
+
+        assert!(
+            !urls
+                .iter()
+                .any(|u| u.ends_with("lwjgl-platform-2.9.2-nightly-20140822.jar")),
+            "只有 classifiers 的 2.9.2 条目不该再被拼出主 jar：{:?}",
+            urls
+        );
+        assert!(
+            urls.iter()
+                .any(|u| u.ends_with("lwjgl-platform-2.9.4-nightly-20150209.jar")),
+            "带 artifact 的条目应该照旧：{:?}",
+            urls
+        );
+        assert!(
+            urls.iter()
+                .any(|u| u.ends_with("lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar")),
+            "Windows 的 natives 不能因为跳过主 jar 而丢：{:?}",
+            urls
+        );
+        assert!(
+            !urls.iter().any(|u| u.contains("2.9.2-nightly")),
+            "rules 只允许 osx 的条目不该在 Windows 上被抓进来：{:?}",
+            urls
+        );
+        assert!(
+            !urls.iter().any(|u| u.contains("repo1.maven.org")),
+            "这套官方条目里不该出现 Maven Central：{:?}",
+            urls
+        );
+    }
 }

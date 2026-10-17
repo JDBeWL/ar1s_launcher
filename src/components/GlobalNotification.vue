@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useNotificationStore } from '../stores/notificationStore';
+import { copyText } from '../utils/clipboard';
 
 const store = useNotificationStore();
 
@@ -32,6 +33,14 @@ const snackbarTimeout = computed(() => {
 function closeSnackbar() {
   if (currentNotification.value) {
     store.removeNotification(currentNotification.value.id);
+  }
+}
+
+async function copyDialogContent() {
+  if (await copyText(store.dialogContent)) {
+    store.success('已复制到剪贴板');
+  } else {
+    store.error('复制失败，请手动选中文字');
   }
 }
 
@@ -111,6 +120,7 @@ const choiceColor = computed(() => store.choiceType);
         <pre class="dialog-content">{{ store.dialogContent }}</pre>
       </v-card-text>
       <v-card-actions>
+        <v-btn variant="text" prepend-icon="mdi-content-copy" @click="copyDialogContent">复制</v-btn>
         <v-spacer />
         <v-btn color="primary" @click="store.closeDialog">确定</v-btn>
       </v-card-actions>
@@ -144,7 +154,7 @@ const choiceColor = computed(() => store.choiceType);
         <v-btn icon="mdi-close" variant="text" density="comfortable" size="small" @click="store.handleChoice(null)" />
       </v-card-title>
       <v-divider />
-      <v-card-text class="pt-4">
+      <v-card-text class="pt-4 choice-content">
         {{ store.choiceContent }}
       </v-card-text>
       <v-card-actions class="d-flex flex-wrap ga-2 px-4 pb-4">
@@ -170,5 +180,12 @@ const choiceColor = computed(() => store.choiceType);
   word-wrap: break-word;
   font-family: inherit;
   margin: 0;
+}
+
+/* 诊断报告是多行的，默认会被 HTML 折叠成一坨 */
+.choice-content {
+  white-space: pre-line;
+  max-height: 40vh;
+  overflow-y: auto;
 }
 </style>

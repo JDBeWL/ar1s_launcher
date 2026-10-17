@@ -113,8 +113,8 @@ export const instanceApi = {
     await invoke('delete_instance_mod', { instanceName, fileName });
   },
 
-  async launchInstance(instanceName: string, overrideJavaPath?: string): Promise<void> {
-    await invoke('launch_instance', { instanceName, overrideJavaPath });
+  async launchInstance(instanceName: string, overrideJavaPath?: string, forceJavaMismatch?: boolean): Promise<void> {
+    await invoke('launch_instance', { instanceName, overrideJavaPath, forceJavaMismatch });
   },
 
   async validateInstanceName(name: string): Promise<InstanceNameValidation> {
