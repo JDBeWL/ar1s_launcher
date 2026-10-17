@@ -142,30 +142,23 @@ h4 + p {
   width: 12px;
 }
 
-/* .d-flex / .align-center 在 vuetify-utilities.helpers 层，构建分块把 @layer 层序打乱时（原因见 index.html 顶部说明）会静默失效
-   两个类都没有 !important，在未分层样式里重新声明即可摆脱对层序的依赖 —— 无层样式优先于任何层 */
-.d-flex.align-center {
-  align-items: center;
-}
-
 /* Vuetify 的 size="x-small" 字号中文偏小且与界面其他文字脱节 */
 .v-btn--size-x-small {
   font-size: 0.75rem;
 }
 
-/* 组件层给的是 line-height: normal，它随系统回退字体漂移：行盒一旦高于字形内容，汉字基线就被压低，与同行 mdi 图标错开
-   钉成 1rem 后与 .text-body-small 共用行盒；本文件未分层，优先级高于组件层 */
+/* 亚像素光学校正：图标与汉字的墨迹重心都不在盒子几何中心，CSS 算不出来，只能实测后补偿。
+   先把行盒钉成 1rem（组件层的 line-height: normal 随回退字体漂移，行盒一高于字形内容，汉字基线就被压低、与同行 mdi 图标错开），
+   再补位移。下面三个取值绑当前字体栈（Roboto + Noto Sans SC 子集）和这个行盒，换字体或改行高要重新实测 */
 .v-btn--size-x-small,
 .v-btn--size-small {
   line-height: 1rem;
 }
 
-/* mdi 字形重心比 em box 几何中心偏上，与 CJK 文字并排时视觉可感，做半像素校正 */
 .v-list-item__append > .v-btn--icon .v-icon {
   transform: translateY(0.5px);
 }
 
-/* 「最近游玩」卡片头部的光学校正：图标与汉字的墨迹重心都不在盒子几何中心，CSS 算不出来，只能实测后补偿 */
 .card-head-row .v-icon {
   transform: translateY(0.75px);
 }
@@ -174,13 +167,13 @@ h4 + p {
   transform: translateY(-0.5px);
 }
 
-/* 居中不依赖 utilities 层的 .align-center：容器 align-items 被层序问题改坏（退回 stretch）时，逐个子项声明仍能居中 */
-.card-head-row > * {
-  align-self: center;
+/* @layer 层序兜底：根因修复见 index.html 顶部。这两处仍受「utilities 层永远晚于组件层」影响，用未分层声明压住（无层优先于任何层）
+   .d-flex / .align-center 没有 !important，层序一被打乱就静默失效，居中的行退回 stretch、行内文字被顶到拉伸框上方
+   .rounded-xl 会盖掉 VBtnGroup 自己的 border-radius: 0，把分段控件拆成一串独立药丸，所以每段压平、只留容器外框 */
+.d-flex.align-center {
+  align-items: center;
 }
 
-/* 全局 defaults 给每个 VBtn 塞了 rounded: 'xl'，而 .rounded-xl 在 utilities 层、层序晚于组件层 VBtnGroup 自己的 border-radius: 0，
-   层与层之间不看选择器权重，分段控件会被拆成一串独立药丸。无层声明优先于任何层，这里把每段压平、只留容器外框 */
 .v-btn-toggle > .v-btn {
   border-radius: 0;
 }
@@ -282,97 +275,14 @@ h4 + p {
   --v-font-body: 'Roboto', 'Noto Sans SC Subset', sans-serif;
 }
 
-/* 全局禁用所有过渡和动画；下面几块只恢复功能性动画 */
+/* 装饰性动效全关：hover 状态层、ripple、Vue transition 的 CSS 部分都走 transition。
+   进度条与骨架屏流光是 @keyframes animation，别在这里一起杀掉 */
 *,
 *::before,
 *::after {
   transition: none !important;
   transition-property: none !important;
   transition-duration: 0s !important;
-  animation: none !important;
-  animation-duration: 0s !important;
-}
-
-.v-expand-transition-enter-active,
-.v-expand-transition-leave-active,
-.v-fade-transition-enter-active,
-.v-fade-transition-leave-active,
-.v-slide-y-transition-enter-active,
-.v-slide-y-transition-leave-active,
-.v-slide-x-transition-enter-active,
-.v-slide-x-transition-leave-active,
-.v-scale-transition-enter-active,
-.v-scale-transition-leave-active,
-.v-dialog-transition-enter-active,
-.v-dialog-transition-leave-active {
-  transition: none !important;
-  transition-duration: 0s !important;
-}
-
-.v-btn,
-.v-card,
-.v-list-item,
-.v-field,
-.v-input,
-.v-selection-control,
-.v-switch__track,
-.v-switch__thumb,
-.v-overlay__scrim,
-.v-window-item,
-.v-tab {
-  transition: none !important;
-  transition-duration: 0s !important;
-}
-
-.v-navigation-drawer,
-.v-main,
-.v-application {
-  transition: none !important;
-  transition-duration: 0s !important;
-}
-
-.v-navigation-drawer * {
-  transition: none !important;
-  transition-duration: 0s !important;
-}
-
-/* 进度条动画例外：功能性动画要保留，用 inherit 绕开上面的全局禁用 */
-.v-progress-linear__determinate,
-.v-progress-linear__indeterminate,
-.v-progress-linear__background,
-.v-progress-circular__overlay,
-.v-progress-circular__underlay {
-  transition: inherit !important;
-  transition-duration: inherit !important;
-  animation-duration: inherit !important;
-}
-
-/* 进度条本身的动画帧定义需要保留 */
-.v-progress-linear__indeterminate--active .v-progress-linear__determinate {
-  animation-duration: 2s !important;
-}
-
-.v-progress-circular--indeterminate > svg {
-  animation-duration: 1.4s !important;
-}
-
-/* 按钮 loading 动画例外 - v-btn 内的 v-progress-circular 旋转动画 */
-.v-btn .v-progress-circular--indeterminate > svg {
-  animation: progress-circular-rotate 1.4s linear infinite !important;
-  animation-duration: 1.4s !important;
-  transform-origin: center center !important;
-}
-
-.v-btn .v-progress-circular--indeterminate .v-progress-circular__overlay {
-  animation:
-    progress-circular-dash 1.4s ease-in-out infinite,
-    progress-circular-rotate 1.4s linear infinite !important;
-  animation-duration: 1.4s !important;
-  stroke-dasharray: 25, 200 !important;
-  stroke-dashoffset: 0 !important;
-  stroke-linecap: round !important;
-  transform-origin: center center !important;
-  transform: rotate(-90deg) !important;
 }
 
 /* v-select 下拉菜单：MD3 浮层菜单风格 */

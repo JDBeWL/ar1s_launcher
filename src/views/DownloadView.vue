@@ -164,7 +164,7 @@ onUnmounted(() => {
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
         <v-row density="compact" align="center">
-          <v-col cols="12" sm="5">
+          <v-col cols="12" sm>
             <v-text-field
               density="comfortable"
               v-model="searchQuery"
@@ -178,7 +178,7 @@ onUnmounted(() => {
               </template>
             </v-text-field>
           </v-col>
-          <v-col cols="6" sm="4">
+          <v-col cols="6" sm="auto">
             <v-btn-toggle
               v-model="versionType"
               mandatory

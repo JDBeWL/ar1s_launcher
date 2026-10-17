@@ -29,6 +29,17 @@ const toneDark = {
   'grey-container': '#49454F',
 };
 
+const fieldDefaults = {
+  rounded: 'xl',
+  variant: 'outlined',
+  density: 'comfortable',
+};
+
+const menuProps = {
+  contentClass: 'v-select-menu-content',
+  offset: 4,
+};
+
 const vuetify = createVuetify({
   theme: {
     defaultTheme: 'dark-indigo',
@@ -264,64 +275,17 @@ const vuetify = createVuetify({
     },
   },
   defaults: {
-    VBtn: {
-      rounded: 'xl',
-      fontWeight: 500,
-    },
-    VCard: {
-      rounded: 'xl',
-    },
-    VTextField: {
-      rounded: 'xl',
-      variant: 'outlined',
-      density: 'comfortable',
-    },
-    VSelect: {
-      rounded: 'xl',
-      variant: 'outlined',
-      density: 'comfortable',
-      menuProps: {
-        contentClass: 'v-select-menu-content',
-        offset: 4,
-      },
-    },
-    VAutocomplete: {
-      rounded: 'xl',
-      variant: 'outlined',
-      density: 'comfortable',
-      menuProps: {
-        contentClass: 'v-select-menu-content',
-        offset: 4,
-      },
-    },
-    VCombobox: {
-      rounded: 'xl',
-      variant: 'outlined',
-      density: 'comfortable',
-      menuProps: {
-        contentClass: 'v-select-menu-content',
-        offset: 4,
-      },
-    },
-    VMenu: {
-      rounded: 'lg',
-      offset: 4,
-      transition: false,
-      location: 'bottom end',
-    },
-    VAlert: {
-      rounded: 'xl',
-    },
-    VDialog: {
-      rounded: 'xl',
-      transition: false,
-    },
-    VList: {
-      rounded: 'lg',
-    },
-    VListItem: {
-      rounded: 'lg',
-    },
+    VBtn: { rounded: 'xl', fontWeight: 500 },
+    VCard: { rounded: 'xl' },
+    VTextField: fieldDefaults,
+    VSelect: { ...fieldDefaults, menuProps },
+    VAutocomplete: { ...fieldDefaults, menuProps },
+    VCombobox: { ...fieldDefaults, menuProps },
+    VMenu: { rounded: 'lg', offset: 4, transition: false, location: 'bottom end' },
+    VAlert: { rounded: 'xl' },
+    VDialog: { rounded: 'xl', transition: false },
+    VList: { rounded: 'lg' },
+    VListItem: { rounded: 'lg' },
   },
 });
 
