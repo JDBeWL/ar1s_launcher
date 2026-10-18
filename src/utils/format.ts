@@ -67,6 +67,14 @@ export function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+/** 后端 LauncherError 的稳定错误码；普通 JS Error 没有 code */
+export function getErrorCode(error: unknown): string | null {
+  if (error && typeof error === 'object' && 'code' in error) {
+    return String((error as { code: unknown }).code);
+  }
+  return null;
+}
+
 interface ParsedVersion {
   type: 'release' | 'rc' | 'pre' | 'snapshot' | 'other' | 'unknown';
   parts: number[];

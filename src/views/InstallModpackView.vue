@@ -238,7 +238,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useNotificationStore } from '../stores/notificationStore';
 import { modpackApi, instanceApi } from '../services';
 import { logError } from '../utils/logger';
-import { compareVersionDesc, getErrorMessage } from '../utils/format';
+import { compareVersionDesc, getErrorMessage, getErrorCode } from '../utils/format';
 import type { ModrinthVersion, InstallProgressPayload } from '../types/events';
 
 const route = useRoute();
@@ -438,9 +438,12 @@ async function install() {
     notificationStore.success('安装成功', `${effectiveInstanceName.value} 已安装完成`);
     router.push('/instance-manager');
   } catch (e) {
-    logError('安装整合包失败', e, 'InstallModpackView');
-    const errorMessage = getErrorMessage(e);
-    notificationStore.error('安装失败', errorMessage, true);
+    if (getErrorCode(e) === 'cancelled') {
+      notificationStore.info('已取消', '整合包安装已取消');
+    } else {
+      logError('安装整合包失败', e, 'InstallModpackView');
+      notificationStore.error('安装失败', getErrorMessage(e), true);
+    }
   } finally {
     installing.value = false;
     cancelling.value = false;

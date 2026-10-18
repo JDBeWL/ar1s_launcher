@@ -9,6 +9,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 const MICROSOFT_CLIENT_ID: &str = "907a248d-3eb5-4d01-99d2-ff72d79c5eb1";
@@ -516,26 +517,47 @@ pub async fn exchange_auth_code(
         .map_err(|e| LauncherError::Custom(format!("解析 Token 响应失败: {}", e)))
 }
 
-pub async fn wait_for_auth_callback(expected_state: &str) -> Result<String, LauncherError> {
+async fn wait_cancelled(flag: &AtomicBool) {
+    while !flag.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+pub async fn wait_for_auth_callback(
+    expected_state: &str,
+    cancel: &AtomicBool,
+) -> Result<String, LauncherError> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:26669")
         .await
         .map_err(|e| LauncherError::Custom(format!("无法启动本地回调服务器: {}", e)))?;
 
     // 不带超时的话，用户关掉浏览器标签就会让这个 command 永久挂起并占住 26669
-    let (stream, _) = tokio::time::timeout(CALLBACK_TIMEOUT, listener.accept())
-        .await
-        .map_err(|_| LauncherError::Custom("等待浏览器回调超时，请重新发起登录".to_string()))?
-        .map_err(|e| LauncherError::Custom(format!("等待回调连接失败: {}", e)))?;
+    let (stream, _) = tokio::select! {
+        result = tokio::time::timeout(CALLBACK_TIMEOUT, listener.accept()) => {
+            result
+                .map_err(|_| LauncherError::Custom("等待浏览器回调超时，请重新发起登录".to_string()))?
+                .map_err(|e| LauncherError::Custom(format!("等待回调连接失败: {}", e)))?
+        }
+        _ = wait_cancelled(cancel) => {
+            return Err(LauncherError::Cancelled);
+        }
+    };
 
     let mut reader = tokio::io::BufReader::new(stream);
     let mut request_line = String::new();
-    tokio::time::timeout(
-        CALLBACK_TIMEOUT,
-        tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut request_line),
-    )
-    .await
-    .map_err(|_| LauncherError::Custom("读取回调请求超时".to_string()))?
-    .map_err(|e| LauncherError::Custom(format!("读取回调请求失败: {}", e)))?;
+    tokio::select! {
+        result = tokio::time::timeout(
+            CALLBACK_TIMEOUT,
+            tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut request_line),
+        ) => {
+            result
+                .map_err(|_| LauncherError::Custom("读取回调请求超时".to_string()))?
+                .map_err(|e| LauncherError::Custom(format!("读取回调请求失败: {}", e)))?;
+        }
+        _ = wait_cancelled(cancel) => {
+            return Err(LauncherError::Cancelled);
+        }
+    }
 
     let url_part = request_line.split_whitespace().nth(1).unwrap_or("");
     let query_str = url_part.split('?').nth(1).unwrap_or("");
@@ -583,12 +605,37 @@ pub async fn wait_for_auth_callback(expected_state: &str) -> Result<String, Laun
 pub async fn complete_auth_code_flow(
     code_verifier: &str,
     expected_state: &str,
+    cancel: &AtomicBool,
 ) -> Result<MicrosoftAuthResult, LauncherError> {
-    let code = wait_for_auth_callback(expected_state).await?;
+    let code = wait_for_auth_callback(expected_state, cancel).await?;
     let token_resp = exchange_auth_code(&code, code_verifier).await?;
 
     let refresh = token_resp.refresh_token.clone().unwrap_or_default();
     let expires_in = token_resp.expires_in.unwrap_or(3600);
 
     complete_microsoft_auth(&token_resp.access_token, &refresh, expires_in).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wait_for_auth_callback;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    #[tokio::test]
+    async fn test_wait_for_callback_can_be_cancelled() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            flag.store(true, Ordering::Relaxed);
+        });
+
+        let started = Instant::now();
+        let result = wait_for_auth_callback("expected-state", cancel.as_ref()).await;
+
+        assert!(result.unwrap_err().to_string().contains("已取消"));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
 }

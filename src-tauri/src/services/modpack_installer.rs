@@ -34,6 +34,8 @@ pub fn reset_modpack_cancel_flag() {
 
 pub fn set_modpack_cancel_flag() {
     get_cancel_flag().store(true, Ordering::SeqCst);
+    // 原版下载走独立的取消标志；不联动的话取消要等整轮下载跑完才生效
+    crate::services::download::batch::set_cancel_flag();
 }
 
 fn is_cancelled() -> bool {
@@ -42,7 +44,7 @@ fn is_cancelled() -> bool {
 
 fn check_cancelled() -> Result<(), LauncherError> {
     if is_cancelled() {
-        Err(LauncherError::Custom("安装已取消".to_string()))
+        Err(LauncherError::Cancelled)
     } else {
         Ok(())
     }
@@ -146,6 +148,16 @@ impl ModpackInstaller {
         }
         let temp_dir = game_dir.join("temp");
         let extract_dir = temp_dir.join(format!("{}_extract", &options.instance_name));
+
+        // 同实例的整合包安装跨进程串行；失败清理会删实例目录，不能和另一实例互相踩
+        let _install_lock = crate::utils::file_lock::acquire_async(
+            &game_dir.join(format!(
+                ".download_state/modpack-{}.lock",
+                options.instance_name
+            )),
+            std::time::Duration::from_secs(2),
+        )
+        .await?;
 
         if instance_dir.exists() {
             return Err(LauncherError::Custom(format!(
@@ -270,8 +282,8 @@ impl ModpackInstaller {
             )
             .await
             .map_err(|e| {
-                if e.to_string().contains("cancelled") {
-                    LauncherError::Custom("安装已取消".to_string())
+                if e.is_cancelled() {
+                    LauncherError::Cancelled
                 } else {
                     LauncherError::Custom(format!("下载整合包文件失败: {}", e))
                 }
@@ -524,7 +536,7 @@ impl ModpackInstaller {
                             break;
                         }
                         Err(e) => {
-                            if e.to_string().contains("cancelled") {
+                            if e.is_cancelled() {
                                 return;
                             }
                             warn!("下载失败 {} (第 {} 次尝试): {}", file_path, attempt + 1, e);
@@ -597,59 +609,75 @@ impl ModpackInstaller {
     ) -> Result<(), LauncherError> {
         let mc_version = &deps.minecraft;
         info!("安装 Minecraft {}", mc_version);
+        let cancel = get_cancel_flag();
 
         let config = config::load_config()?;
-        download::process_and_download_version(
+        let download_result = download::process_and_download_version(
             mc_version.clone(),
             config.download_mirror.clone(),
             window,
         )
-        .await?;
+        .await;
+        // 下载被取消时错误文案来自下载模块，这里统一成安装取消
+        check_cancelled()?;
+        download_result?;
 
         if let Some(forge_version) = &deps.forge {
             info!("安装 Forge {}", forge_version);
-            loaders::install_loader(
+            let result = loaders::install_loader(
                 &loaders::LoaderType::Forge {
                     mc_version: mc_version.clone(),
                     loader_version: forge_version.clone(),
                 },
                 instance_name,
                 game_dir,
+                Some(cancel.as_ref()),
             )
-            .await?;
+            .await;
+            check_cancelled()?;
+            result?;
         } else if let Some(fabric_version) = deps.fabric_loader.as_ref().or(deps.fabric.as_ref()) {
             info!("安装 Fabric {}", fabric_version);
-            loaders::install_loader(
+            let result = loaders::install_loader(
                 &loaders::LoaderType::Fabric {
                     mc_version: mc_version.clone(),
                     loader_version: fabric_version.clone(),
                 },
                 instance_name,
                 game_dir,
+                Some(cancel.as_ref()),
             )
-            .await?;
+            .await;
+            check_cancelled()?;
+            result?;
         } else if let Some(quilt_version) = deps.quilt_loader.as_ref().or(deps.quilt.as_ref()) {
             info!("安装 Quilt {}", quilt_version);
-            loaders::install_loader(
+            let result = loaders::install_loader(
                 &loaders::LoaderType::Quilt {
                     mc_version: mc_version.clone(),
                     loader_version: quilt_version.clone(),
                 },
                 instance_name,
                 game_dir,
+                Some(cancel.as_ref()),
             )
-            .await?;
+            .await;
+            check_cancelled()?;
+            result?;
         } else if let Some(neoforge_version) = &deps.neoforge {
             info!("安装 NeoForge {}", neoforge_version);
-            loaders::install_loader(
+            let result = loaders::install_loader(
                 &loaders::LoaderType::NeoForge {
                     mc_version: mc_version.clone(),
                     loader_version: neoforge_version.clone(),
                 },
                 instance_name,
                 game_dir,
+                Some(cancel.as_ref()),
             )
-            .await?;
+            .await;
+            check_cancelled()?;
+            result?;
         } else {
             // 无加载器依赖时手动补一份版本 JSON
             self.create_vanilla_version_json(mc_version, instance_name, game_dir)?;

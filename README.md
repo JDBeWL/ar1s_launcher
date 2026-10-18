@@ -112,6 +112,8 @@ pnpm run build
 pnpm run tauri build
 ```
 
+配置、日志、登录凭据与默认的 `.minecraft` 都在 exe 同级目录，升级时替换 exe 即可。发布压缩包需同时带上 `LICENSE`。
+
 ## 项目结构
 
 ```
@@ -232,7 +234,7 @@ Ar1s_Launcher/
 
 ### 游戏目录
 
-应用会自动检测当前目录下默认的Minecraft游戏目录，也支持自定义目录设置。
+默认使用 exe 同级目录下的 `.minecraft`，也支持在设置中自定义目录。
 
 ### Java环境
 

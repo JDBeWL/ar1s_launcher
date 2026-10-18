@@ -71,6 +71,7 @@ pub async fn install_loader(
     loader: &LoaderType,
     instance_name: &str,
     game_dir: &Path,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<(), LauncherError> {
     file_utils::validate_instance_name_or_error(instance_name)?;
     file_utils::validate_version_id_or_error(loader.mc_version())?;
@@ -80,7 +81,9 @@ pub async fn install_loader(
         LoaderType::Forge {
             mc_version,
             loader_version,
-        } => forge::install_forge(mc_version, loader_version, instance_name, game_dir).await,
+        } => {
+            forge::install_forge(mc_version, loader_version, instance_name, game_dir, cancel).await
+        }
         LoaderType::Fabric {
             mc_version,
             loader_version,
@@ -92,6 +95,9 @@ pub async fn install_loader(
         LoaderType::NeoForge {
             mc_version,
             loader_version,
-        } => neoforge::install_neoforge(mc_version, loader_version, instance_name, game_dir).await,
+        } => {
+            neoforge::install_neoforge(mc_version, loader_version, instance_name, game_dir, cancel)
+                .await
+        }
     }
 }

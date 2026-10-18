@@ -41,7 +41,8 @@ pub async fn download_all_files(
     window: &Window,
 ) -> Result<(), LauncherError> {
     let config = load_config()?;
-    let threads = config.download_threads as usize;
+    // 旧配置或手改配置可能是 0；Semaphore::new(0) 会让所有任务永久等许可
+    let threads = (config.download_threads as usize).max(1);
 
     let http = get_http_client();
 
@@ -57,6 +58,14 @@ pub async fn download_all_files(
     let state_dir = game_dir.join(".download_state");
     std::fs::create_dir_all(&state_dir)?;
     let state_file = state_dir.join(format!("{}.json", version_id));
+
+    // 共享 assets/libraries 的目标路径是全局的，按版本加锁挡不住两个版本写同一个 .part；
+    // 同一游戏目录同一时间只允许一个下载任务
+    let _download_lock = crate::utils::file_lock::acquire_async(
+        &state_dir.join("download.lock"),
+        std::time::Duration::from_secs(2),
+    )
+    .await?;
 
     let download_state = Arc::new(Mutex::new(
         DownloadState::load_from_file(&state_file).unwrap_or_else(DownloadState::new),
@@ -208,7 +217,7 @@ pub async fn download_all_files(
 
     if was_cancelled.load(Ordering::Acquire) {
         emit_cancelled_progress(window, bytes_downloaded.load(Ordering::Relaxed), total_size);
-        return Err(LauncherError::Custom("下载已取消".to_string()));
+        return Err(LauncherError::Cancelled);
     }
 
     if task_panics > 0 {
@@ -395,7 +404,7 @@ fn spawn_download_task(
                     break;
                 }
                 Err(e) => {
-                    if e.to_string().contains("cancelled") {
+                    if e.is_cancelled() {
                         break;
                     }
                     warn!("Download failed: {} ({}) - {}", current_url, attempt_str, e);

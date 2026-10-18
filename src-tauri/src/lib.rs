@@ -50,6 +50,7 @@ pub fn run() {
             controllers::auth_controller::complete_microsoft_login,
             controllers::auth_controller::start_microsoft_auth_code_login,
             controllers::auth_controller::complete_microsoft_auth_code_login,
+            controllers::auth_controller::cancel_microsoft_login,
             controllers::auth_controller::refresh_microsoft_auth,
             controllers::auth_controller::refresh_skin_url,
             controllers::auth_controller::logout_microsoft,

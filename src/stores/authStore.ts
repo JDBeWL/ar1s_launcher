@@ -123,6 +123,10 @@ export const useAuthStore = defineStore('auth', () => {
     return result;
   }
 
+  async function cancelMicrosoftLogin() {
+    await userApi.cancelMicrosoftLogin();
+  }
+
   async function logoutMicrosoft() {
     try {
       await userApi.logoutMicrosoft();
@@ -172,6 +176,7 @@ export const useAuthStore = defineStore('auth', () => {
     completeMicrosoftLogin,
     startAuthCodeLogin,
     completeAuthCodeLogin,
+    cancelMicrosoftLogin,
     logoutMicrosoft,
     init,
   };

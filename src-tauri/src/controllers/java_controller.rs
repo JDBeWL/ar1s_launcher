@@ -49,68 +49,72 @@ pub fn remove_custom_java_path(path: String) -> Result<(), LauncherError> {
 }
 
 #[tauri::command]
-pub fn check_java_compatibility(
+pub async fn check_java_compatibility(
     mc_version: String,
 ) -> Result<JavaCompatibilityResult, LauncherError> {
-    crate::utils::file_utils::validate_version_id_or_error(&mc_version)?;
-    let config = load_config()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::utils::file_utils::validate_version_id_or_error(&mc_version)?;
+        let config = load_config()?;
 
-    // 传进来的可能是实例 ID，判据自己会沿 inheritsFrom 找到声明
-    let game_dir = java::resolve_game_dir(&config.game_dir);
-    let profile = java::profile_for(&mc_version, &game_dir);
-    let req = &profile.requirement;
-    log::info!(
-        "检查 Java 兼容性: {} → {} 实例，要求 {}{}（优先 {}）",
-        mc_version,
-        profile.loader.label(),
-        req.min,
-        match req.hard_max {
-            Some(max) => format!("~{}", max),
-            None => "+".to_string(),
-        },
-        req.target
-    );
+        // 传进来的可能是实例 ID，判据自己会沿 inheritsFrom 找到声明
+        let game_dir = java::resolve_game_dir(&config.game_dir);
+        let profile = java::profile_for(&mc_version, &game_dir);
+        let req = &profile.requirement;
+        log::info!(
+            "检查 Java 兼容性: {} → {} 实例，要求 {}{}（优先 {}）",
+            mc_version,
+            profile.loader.label(),
+            req.min,
+            match req.hard_max {
+                Some(max) => format!("~{}", max),
+                None => "+".to_string(),
+            },
+            req.target
+        );
 
-    let current_java_path = config.java_path.clone();
-    let current_java_version = current_java_path
-        .as_deref()
-        .and_then(java::detect_java_version);
+        let current_java_path = config.java_path.clone();
+        let current_java_version = current_java_path
+            .as_deref()
+            .and_then(java::detect_java_version);
 
-    // 版本 JSON 读不到时不硬拦，只按声明下限判；探测不到当前 Java 也按不兼容提示，但不阻断
-    let allowed = current_java_version.is_some_and(|v| java_requirement::java_allowed(req, v));
-    let compatible = !profile.resolved || allowed;
-    let hard_block = profile.resolved && current_java_version.is_some() && !allowed;
+        // 版本 JSON 读不到时不硬拦，只按声明下限判；探测不到当前 Java 也按不兼容提示，但不阻断
+        let allowed = current_java_version.is_some_and(|v| java_requirement::java_allowed(req, v));
+        let compatible = !profile.resolved || allowed;
+        let hard_block = profile.resolved && current_java_version.is_some() && !allowed;
 
-    let candidates = java::collect_candidates(&config);
-    let match_result = java::choose_java(req, &candidates);
-    let recommended_java_path = match_result.as_ref().map(|r| r.path.clone());
-    let recommended_java_version = match_result.as_ref().map(|r| r.version);
-    let recommended_java_optimal = match_result.as_ref().is_some_and(|r| r.is_optimal);
-    let recommended_java_warning = match_result.as_ref().and_then(|r| r.warning.clone());
+        let candidates = java::collect_candidates(&config);
+        let match_result = java::choose_java(req, &candidates);
+        let recommended_java_path = match_result.as_ref().map(|r| r.path.clone());
+        let recommended_java_version = match_result.as_ref().map(|r| r.version);
+        let recommended_java_optimal = match_result.as_ref().is_some_and(|r| r.is_optimal);
+        let recommended_java_warning = match_result.as_ref().and_then(|r| r.warning.clone());
 
-    let diagnostic = if hard_block {
-        java_requirement::build_report(
-            &profile,
-            current_java_path.as_deref().zip(current_java_version),
-            &candidates,
-        )
-    } else {
-        String::new()
-    };
+        let diagnostic = if hard_block {
+            java_requirement::build_report(
+                &profile,
+                current_java_path.as_deref().zip(current_java_version),
+                &candidates,
+            )
+        } else {
+            String::new()
+        };
 
-    Ok(JavaCompatibilityResult {
-        compatible,
-        hard_block,
-        diagnostic,
-        current_java_version,
-        required_java_version: req.min,
-        recommended_min_java_version: req.min,
-        recommended_max_java_version: req.hard_max.unwrap_or(java::NO_UPPER_BOUND),
-        current_java_path,
-        recommended_java_path,
-        recommended_java_version,
-        recommended_java_optimal,
-        recommended_java_warning,
-        auto_match_enabled: config.auto_match_java,
+        Ok(JavaCompatibilityResult {
+            compatible,
+            hard_block,
+            diagnostic,
+            current_java_version,
+            required_java_version: req.min,
+            recommended_min_java_version: req.min,
+            recommended_max_java_version: req.hard_max.unwrap_or(java::NO_UPPER_BOUND),
+            current_java_path,
+            recommended_java_path,
+            recommended_java_version,
+            recommended_java_optimal,
+            recommended_java_warning,
+            auto_match_enabled: config.auto_match_java,
+        })
     })
+    .await
+    .map_err(|e| LauncherError::Custom(format!("后台任务执行失败: {}", e)))?
 }

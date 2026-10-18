@@ -8,15 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
-
-static LAST_SAVED: LazyLock<Mutex<Option<Credentials>>> = LazyLock::new(|| Mutex::new(None));
-
-fn last_saved() -> std::sync::MutexGuard<'static, Option<Credentials>> {
-    LAST_SAVED
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Credentials {
@@ -39,25 +30,15 @@ fn credentials_path() -> PathBuf {
 }
 
 pub fn load() -> Result<Option<Credentials>, LauncherError> {
-    let credentials = load_from_path(&credentials_path())?;
-    *last_saved() = credentials.clone();
-    Ok(credentials)
+    load_from_path(&credentials_path())
 }
 
 pub fn save(credentials: &Credentials) -> Result<(), LauncherError> {
-    if *last_saved() == Some(credentials.clone()) {
-        return Ok(());
-    }
-
-    save_to_path(&credentials_path(), credentials)?;
-    *last_saved() = Some(credentials.clone());
-    Ok(())
+    save_to_path(&credentials_path(), credentials)
 }
 
 pub fn clear() -> Result<(), LauncherError> {
-    clear_path(&credentials_path())?;
-    *last_saved() = None;
-    Ok(())
+    clear_path(&credentials_path())
 }
 
 fn load_from_path(path: &Path) -> Result<Option<Credentials>, LauncherError> {

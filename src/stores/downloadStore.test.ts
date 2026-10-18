@@ -61,6 +61,19 @@ describe('DownloadStore', () => {
     expect(store.downloadError).toBeTruthy();
   });
 
+  it('取消错误标记为 cancelled，不当作失败', async () => {
+    const store = useDownloadStore();
+    vi.mocked(api.api.version.downloadVersion).mockRejectedValue({
+      code: 'cancelled',
+      message: '操作已取消',
+    });
+
+    await store.startDownload('1.20.1');
+
+    expect(store.downloadProgress.status).toBe('cancelled');
+    expect(store.downloadError).toBeNull();
+  });
+
   it('cancelDownload 调用 API', async () => {
     const store = useDownloadStore();
     const mockCancel = vi.mocked(api.api.version.cancelDownload).mockResolvedValue(undefined);

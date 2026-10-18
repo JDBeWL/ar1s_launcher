@@ -5,7 +5,7 @@ import PlayerHead from '../../components/PlayerHead.vue';
 import { useAuthStore } from '../../stores/authStore';
 import { useDebounceFn } from '../../composables/useDebounce';
 import { logError } from '../../utils/logger';
-import { getErrorMessage } from '../../utils/format';
+import { getErrorMessage, getErrorCode } from '../../utils/format';
 
 const authStore = useAuthStore();
 const loginLoading = ref(false);
@@ -33,6 +33,14 @@ async function switchAuthType(type: 'offline' | 'microsoft') {
   await authStore.switchAuthType(type);
 }
 
+async function cancelLogin() {
+  try {
+    await authStore.cancelMicrosoftLogin();
+  } catch (err) {
+    logError('Failed to cancel Microsoft login', err, 'AuthSettings');
+  }
+}
+
 async function startMicrosoftLogin() {
   loginLoading.value = true;
   loginError.value = '';
@@ -52,7 +60,7 @@ async function startMicrosoftLogin() {
     } catch (err) {
       authCodeWaiting.value = false;
       const msg = getErrorMessage(err);
-      if (!msg.includes('拒绝了授权') && !msg.includes('被拒绝')) {
+      if (getErrorCode(err) !== 'cancelled' && !msg.includes('拒绝了授权') && !msg.includes('被拒绝')) {
         loginError.value = msg;
       }
       logError('Microsoft auth code login failed', err, 'AuthSettings');
@@ -87,7 +95,7 @@ async function startDeviceCodeLogin() {
     } catch (err) {
       loginDialog.value = false;
       const msg = getErrorMessage(err);
-      if (!msg.includes('拒绝了授权') && !msg.includes('已过期')) {
+      if (getErrorCode(err) !== 'cancelled' && !msg.includes('拒绝了授权') && !msg.includes('已过期')) {
         loginError.value = msg;
       }
       logError('Microsoft login failed', err, 'AuthSettings');
@@ -278,6 +286,7 @@ onMounted(async () => {
             <v-progress-circular indeterminate size="32" color="primary" class="mr-2" />
             <span class="text-body-medium text-on-surface-variant">等待浏览器登录中...</span>
           </div>
+          <v-btn block variant="text" color="on-surface-variant" class="mt-4" @click="cancelLogin"> 取消登录 </v-btn>
         </v-card-text>
       </v-card>
     </v-dialog>
@@ -339,6 +348,7 @@ onMounted(async () => {
             <v-progress-circular indeterminate size="32" color="primary" class="mr-2" />
             <span class="text-body-medium text-on-surface-variant">等待登录中...</span>
           </div>
+          <v-btn block variant="text" color="on-surface-variant" class="mt-4" @click="cancelLogin"> 取消登录 </v-btn>
         </v-card-text>
       </v-card>
     </v-dialog>

@@ -6,6 +6,16 @@ use crate::errors::LauncherError;
 use crate::models::*;
 use crate::services::config;
 
+async fn run_blocking<T, F>(task: F) -> Result<T, LauncherError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, LauncherError> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|e| LauncherError::Custom(format!("后台任务执行失败: {}", e)))?
+}
+
 #[tauri::command(rename = "get_config")]
 pub fn get_config() -> Result<GameConfig, LauncherError> {
     let mut config = (*config::load_config()?).clone();
@@ -31,8 +41,8 @@ pub fn get_game_dir() -> Result<String, LauncherError> {
 }
 
 #[tauri::command]
-pub fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
-    config::get_game_dir_info()
+pub async fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
+    run_blocking(config::get_game_dir_info).await
 }
 
 #[tauri::command]
@@ -56,13 +66,13 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
 }
 
 #[tauri::command]
-pub fn get_total_memory() -> u64 {
-    config::get_total_memory()
+pub async fn get_total_memory() -> Result<u64, LauncherError> {
+    run_blocking(|| Ok(config::get_total_memory())).await
 }
 
 #[tauri::command]
-pub fn check_memory_warning(memory_mb: u32) -> Result<Option<String>, LauncherError> {
-    config::check_memory_warning(memory_mb)
+pub async fn check_memory_warning(memory_mb: u32) -> Result<Option<String>, LauncherError> {
+    run_blocking(move || config::check_memory_warning(memory_mb)).await
 }
 
 #[tauri::command]
@@ -77,13 +87,13 @@ pub fn set_auto_memory_enabled(enabled: bool) -> Result<(), LauncherError> {
 }
 
 #[tauri::command]
-pub fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
-    config::auto_set_memory()
+pub async fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
+    run_blocking(config::auto_set_memory).await
 }
 
 #[tauri::command]
-pub fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError> {
-    config::analyze_memory_efficiency(memory_mb)
+pub async fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError> {
+    run_blocking(move || config::analyze_memory_efficiency(memory_mb)).await
 }
 
 #[tauri::command]
@@ -100,20 +110,23 @@ pub fn set_jvm_advanced_options(options: JvmAdvancedOptions) -> Result<(), Launc
 }
 
 #[tauri::command]
-pub fn get_effective_jvm_args(memory_mb: Option<u32>) -> Result<Vec<String>, LauncherError> {
-    let cfg = config::load_config()?;
-    let memory = memory_mb.unwrap_or(cfg.max_memory);
+pub async fn get_effective_jvm_args(memory_mb: Option<u32>) -> Result<Vec<String>, LauncherError> {
+    run_blocking(move || {
+        let cfg = config::load_config()?;
+        let memory = memory_mb.unwrap_or(cfg.max_memory);
 
-    // Java 路径可能还没配置，拿不到版本就用默认值
-    let java_version = crate::services::launcher::java::resolve_java_path(&cfg)
-        .ok()
-        .and_then(|path| crate::services::launcher::java::detect_java_version(&path));
+        // Java 路径可能还没配置，拿不到版本就用默认值
+        let java_version = crate::services::launcher::java::resolve_java_path(&cfg)
+            .ok()
+            .and_then(|path| crate::services::launcher::java::detect_java_version(&path));
 
-    Ok(crate::services::memory::optimize_jvm_memory_args(
-        memory,
-        java_version,
-        &cfg.jvm_advanced,
-    ))
+        Ok(crate::services::memory::optimize_jvm_memory_args(
+            memory,
+            java_version,
+            &cfg.jvm_advanced,
+        ))
+    })
+    .await
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]

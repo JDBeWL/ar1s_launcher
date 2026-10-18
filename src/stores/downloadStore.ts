@@ -8,7 +8,7 @@ import { emit } from '@tauri-apps/api/event';
 import type { DownloadProgress, DownloadStatus } from '../types/events';
 import { api } from '../services/api';
 import { useNotificationStore } from './notificationStore';
-import { getErrorMessage } from '../utils/format';
+import { getErrorMessage, getErrorCode } from '../utils/format';
 import { logError } from '../utils/logger';
 
 export type StoreDownloadStatus = DownloadStatus | 'idle';
@@ -97,6 +97,11 @@ export const useDownloadStore = defineStore('download', () => {
       await api.version.downloadVersion(selectedVersion.value, source === 'bmcl' ? 'bmcl' : undefined);
     } catch (err) {
       logError('Failed to start download invocation', err, 'DownloadStore');
+      if (getErrorCode(err) === 'cancelled') {
+        downloadProgress.value.status = 'cancelled';
+        downloadError.value = null;
+        return;
+      }
       downloadProgress.value.status = 'error';
       const errorMessage = getErrorMessage(err);
       downloadError.value = errorMessage;

@@ -4,12 +4,32 @@
 
 use crate::errors::LauncherError;
 use crate::models::AuthType;
-use crate::services::config::{load_config, update_config};
-use crate::services::{credentials, microsoft_auth};
+use crate::services::config::{
+    acquire_auth_lock, load_config, reload_config_from_disk, update_config,
+};
+use crate::services::microsoft_auth;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
 
 static PENDING_DEVICE_CODE: Mutex<Option<String>> = Mutex::new(None);
+
+static AUTH_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+fn reset_auth_cancel() {
+    AUTH_CANCELLED.store(false, Ordering::SeqCst);
+}
+
+async fn wait_for_auth_cancel() {
+    while !AUTH_CANCELLED.load(Ordering::Relaxed) {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+#[tauri::command]
+pub fn cancel_microsoft_login() {
+    AUTH_CANCELLED.store(true, Ordering::SeqCst);
+}
 
 /// verifier 和 state 必须同生同灭，拆成两个 static 会失同步
 struct PendingAuthCodeFlow {
@@ -96,6 +116,7 @@ pub fn get_auth_status() -> Result<AuthStatus, LauncherError> {
 pub async fn start_microsoft_login(
     window: tauri::Window,
 ) -> Result<DeviceCodeDisplay, LauncherError> {
+    reset_auth_cancel();
     let device_code_info = microsoft_auth::start_device_code_flow().await?;
 
     {
@@ -137,7 +158,16 @@ pub async fn complete_microsoft_login() -> Result<MicrosoftLoginResult, Launcher
     let max_attempts = 180 / interval as u32;
 
     for _ in 0..max_attempts {
-        let result = microsoft_auth::poll_device_token(&device_code).await;
+        let result = tokio::select! {
+            result = microsoft_auth::poll_device_token(&device_code) => result,
+            _ = wait_for_auth_cancel() => {
+                return Err(LauncherError::Cancelled);
+            }
+        };
+
+        if AUTH_CANCELLED.load(Ordering::Relaxed) {
+            return Err(LauncherError::Cancelled);
+        }
 
         match result {
             Ok(token_resp) => {
@@ -175,7 +205,12 @@ pub async fn complete_microsoft_login() -> Result<MicrosoftLoginResult, Launcher
                 if msg == "slow_down" {
                     interval = (interval + 5).min(15);
                 }
-                tokio::time::sleep(tokio::time::Duration::from_secs(interval)).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(interval)) => {}
+                    _ = wait_for_auth_cancel() => {
+                        return Err(LauncherError::Cancelled);
+                    }
+                }
                 continue;
             }
             Err(e) => return Err(e),
@@ -217,17 +252,38 @@ pub async fn refresh_skin_url() -> Result<Option<String>, LauncherError> {
 
 #[tauri::command]
 pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherError> {
-    let refresh_token = {
-        let config = load_config()?;
-        config
-            .ms_refresh_token
-            .clone()
-            .ok_or_else(|| LauncherError::Custom("未找到 refresh_token，请重新登录".to_string()))?
-    };
+    // 同一时刻只允许一个实例刷新；后到的实例拿到锁后会直接复用新 token
+    let _auth_lock = acquire_auth_lock().await?;
+    let config = reload_config_from_disk()?;
+
+    let now = chrono::Utc::now().timestamp();
+    if matches!(config.auth_type, AuthType::Microsoft)
+        && config.ms_access_token.is_some()
+        && config
+            .ms_expires_at
+            .is_some_and(|expires| expires > now + 60)
+        && let (Some(username), Some(uuid)) = (config.username.clone(), config.uuid.clone())
+    {
+        return Ok(MicrosoftLoginResult {
+            username,
+            uuid,
+            skin_url: config.skin_url.clone(),
+            expires_at: config.ms_expires_at.unwrap_or(0),
+        });
+    }
+
+    let refresh_token = config
+        .ms_refresh_token
+        .clone()
+        .ok_or_else(|| LauncherError::Custom("未找到 refresh_token，请重新登录".to_string()))?;
 
     let auth_result = microsoft_auth::refresh_and_authenticate(&refresh_token).await?;
 
-    update_config(|config| {
+    // 网络请求期间另一个实例可能已完成登录/刷新；refresh token 变了就不要覆盖
+    let applied = update_config(|config| {
+        if config.ms_refresh_token.as_deref() != Some(refresh_token.as_str()) {
+            return Ok(false);
+        }
         config.auth_type = AuthType::Microsoft;
         config.username = Some(auth_result.username.clone());
         config.uuid = Some(auth_result.uuid.clone());
@@ -235,24 +291,42 @@ pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherEr
         config.ms_access_token = Some(auth_result.access_token.clone());
         config.ms_refresh_token = Some(auth_result.refresh_token.clone());
         config.ms_expires_at = Some(auth_result.expires_at);
-        Ok(())
+        Ok(true)
     })?;
 
-    Ok(MicrosoftLoginResult {
-        username: auth_result.username,
-        uuid: auth_result.uuid,
-        skin_url: auth_result.skin_url,
-        expires_at: auth_result.expires_at,
-    })
+    if applied {
+        return Ok(MicrosoftLoginResult {
+            username: auth_result.username,
+            uuid: auth_result.uuid,
+            skin_url: auth_result.skin_url,
+            expires_at: auth_result.expires_at,
+        });
+    }
+
+    // 另一个实例赢了，返回它写下的最新状态
+    let current = reload_config_from_disk()?;
+    if current.ms_access_token.is_some()
+        && let (Some(username), Some(uuid)) = (current.username.clone(), current.uuid.clone())
+    {
+        return Ok(MicrosoftLoginResult {
+            username,
+            uuid,
+            skin_url: current.skin_url.clone(),
+            expires_at: current.ms_expires_at.unwrap_or(0),
+        });
+    }
+
+    Err(LauncherError::Custom(
+        "登录状态已被另一个启动器实例修改，请重新登录".to_string(),
+    ))
 }
 
 #[tauri::command]
 pub async fn logout_microsoft() -> Result<(), LauncherError> {
     let _ = microsoft_auth::revoke_microsoft_token().await;
-    if let Err(e) = credentials::clear() {
-        log::warn!("清除凭据文件失败: {}", e);
-    }
 
+    // 清凭据也走 update_config：与另一实例的刷新在同一把配置锁下串行，
+    // 避免刚清完又被刷新写回 token
     update_config(|config| {
         config.auth_type = AuthType::Offline;
         config.ms_access_token = None;
@@ -265,6 +339,7 @@ pub async fn logout_microsoft() -> Result<(), LauncherError> {
 
 #[tauri::command]
 pub fn start_microsoft_auth_code_login() -> Result<String, LauncherError> {
+    reset_auth_cancel();
     let flow_info = microsoft_auth::start_auth_code_flow()?;
 
     {
@@ -292,7 +367,8 @@ pub async fn complete_microsoft_auth_code_login() -> Result<MicrosoftLoginResult
     };
 
     let auth_result =
-        microsoft_auth::complete_auth_code_flow(&flow.code_verifier, &flow.state).await?;
+        microsoft_auth::complete_auth_code_flow(&flow.code_verifier, &flow.state, &AUTH_CANCELLED)
+            .await?;
 
     update_config(|config| {
         config.auth_type = AuthType::Microsoft;

@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 
 const NEOFORGE_MAVEN_URL: &str = "https://maven.neoforged.net/releases";
 const BMCLAPI_NEOFORGE_URL: &str = "https://bmclapi2.bangbang93.com/neoforge";
@@ -21,11 +22,20 @@ pub async fn install_neoforge(
     neoforge_version: &str,
     instance_name: &str,
     game_dir: &Path,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(), LauncherError> {
+    forge::check_cancelled(cancel)?;
     info!(
         "安装 NeoForge: MC {} + NeoForge {} -> {}",
         mc_version, neoforge_version, instance_name
     );
+
+    // 和版本下载共用游戏目录锁，避免多实例同时写共享 libraries/
+    let _download_lock = crate::utils::file_lock::acquire_async(
+        &game_dir.join(".download_state/download.lock"),
+        std::time::Duration::from_secs(2),
+    )
+    .await?;
 
     // processors 要起 JVM；没在设置里指定 Java 时交给候选集，PATH 上的 java 也算兜底
     let app_config = config::load_config()?;
@@ -173,6 +183,7 @@ pub async fn install_neoforge(
     extract_installer_files(&installer_path, &libraries_dir, &data_dir)?;
 
     if let Some(profile) = install_profile.as_ref() {
+        forge::check_cancelled(cancel)?;
         // PROCESS_MINECRAFT_JAR 产出 minecraft-client-patched，FML 运行时按
         // -DlibraryDirectory 去找它和 universal，两者都不在 profile 的 classpath 里
         forge::run_processors(
@@ -191,6 +202,7 @@ pub async fn install_neoforge(
                 java_fallback: &java_path,
                 java_candidates: &java_candidates,
             },
+            cancel,
         )
         .await?;
     }

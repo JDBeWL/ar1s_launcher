@@ -20,7 +20,7 @@ pub async fn download_file(
     bytes_since_last: &Arc<AtomicU64>,
 ) -> Result<(), LauncherError> {
     if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
-        return Err(LauncherError::Custom("Download cancelled".to_string()));
+        return Err(LauncherError::Cancelled);
     }
 
     if job.path.exists() {
@@ -62,7 +62,7 @@ pub async fn download_file(
     {
         Ok(_) => Ok(()),
         Err(e) => {
-            if e.to_string().contains("cancelled") {
+            if e.is_cancelled() {
                 return Err(e);
             }
             if let Some(fallback_url) = &job.fallback_url {
@@ -234,7 +234,7 @@ async fn download_chunk_with_resume(
         let mut response = response;
         while let Some(chunk) = response.chunk().await? {
             if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
-                return Err(LauncherError::Custom("Download cancelled".to_string()));
+                return Err(LauncherError::Cancelled);
             }
             file.write_all(&chunk).await?;
             let len = chunk.len() as u64;

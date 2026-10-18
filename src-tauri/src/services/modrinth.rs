@@ -395,7 +395,7 @@ impl ModrinthService {
         global_cancel: &Arc<AtomicBool>,
     ) -> Result<(), LauncherError> {
         if global_cancel.load(Ordering::Acquire) {
-            return Err(LauncherError::Custom("Download cancelled".to_string()));
+            return Err(LauncherError::Cancelled);
         }
 
         let job = DownloadJob {
@@ -414,7 +414,7 @@ impl ModrinthService {
         let mut last_error = None;
         for attempt in 0..3 {
             if global_cancel.load(Ordering::Acquire) {
-                return Err(LauncherError::Custom("Download cancelled".to_string()));
+                return Err(LauncherError::Cancelled);
             }
 
             match download::download_file(
@@ -430,7 +430,7 @@ impl ModrinthService {
             {
                 Ok(()) => return Ok(()),
                 Err(e) => {
-                    if e.to_string().contains("cancelled") {
+                    if e.is_cancelled() {
                         return Err(e);
                     }
                     warn!("整合包文件下载失败 (第 {} 次): {}", attempt + 1, e);

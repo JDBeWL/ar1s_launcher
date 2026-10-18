@@ -15,7 +15,8 @@ mod version_json;
 use crate::errors::LauncherError;
 use crate::models::LaunchOptions;
 use crate::services::config::{
-    load_config, set_last_selected_version, update_config, update_instance_last_played,
+    acquire_auth_lock, load_config, reload_config_from_disk, set_last_selected_version,
+    update_config, update_instance_last_played,
 };
 use crate::services::memory::{is_memory_setting_safe, optimize_jvm_memory_args};
 use crate::utils::file_utils;
@@ -36,51 +37,75 @@ pub async fn launch_minecraft(
     file_utils::validate_version_id_or_error(&options.version)?;
 
     if options.auth_type.as_deref() == Some("microsoft") && options.access_token.is_none() {
-        let cfg = load_config()?;
+        // 多实例同时启动时只允许一个刷新，后到的实例直接复用轮换后的 token
+        let auth_lock = match acquire_auth_lock().await {
+            Ok(lock) => Some(lock),
+            Err(e) => {
+                warn!("获取 token 刷新锁失败: {}", e);
+                None
+            }
+        };
+        let cfg = reload_config_from_disk()?;
+
         if cfg.auth_type == crate::models::AuthType::Microsoft {
             let expires_at = cfg.ms_expires_at.unwrap_or(0);
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
+            let needs_refresh = now >= expires_at - 60;
 
-            if now >= expires_at - 60 {
+            options.access_token = cfg.ms_access_token.clone();
+            if options.uuid.is_none() {
+                options.uuid = cfg.uuid.clone();
+            }
+
+            if needs_refresh && auth_lock.is_some() {
                 if let Some(refresh_token) = cfg.ms_refresh_token.clone() {
                     match crate::services::microsoft_auth::refresh_and_authenticate(&refresh_token)
                         .await
                     {
                         Ok(auth_result) => {
-                            update_config(|save_cfg| {
+                            // 网络请求期间另一个实例可能已经刷新过；token 变了就不要覆盖
+                            let applied = update_config(|save_cfg| {
+                                if save_cfg.ms_refresh_token.as_deref()
+                                    != Some(refresh_token.as_str())
+                                {
+                                    return Ok(false);
+                                }
                                 save_cfg.ms_access_token = Some(auth_result.access_token.clone());
                                 save_cfg.ms_refresh_token = Some(auth_result.refresh_token.clone());
                                 save_cfg.ms_expires_at = Some(auth_result.expires_at);
                                 save_cfg.username = Some(auth_result.username.clone());
                                 save_cfg.uuid = Some(auth_result.uuid.clone());
                                 save_cfg.skin_url = auth_result.skin_url.clone();
-                                Ok(())
+                                Ok(true)
                             })?;
 
-                            options.access_token = Some(auth_result.access_token);
-                            if options.uuid.is_none() {
-                                options.uuid = Some(auth_result.uuid);
+                            if applied {
+                                options.access_token = Some(auth_result.access_token);
+                                if options.uuid.is_none() {
+                                    options.uuid = Some(auth_result.uuid);
+                                }
+                                info!("Microsoft token 刷新成功");
+                            } else {
+                                let current = reload_config_from_disk()?;
+                                options.access_token = current.ms_access_token.clone();
+                                if options.uuid.is_none() {
+                                    options.uuid = current.uuid.clone();
+                                }
+                                info!("另一个实例已完成 Microsoft token 刷新");
                             }
-                            info!("Microsoft token 刷新成功");
                         }
                         Err(e) => {
                             warn!("Microsoft token 刷新失败: {}, 将使用旧 token", e);
-                            options.access_token = cfg.ms_access_token.clone();
                         }
                     }
                 } else {
                     warn!("未找到 refresh_token，无法刷新 Microsoft token");
-                    options.access_token = cfg.ms_access_token.clone();
                 }
-            } else {
-                options.access_token = cfg.ms_access_token.clone();
-            }
-
-            if options.uuid.is_none() {
-                options.uuid = cfg.uuid.clone();
+            } else if needs_refresh {
+                warn!("token 已过期，但刷新锁被占用，沿用旧 token 启动");
             }
         }
     }

@@ -33,7 +33,15 @@ pub fn load_and_merge_version_json(
         .map(|s| s.to_string())
     {
         let versions_base = game_dir.join("versions");
+        let mut visited = HashSet::new();
+        visited.insert(version.to_string());
         while !parent_id.is_empty() {
+            if !visited.insert(parent_id.clone()) {
+                return Err(LauncherError::Custom(format!(
+                    "版本继承链存在循环，{} 重复出现",
+                    parent_id
+                )));
+            }
             file_utils::validate_version_id_or_error(&parent_id)?;
             let parent_json_path = file_utils::version_dir(&versions_base, &parent_id)?
                 .join(format!("{}.json", &parent_id));
@@ -234,11 +242,30 @@ fn merge_other_fields(version_json: &mut serde_json::Value, parent_json: &serde_
 
 #[cfg(test)]
 mod tests {
-    use super::{group_arguments, merge_arg_groups};
+    use super::{group_arguments, load_and_merge_version_json, merge_arg_groups};
     use serde_json::{Value, json};
 
     fn strings(items: &[&str]) -> Vec<Value> {
         items.iter().map(|s| json!(s)).collect()
+    }
+
+    #[test]
+    fn test_inherits_cycle_is_rejected() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let versions = dir.path().join("versions");
+        for (id, parent) in [("cycle-a", "cycle-b"), ("cycle-b", "cycle-a")] {
+            let version_dir = versions.join(id);
+            std::fs::create_dir_all(&version_dir).unwrap();
+            std::fs::write(
+                version_dir.join(format!("{id}.json")),
+                format!(r#"{{"id":"{id}","inheritsFrom":"{parent}"}}"#),
+            )
+            .unwrap();
+        }
+
+        let err = load_and_merge_version_json(dir.path(), "cycle-a").unwrap_err();
+
+        assert!(err.to_string().contains("循环"), "{err}");
     }
 
     /// 1.21+/26.x 的原版与 NeoForge 都写了 `--add-exports`，按 token 去重会留下没有开关的裸值

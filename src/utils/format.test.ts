@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatTimeAgo, formatLastPlayed, getLoaderIcon, getErrorMessage } from './format';
+import { formatTimeAgo, formatLastPlayed, getLoaderIcon, getErrorMessage, getErrorCode } from './format';
 
 describe('formatTimeAgo', () => {
   afterEach(() => {
@@ -128,12 +128,26 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(undefined)).toBe('undefined');
   });
 
-  // Tauri 命令 reject 出来的就是这个形状：LauncherError 的 Serialize 只有 message 字段
+  // Tauri 命令 reject 出来的就是这个形状：{ code, message }
   it('Tauri 错误载荷取 message', () => {
-    expect(getErrorMessage({ message: '整合包可能不完整' })).toBe('整合包可能不完整');
+    expect(getErrorMessage({ code: 'custom', message: '整合包可能不完整' })).toBe('整合包可能不完整');
   });
 
   it('对象转为字符串', () => {
     expect(getErrorMessage({ code: 500 })).toBe('[object Object]');
+  });
+});
+
+describe('getErrorCode', () => {
+  it('读取后端稳定错误码', () => {
+    expect(getErrorCode({ code: 'cancelled', message: '操作已取消' })).toBe('cancelled');
+    expect(getErrorCode({ code: 'busy', message: '被占用' })).toBe('busy');
+  });
+
+  it('普通错误没有错误码', () => {
+    expect(getErrorCode(new Error('test error'))).toBeNull();
+    expect(getErrorCode('string error')).toBeNull();
+    expect(getErrorCode(null)).toBeNull();
+    expect(getErrorCode(undefined)).toBeNull();
   });
 });

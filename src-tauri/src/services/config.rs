@@ -1,12 +1,13 @@
 //! 配置文件读写模块
 //!
-//! 配置固定放在 exe 同级目录；写入走临时文件 rename，
-//! 解析失败时备份 .bak 再重建默认配置
+//! 绿色版布局：配置固定放在 exe 同级目录。多实例下所有读改写走跨进程文件锁，
+//! 读取用 mtime/长度做缓存失效；写入走临时文件 rename，解析失败时备份 .bak 再重建默认配置
 
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::time::{Duration, SystemTime};
 use tauri::Emitter;
 
 use crate::errors::LauncherError;
@@ -16,11 +17,32 @@ use crate::services::memory::{
     AutoMemoryConfig, DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB, DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
     auto_set_memory_if_enabled, get_memory_warning_message, get_system_memory,
 };
+use crate::utils::file_lock;
 
-static CONFIG_CACHE: std::sync::LazyLock<RwLock<Option<Arc<GameConfig>>>> =
+static CONFIG_CACHE: std::sync::LazyLock<RwLock<Option<CachedConfig>>> =
     std::sync::LazyLock::new(|| RwLock::new(None));
 
 static CONFIG_MUTATION_LOCK: Mutex<()> = Mutex::new(());
+
+const CONFIG_LOCK_TIMEOUT: Duration = Duration::from_secs(3);
+const AUTH_LOCK_TIMEOUT: Duration = Duration::from_secs(90);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileStamp {
+    modified: Option<SystemTime>,
+    len: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CacheStamp {
+    config: FileStamp,
+    credentials: FileStamp,
+}
+
+struct CachedConfig {
+    config: Arc<GameConfig>,
+    stamp: CacheStamp,
+}
 
 fn exe_dir_or_dot() -> PathBuf {
     match EXE_DIR.as_ref() {
@@ -56,7 +78,7 @@ fn lock_config() -> Result<std::sync::MutexGuard<'static, ()>, LauncherError> {
 
 fn with_read_lock<F, R>(f: F) -> R
 where
-    F: FnOnce(&Option<Arc<GameConfig>>) -> R,
+    F: FnOnce(&Option<CachedConfig>) -> R,
 {
     let guard = match CONFIG_CACHE.read().ok() {
         Some(g) => g,
@@ -70,7 +92,7 @@ where
 
 fn with_write_lock<F, R>(f: F) -> R
 where
-    F: FnOnce(&mut Option<Arc<GameConfig>>) -> R,
+    F: FnOnce(&mut Option<CachedConfig>) -> R,
 {
     let mut guard = match CONFIG_CACHE.write() {
         Ok(g) => g,
@@ -82,16 +104,36 @@ where
     f(&mut guard)
 }
 
-pub fn preload_config() -> Result<(), LauncherError> {
-    if with_read_lock(|cache| cache.is_some()) {
-        return Ok(());
+fn file_stamp(path: &Path) -> FileStamp {
+    match fs::metadata(path) {
+        Ok(meta) => FileStamp {
+            modified: meta.modified().ok(),
+            len: meta.len(),
+        },
+        Err(_) => FileStamp {
+            modified: None,
+            len: 0,
+        },
     }
+}
 
-    log::info!("预加载配置文件...");
-    let config = load_config_internal()?;
-    with_write_lock(|c| {
-        *c = Some(Arc::new(config));
+fn current_cache_stamp() -> CacheStamp {
+    CacheStamp {
+        config: file_stamp(&storage().join("ar1s.json")),
+        credentials: file_stamp(&credentials_path()),
+    }
+}
+
+fn cache_config(config: Arc<GameConfig>) {
+    let stamp = current_cache_stamp();
+    with_write_lock(|cache| {
+        *cache = Some(CachedConfig { config, stamp });
     });
+}
+
+pub fn preload_config() -> Result<(), LauncherError> {
+    log::info!("预加载配置文件...");
+    let _ = load_config()?;
     log::info!("配置文件预加载完成");
     Ok(())
 }
@@ -122,62 +164,94 @@ pub fn set_saved_uuid(uuid: String) -> Result<(), LauncherError> {
 }
 
 pub fn load_config() -> Result<Arc<GameConfig>, LauncherError> {
-    if let Some(config) = with_read_lock(|cache| cache.clone()) {
+    let stamp = current_cache_stamp();
+    if let Some(config) = with_read_lock(|cache| {
+        cache
+            .as_ref()
+            .filter(|cached| cached.stamp == stamp)
+            .map(|cached| cached.config.clone())
+    }) {
         return Ok(config);
     }
 
-    let config = load_config_internal()?;
-    let arc = Arc::new(config);
-    with_write_lock(|cache| {
-        *cache = Some(arc.clone());
-    });
+    // 读取期间另一实例可能刚好写完；时间戳变了就重读，避免缓存内容和标记错位
+    let mut attempts = 0;
+    let loaded = loop {
+        let before = current_cache_stamp();
+        let loaded = read_config()?;
+        attempts += 1;
+        if before == current_cache_stamp() || attempts >= 3 {
+            break loaded;
+        }
+    };
+
+    let arc = Arc::new(loaded.config);
+    if loaded.needs_save {
+        save_config(&arc)?;
+    } else {
+        cache_config(arc.clone());
+    }
     Ok(arc)
 }
 
-fn load_config_internal() -> Result<GameConfig, LauncherError> {
-    let config_path = get_config_path()?;
-    let is_first_run = !config_path.exists();
+struct LoadedConfig {
+    config: GameConfig,
+    needs_save: bool,
+}
 
-    if config_path.exists() {
-        let content = fs::read_to_string(&config_path)?;
-        // 配置损坏时备份为 .bak 并重建默认配置，不向上报错
-        match serde_json::from_str::<GameConfig>(&content) {
-            Ok(mut config) => {
-                // 旧版本会把 token 留在 ar1s.json 里；读到后迁移到 credentials.json
-                let had_plaintext_tokens =
-                    config.ms_access_token.is_some() || config.ms_refresh_token.is_some();
-                match credentials::load() {
-                    // 凭据文件比配置文件新：刷新 token 轮换过以后不能再用旧值覆盖
-                    Ok(Some(stored)) => {
-                        if stored.access_token.is_some() {
-                            config.ms_access_token = stored.access_token;
-                        }
-                        if stored.refresh_token.is_some() {
-                            config.ms_refresh_token = stored.refresh_token;
-                        }
-                        if stored.expires_at.is_some() {
-                            config.ms_expires_at = stored.expires_at;
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => log::warn!("读取凭据文件失败，继续使用配置文件: {}", e),
-                }
-
-                if had_plaintext_tokens && let Err(e) = save_config_internal(&config) {
-                    log::warn!("迁移 token 到凭据文件失败: {}", e);
-                }
-
-                Ok(config)
+fn hydrate_tokens(config: &mut GameConfig) {
+    match credentials::load() {
+        // 凭据文件比配置文件新：刷新 token 轮换过以后不能再用旧值覆盖
+        Ok(Some(stored)) => {
+            if stored.access_token.is_some() {
+                config.ms_access_token = stored.access_token;
             }
-            Err(_) => {
-                let backup_path = config_path.with_extension("bak");
-                let _ = fs::copy(&config_path, &backup_path);
-                log::warn!("配置文件损坏，已备份并重建默认配置");
-                create_default_config(is_first_run)
+            if stored.refresh_token.is_some() {
+                config.ms_refresh_token = stored.refresh_token;
+            }
+            if stored.expires_at.is_some() {
+                config.ms_expires_at = stored.expires_at;
             }
         }
-    } else {
-        create_default_config(is_first_run)
+        Ok(None) => {}
+        Err(e) => log::warn!("读取凭据文件失败，继续使用配置文件: {}", e),
+    }
+}
+
+fn read_config() -> Result<LoadedConfig, LauncherError> {
+    let config_path = get_config_path()?;
+    if !config_path.exists() {
+        let mut config = create_default_config(true)?;
+        hydrate_tokens(&mut config);
+        return Ok(LoadedConfig {
+            config,
+            needs_save: true,
+        });
+    }
+
+    let content = fs::read_to_string(&config_path)?;
+    // 配置损坏时备份为 .bak 并重建默认配置，不向上报错
+    match serde_json::from_str::<GameConfig>(&content) {
+        Ok(mut config) => {
+            // 旧版本会把 token 留在 ar1s.json 里；写回时由 config_for_disk 清掉
+            let had_plaintext_tokens = has_tokens(&config);
+            hydrate_tokens(&mut config);
+            Ok(LoadedConfig {
+                config,
+                needs_save: had_plaintext_tokens,
+            })
+        }
+        Err(_) => {
+            let backup_path = config_path.with_extension("bak");
+            let _ = fs::copy(&config_path, &backup_path);
+            log::warn!("配置文件损坏，已备份并重建默认配置");
+            let mut config = create_default_config(false)?;
+            hydrate_tokens(&mut config);
+            Ok(LoadedConfig {
+                config,
+                needs_save: true,
+            })
+        }
     }
 }
 
@@ -246,74 +320,97 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         }
     }
 
-    save_config_internal(&config)?;
+    // 首次启动/损坏重建由 load_config 在锁内落盘，这里只负责构造
     Ok(config)
 }
 
 use crate::services::java::auto_detect_java;
 
+/// 全量保存配置快照；没有 token 时不会清空 credentials.json。
+/// 登录/登出等 token 变更走 update_config
 pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
     let _guard = lock_config()?;
-    save_config_internal(config)?;
-    with_write_lock(|cache| {
-        *cache = Some(Arc::new(config.clone()));
-    });
+    let _file_lock = file_lock::acquire(&config_lock_path(), CONFIG_LOCK_TIMEOUT)?;
+    // 读取路径回写时只负责把已有 token 存起来；没有 token 不代表要登出，
+    // 不能顺手清掉另一实例刚写入的 credentials.json
+    let write_credentials = has_tokens(config);
+    save_config_internal(config, write_credentials)?;
+    cache_config(Arc::new(config.clone()));
     Ok(())
 }
 
-/// 所有读改写都走这里，避免两个 command 各自 load 后用旧快照覆盖对方
+/// 所有读改写都走这里：跨进程锁 + 重读磁盘，避免两个实例用旧快照互相覆盖
 pub fn update_config<F, R>(update: F) -> Result<R, LauncherError>
 where
     F: FnOnce(&mut GameConfig) -> Result<R, LauncherError>,
 {
     let _guard = lock_config()?;
-    let mut config = (*load_config()?).clone();
+    let _file_lock = file_lock::acquire(&config_lock_path(), CONFIG_LOCK_TIMEOUT)?;
+
+    let loaded = read_config()?;
+    let mut config = loaded.config;
+    let before = TokenSnapshot::from(&config);
     let result = update(&mut config)?;
-    save_config_internal(&config)?;
-    with_write_lock(|cache| {
-        *cache = Some(Arc::new(config));
-    });
+    let after = TokenSnapshot::from(&config);
+
+    // 只有 token 改动（或凭据文件缺失）才碰 credentials.json；
+    // 否则另一个实例刚轮换的 token 会被本进程的旧快照覆盖
+    let credentials_missing = has_tokens(&config) && matches!(credentials::load(), Ok(None));
+    let write_credentials = before != after || credentials_missing;
+
+    save_config_internal(&config, write_credentials)?;
+    cache_config(Arc::new(config));
     Ok(result)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct TokenSnapshot {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    expires_at: Option<i64>,
+}
+
+impl From<&GameConfig> for TokenSnapshot {
+    fn from(config: &GameConfig) -> Self {
+        Self {
+            access_token: config.ms_access_token.clone(),
+            refresh_token: config.ms_refresh_token.clone(),
+            expires_at: config.ms_expires_at,
+        }
+    }
 }
 
 fn has_tokens(config: &GameConfig) -> bool {
     config.ms_access_token.is_some() || config.ms_refresh_token.is_some()
 }
 
-fn config_for_disk(config: &GameConfig, tokens_stored: bool) -> GameConfig {
+/// ar1s.json 永远不落 access/refresh token；密钥只在 credentials.json
+fn config_for_disk(config: &GameConfig) -> GameConfig {
     let mut disk_config = config.clone();
-    if tokens_stored {
-        disk_config.ms_access_token = None;
-        disk_config.ms_refresh_token = None;
-    }
+    disk_config.ms_access_token = None;
+    disk_config.ms_refresh_token = None;
     disk_config
 }
 
-fn save_config_internal(config: &GameConfig) -> Result<(), LauncherError> {
-    // token 优先落 credentials.json；写入失败时退回原行为，保证登录仍能工作
-    let tokens_stored = if has_tokens(config) {
-        let stored = credentials::Credentials {
-            access_token: config.ms_access_token.clone(),
-            refresh_token: config.ms_refresh_token.clone(),
-            expires_at: config.ms_expires_at,
-        };
-        match credentials::save(&stored) {
-            Ok(()) => true,
-            Err(e) => {
-                log::warn!("凭据文件写入失败，token 仍会写入配置文件: {}", e);
-                false
-            }
+fn save_config_internal(config: &GameConfig, write_credentials: bool) -> Result<(), LauncherError> {
+    if write_credentials {
+        if has_tokens(config) {
+            credentials::save(&credentials::Credentials {
+                access_token: config.ms_access_token.clone(),
+                refresh_token: config.ms_refresh_token.clone(),
+                expires_at: config.ms_expires_at,
+            })?;
+        } else {
+            credentials::clear()?;
         }
-    } else {
-        false
-    };
+    }
 
     let config_path = get_config_path()?;
     let dir = config_path
         .parent()
         .ok_or_else(|| LauncherError::Custom("配置文件没有父目录".to_string()))?;
     fs::create_dir_all(dir)?;
-    let json = serde_json::to_string_pretty(&config_for_disk(config, tokens_stored))?;
+    let json = serde_json::to_string_pretty(&config_for_disk(config))?;
 
     // 直接覆写会在崩溃时留下截断的 ar1s.json，先写临时文件再 rename
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
@@ -337,6 +434,26 @@ fn get_config_path() -> Result<PathBuf, LauncherError> {
 
 pub(crate) fn credentials_path() -> PathBuf {
     storage().join("credentials.json")
+}
+
+fn config_lock_path() -> PathBuf {
+    storage().join(".ar1s-config.lock")
+}
+
+pub(crate) async fn acquire_auth_lock() -> Result<file_lock::FileLock, LauncherError> {
+    file_lock::acquire_async(&storage().join(".ar1s-auth.lock"), AUTH_LOCK_TIMEOUT).await
+}
+
+/// token 刷新拿到跨进程锁后强制重读，确认别的实例有没有刚轮换过
+pub(crate) fn reload_config_from_disk() -> Result<Arc<GameConfig>, LauncherError> {
+    let loaded = read_config()?;
+    let arc = Arc::new(loaded.config);
+    if loaded.needs_save {
+        save_config(&arc)?;
+    } else {
+        cache_config(arc.clone());
+    }
+    Ok(arc)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -422,9 +539,11 @@ impl ConfigKey {
                     .map_err(|_| LauncherError::Custom("版本隔离设置值无效".to_string()))?
             }
             Self::DownloadThreads => {
-                config.download_threads = value
+                let threads: u8 = value
                     .parse()
-                    .map_err(|_| LauncherError::Custom("下载线程数设置值无效".to_string()))?
+                    .map_err(|_| LauncherError::Custom("下载线程数设置值无效".to_string()))?;
+                validate_download_threads(threads)?;
+                config.download_threads = threads;
             }
             Self::Language => config.language = Some(value),
             Self::Username => config.username = Some(value),
@@ -573,7 +692,20 @@ pub fn get_download_threads() -> Result<u8, LauncherError> {
     get_config_value(|config| config.download_threads)
 }
 
+fn validate_download_threads(threads: u8) -> Result<(), LauncherError> {
+    const MIN_THREADS: u8 = 1;
+    const MAX_THREADS: u8 = 64;
+    if !(MIN_THREADS..=MAX_THREADS).contains(&threads) {
+        return Err(LauncherError::Custom(format!(
+            "下载线程数必须在 {} 到 {} 之间",
+            MIN_THREADS, MAX_THREADS
+        )));
+    }
+    Ok(())
+}
+
 pub fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
+    validate_download_threads(threads)?;
     set_config_value(|config| config.download_threads = threads)
 }
 
@@ -695,7 +827,10 @@ pub fn remove_custom_java_path(path: &str) -> Result<(), LauncherError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{config_for_disk, default_game_dir};
+    use super::{
+        TokenSnapshot, config_for_disk, default_game_dir, file_stamp, validate_download_threads,
+    };
+    use std::fs;
     use std::path::PathBuf;
 
     #[test]
@@ -705,7 +840,15 @@ mod tests {
     }
 
     #[test]
-    fn test_config_for_disk_only_strips_tokens_when_store_succeeded() {
+    fn test_download_threads_must_stay_in_range() {
+        assert!(validate_download_threads(1).is_ok());
+        assert!(validate_download_threads(64).is_ok());
+        assert!(validate_download_threads(0).is_err());
+        assert!(validate_download_threads(65).is_err());
+    }
+
+    #[test]
+    fn test_config_for_disk_never_contains_tokens() {
         let config = crate::models::GameConfig {
             ms_access_token: Some("access".to_string()),
             ms_refresh_token: Some("refresh".to_string()),
@@ -713,13 +856,43 @@ mod tests {
             ..Default::default()
         };
 
-        let kept = config_for_disk(&config, false);
-        assert_eq!(kept.ms_access_token.as_deref(), Some("access"));
-        assert_eq!(kept.ms_refresh_token.as_deref(), Some("refresh"));
+        let disk = config_for_disk(&config);
 
-        let stripped = config_for_disk(&config, true);
-        assert!(stripped.ms_access_token.is_none());
-        assert!(stripped.ms_refresh_token.is_none());
-        assert_eq!(stripped.ms_expires_at, Some(123));
+        assert!(disk.ms_access_token.is_none());
+        assert!(disk.ms_refresh_token.is_none());
+        assert_eq!(disk.ms_expires_at, Some(123));
+    }
+
+    #[test]
+    fn test_file_stamp_changes_when_file_changes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("config.json");
+
+        fs::write(&path, b"a").unwrap();
+        let first = file_stamp(&path);
+
+        fs::write(&path, b"ab").unwrap();
+        let second = file_stamp(&path);
+        assert_ne!(first, second);
+
+        fs::remove_file(&path).unwrap();
+        assert_ne!(second, file_stamp(&path));
+    }
+
+    #[test]
+    fn test_token_snapshot_ignores_non_token_fields() {
+        let config = crate::models::GameConfig {
+            ms_access_token: Some("access".to_string()),
+            ms_refresh_token: Some("refresh".to_string()),
+            ms_expires_at: Some(123),
+            ..Default::default()
+        };
+        let before = TokenSnapshot::from(&config);
+
+        let mut changed = config.clone();
+        changed.game_dir = "D:/other".to_string();
+        changed.max_memory = 8192;
+
+        assert_eq!(before, TokenSnapshot::from(&changed));
     }
 }

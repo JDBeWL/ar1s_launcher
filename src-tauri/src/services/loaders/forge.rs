@@ -15,14 +15,16 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+use tokio::process::Command;
 use zip::ZipArchive;
 
 #[cfg(windows)]
-use std::os::windows::process::CommandExt;
-
-#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+const INSTALLER_TIMEOUT: Duration = Duration::from_secs(600);
+const PROCESSOR_TIMEOUT: Duration = Duration::from_secs(300);
 
 const BMCL_API_BASE_URL: &str = "https://bmclapi2.bangbang93.com";
 const BMCL_LIBRARIES_URL: &str = "https://bmclapi2.bangbang93.com/libraries";
@@ -59,11 +61,20 @@ pub async fn install_forge(
     forge_version: &str,
     instance_name: &str,
     game_dir: &Path,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(), LauncherError> {
+    check_cancelled(cancel)?;
     info!(
         "安装 Forge: MC {} + Forge {} -> {}",
         mc_version, forge_version, instance_name
     );
+
+    // Forge/NeoForge 直接写共享的 libraries/，和版本下载共用一把游戏目录锁
+    let _download_lock = crate::utils::file_lock::acquire_async(
+        &game_dir.join(".download_state/download.lock"),
+        Duration::from_secs(2),
+    )
+    .await?;
 
     let app_config = config::load_config()?;
     // 没在设置里指定 Java 也不该拦住安装：候选集里通常已经有能跑安装器的那份
@@ -115,8 +126,9 @@ pub async fn install_forge(
     let installer_java = choose_installer_java(installer_path, mc_version, &java_candidates);
     let install_result = match installer_java {
         Some(ref java) => {
+            check_cancelled(cancel)?;
             info!("Forge: 尝试官方安装器（Java {}）", java);
-            run_official_installer(installer_path, game_dir, java).await
+            run_official_installer(installer_path, game_dir, java, cancel).await
         }
         None => Err(LauncherError::Custom(
             "本机没有能运行安装器的 Java".to_string(),
@@ -130,6 +142,8 @@ pub async fn install_forge(
             info!("Forge: 官方安装器成功");
         }
         Err(e) => {
+            // 用户取消不是安装器失败，不能再转手动安装继续跑
+            check_cancelled(cancel)?;
             warn!("Forge: 官方安装器失败: {}, 尝试手动安装", e);
 
             if is_new_forge(mc_version) {
@@ -139,9 +153,11 @@ pub async fn install_forge(
                     &forge_ver,
                     &java_path,
                     &java_candidates,
+                    cancel,
                 )
                 .await?;
             } else {
+                check_cancelled(cancel)?;
                 manual_install_old_forge(installer_path, game_dir, &forge_ver).await?;
             }
         }
@@ -416,10 +432,58 @@ fn choose_installer_java(
         .map(|c| c.path.clone())
 }
 
+pub(crate) fn check_cancelled(cancel: Option<&AtomicBool>) -> Result<(), LauncherError> {
+    if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        return Err(LauncherError::Cancelled);
+    }
+    Ok(())
+}
+
+async fn wait_for_cancel(flag: &AtomicBool) {
+    while !flag.load(Ordering::Relaxed) {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// 安装器和 processor 都不能无限挂起；取消或超时会 drop 子进程句柄，
+/// 配合 kill_on_drop 把 JVM 一起收掉
+async fn run_limited_command(
+    cmd: &mut Command,
+    label: &str,
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+) -> Result<std::process::Output, LauncherError> {
+    cmd.kill_on_drop(true);
+    let run = tokio::time::timeout(timeout, cmd.output());
+
+    let result = match cancel {
+        Some(flag) => {
+            tokio::select! {
+                result = run => result,
+                _ = wait_for_cancel(flag) => {
+                    return Err(LauncherError::Cancelled);
+                }
+            }
+        }
+        None => run.await,
+    };
+
+    match result {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(e)) => Err(LauncherError::Custom(format!("{}执行失败: {}", label, e))),
+        Err(_) => Err(LauncherError::Custom(format!(
+            "{}执行超时（{} 秒）",
+            label,
+            timeout.as_secs()
+        ))),
+    }
+}
+
 async fn run_official_installer(
     installer_path: &Path,
     game_dir: &Path,
     java_path: &str,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(), LauncherError> {
     let mut cmd = Command::new(java_path);
     cmd.current_dir(game_dir)
@@ -430,9 +494,7 @@ async fn run_official_installer(
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let output = cmd
-        .output()
-        .map_err(|e| LauncherError::Custom(format!("执行安装器失败: {}", e)))?;
+    let output = run_limited_command(&mut cmd, "Forge 安装器", INSTALLER_TIMEOUT, cancel).await?;
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -447,9 +509,8 @@ async fn run_official_installer(
         #[cfg(windows)]
         cmd2.creation_flags(CREATE_NO_WINDOW);
 
-        let output2 = cmd2
-            .output()
-            .map_err(|e| LauncherError::Custom(format!("执行安装器失败: {}", e)))?;
+        let output2 =
+            run_limited_command(&mut cmd2, "Forge 安装器", INSTALLER_TIMEOUT, cancel).await?;
 
         if !output2.status.success() {
             let stderr2 = String::from_utf8_lossy(&output2.stderr);
@@ -910,6 +971,7 @@ async fn manual_install_new_forge(
     forge_version: &ForgeVersion,
     java_path: &str,
     java_candidates: &[JavaCandidate],
+    cancel: Option<&AtomicBool>,
 ) -> Result<(), LauncherError> {
     info!("Forge: 开始手动安装新版 Forge (1.13+)");
 
@@ -1026,6 +1088,7 @@ async fn manual_install_new_forge(
             java_fallback: java_path,
             java_candidates,
         },
+        cancel,
     )
     .await?;
 
@@ -1063,6 +1126,7 @@ fn runs_on_client(processor: &Value) -> bool {
 pub(crate) async fn run_processors(
     profile: &Value,
     vars: &ProcessorVars<'_>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(), LauncherError> {
     let processors = match profile.get("processors").and_then(|p| p.as_array()) {
         Some(p) => p,
@@ -1086,6 +1150,7 @@ pub(crate) async fn run_processors(
 
     let mut executed = 0;
     for (idx, processor) in processors.iter().enumerate() {
+        check_cancelled(cancel)?;
         if !runs_on_client(processor) {
             debug!(
                 "安装器: 跳过 {}/{}（声明为服务端专用）",
@@ -1176,7 +1241,13 @@ pub(crate) async fn run_processors(
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
 
-        let output = cmd.output()?;
+        let output = run_limited_command(
+            &mut cmd,
+            &format!("processor {}/{}", idx + 1, processors.len()),
+            PROCESSOR_TIMEOUT,
+            cancel,
+        )
+        .await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1352,9 +1423,31 @@ mod tests {
     use super::{
         ProcessorVars, choose_installer_java, choose_processor_java, find_installed_loader_dir,
         forge_installer_sources, loader_jar_present, mirror_url, resolve_processor_arg,
-        runs_on_client, snapshot_version_dirs,
+        run_limited_command, runs_on_client, snapshot_version_dirs,
     };
     use crate::services::launcher::java::{JavaArch, JavaCandidate};
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    #[cfg(windows)]
+    use super::CREATE_NO_WINDOW;
+
+    fn slow_command() -> Command {
+        #[cfg(windows)]
+        {
+            let mut cmd = Command::new("ping");
+            cmd.args(["-n", "10", "127.0.0.1"]);
+            cmd.creation_flags(CREATE_NO_WINDOW);
+            cmd
+        }
+        #[cfg(not(windows))]
+        {
+            let mut cmd = Command::new("sleep");
+            cmd.arg("5");
+            cmd
+        }
+    }
 
     fn cand(path: &str, version: u32) -> JavaCandidate {
         JavaCandidate {
@@ -1744,5 +1837,26 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn test_limited_command_times_out() {
+        let mut cmd = slow_command();
+        let err = run_limited_command(&mut cmd, "测试命令", Duration::from_millis(300), None)
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("超时"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_limited_command_cancels_running_process() {
+        let cancel = AtomicBool::new(true);
+        let mut cmd = slow_command();
+        let err = run_limited_command(&mut cmd, "测试命令", Duration::from_secs(30), Some(&cancel))
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("取消"), "{err}");
     }
 }

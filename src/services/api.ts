@@ -28,6 +28,20 @@ import type {
 
 const pendingRequests = new Map<string, Promise<unknown>>();
 
+function invalidateGameDirInfo(): void {
+  cache.deleteByPrefix(`${CacheKeys.CONFIG}:game_dir_info`);
+}
+
+/** 安装/下载会改动 versions 目录，前后都失效，避免事件监听读到旧缓存 */
+async function withGameDirInfoInvalidation<T>(operation: () => Promise<T>): Promise<T> {
+  invalidateGameDirInfo();
+  try {
+    return await operation();
+  } finally {
+    invalidateGameDirInfo();
+  }
+}
+
 async function dedupedInvoke<T>(
   cmd: string,
   args?: Record<string, unknown>,
@@ -62,7 +76,7 @@ export const versionApi = {
 
   async downloadVersion(versionId: string, mirror?: string): Promise<void> {
     // 下载不去重，每次都是新请求
-    return invoke('download_version', { versionId, mirror });
+    return withGameDirInfoInvalidation(() => invoke('download_version', { versionId, mirror }));
   },
 
   async cancelDownload(): Promise<void> {
@@ -84,15 +98,15 @@ export const instanceApi = {
     baseVersionId: string,
     loader?: { type: string; mc_version: string; loader_version: string },
   ): Promise<void> {
-    await invoke('create_instance', { newInstanceName, baseVersionId, loader });
+    return withGameDirInfoInvalidation(() => invoke('create_instance', { newInstanceName, baseVersionId, loader }));
   },
 
   async deleteInstance(instanceName: string): Promise<void> {
-    await invoke('delete_instance', { instanceName });
+    return withGameDirInfoInvalidation(() => invoke('delete_instance', { instanceName }));
   },
 
   async renameInstance(oldName: string, newName: string): Promise<void> {
-    await invoke('rename_instance', { oldName, newName });
+    return withGameDirInfoInvalidation(() => invoke('rename_instance', { oldName, newName }));
   },
 
   async openInstanceFolder(instanceName: string): Promise<void> {
@@ -214,8 +228,7 @@ export const configApi = {
   },
 
   async setGameDir(path: string): Promise<void> {
-    await invoke('set_game_dir', { path });
-    cache.deleteByPrefix(`${CacheKeys.CONFIG}:game_dir_info`);
+    await withGameDirInfoInvalidation(() => invoke('set_game_dir', { path }));
   },
 
   async getGameDirInfo(): Promise<GameDirInfo> {
@@ -351,6 +364,10 @@ export const userApi = {
     return invoke<MicrosoftLoginResult>('complete_microsoft_auth_code_login');
   },
 
+  async cancelMicrosoftLogin(): Promise<void> {
+    return invoke('cancel_microsoft_login');
+  },
+
   async refreshMicrosoftAuth(): Promise<MicrosoftLoginResult> {
     return invoke<MicrosoftLoginResult>('refresh_microsoft_auth');
   },
@@ -400,7 +417,7 @@ export const modpackApi = {
     instance_name: string;
     install_path: string;
   }): Promise<void> {
-    return invoke('install_modrinth_modpack', { options });
+    return withGameDirInfoInvalidation(() => invoke('install_modrinth_modpack', { options }));
   },
 
   async cancelModpackInstall(): Promise<void> {

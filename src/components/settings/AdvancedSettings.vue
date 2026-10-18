@@ -150,9 +150,7 @@ onMounted(async () => {
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-recycle</v-icon>
           <span class="text-title-medium">垃圾回收器</span>
         </div>
-        <p class="text-body-medium text-on-surface-variant mb-4">
-          默认 G1GC 会使用调优参数
-        </p>
+        <p class="text-body-medium text-on-surface-variant mb-4">默认 G1GC 会使用调优参数</p>
 
         <v-select
           v-model="options.gcStrategy"
@@ -392,7 +390,10 @@ onMounted(async () => {
             variant="text"
             color="primary"
             :loading="saving"
-            @click="showPreview = !showPreview; refreshPreview()"
+            @click="
+              showPreview = !showPreview;
+              refreshPreview();
+            "
           >
             {{ showPreview ? '刷新' : '预览' }}
           </v-btn>

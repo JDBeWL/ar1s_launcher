@@ -153,7 +153,9 @@ pub async fn create_instance(
     if let Some(ref loader_type) = loader {
         send_progress(60, &format!("安装 {} 加载器...", loader_type.name()), true);
 
-        if let Err(e) = loaders::install_loader(loader_type, &new_instance_name, &game_dir).await {
+        if let Err(e) =
+            loaders::install_loader(loader_type, &new_instance_name, &game_dir, None).await
+        {
             cleanup();
             return Err(e);
         }
