@@ -19,6 +19,12 @@ const MAX_API_RETRIES: u32 = 3;
 
 pub struct ModrinthService;
 
+impl Default for ModrinthService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModrinthService {
     pub fn new() -> Self {
         Self
@@ -57,6 +63,7 @@ impl ModrinthService {
         )))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn search_modpacks(
         &self,
         query: Option<String>,

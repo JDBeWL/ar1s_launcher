@@ -25,20 +25,18 @@ pub fn default_false() -> bool {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum AuthType {
+    #[default]
     Offline,
     Microsoft,
 }
 
-impl Default for AuthType {
-    fn default() -> Self {
-        AuthType::Offline
-    }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum GcStrategy {
+    #[default]
     G1,
     /// 不指定回收器，交给 JVM 默认，与官方启动器一致
     Default,
@@ -48,12 +46,6 @@ pub enum GcStrategy {
     Serial,
     /// 极低停顿，适合超大堆；Java 15+，旧 Java 自动回退 G1
     Z,
-}
-
-impl Default for GcStrategy {
-    fn default() -> Self {
-        GcStrategy::G1
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -84,6 +76,7 @@ pub struct ProxyTestResult {
 // 默认只做 G1GC 优化，其余 JVM 参数与官方启动器保持一致；用户可在「设置 - 高级选项」逐项开启
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
+#[derive(Default)]
 pub struct JvmAdvancedOptions {
     #[serde(default)]
     pub gc_strategy: GcStrategy,
@@ -111,22 +104,6 @@ pub struct JvmAdvancedOptions {
     /// 自定义追加参数，每行一条（或空格分隔），追加在所有内置参数之后
     #[serde(default)]
     pub extra_args: String,
-}
-
-impl Default for JvmAdvancedOptions {
-    fn default() -> Self {
-        Self {
-            gc_strategy: GcStrategy::default(),
-            always_pre_touch: false,
-            disable_explicit_gc: false,
-            string_deduplication: false,
-            perf_disable_shared_mem: false,
-            metaspace_size_mb: None,
-            metaspace_max_size_mb: None,
-            heap_dump_on_oom: false,
-            extra_args: String::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

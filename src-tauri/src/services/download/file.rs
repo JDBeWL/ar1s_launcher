@@ -65,23 +65,23 @@ pub async fn download_file(
             if e.is_cancelled() {
                 return Err(e);
             }
-            if let Some(fallback_url) = &job.fallback_url {
-                if should_try_fallback(&e) {
-                    warn!(
-                        "Primary URL {} failed ({}), trying fallback: {}",
-                        job.url, e, fallback_url
-                    );
-                    return download_with_resume(
-                        http,
-                        fallback_url,
-                        job,
-                        state,
-                        global_cancel,
-                        bytes_downloaded,
-                        bytes_since_last,
-                    )
-                    .await;
-                }
+            if let Some(fallback_url) = &job.fallback_url
+                && should_try_fallback(&e)
+            {
+                warn!(
+                    "Primary URL {} failed ({}), trying fallback: {}",
+                    job.url, e, fallback_url
+                );
+                return download_with_resume(
+                    http,
+                    fallback_url,
+                    job,
+                    state,
+                    global_cancel,
+                    bytes_downloaded,
+                    bytes_since_last,
+                )
+                .await;
             }
             Err(e)
         }
@@ -160,6 +160,7 @@ async fn get_existing_file_size(path: &std::path::Path) -> u64 {
         .unwrap_or(0)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn download_chunk_with_resume(
     client: &reqwest::Client,
     url: &str,
@@ -290,23 +291,22 @@ fn validate_content_length(
     expected_size: u64,
     resume_from: Option<u64>,
 ) -> Result<(), LauncherError> {
-    if let Some(len_hdr) = response.headers().get(reqwest::header::CONTENT_LENGTH) {
-        if let Ok(len_str) = len_hdr.to_str() {
-            if let Ok(remote_len) = len_str.parse::<u64>() {
-                // 对于续传，Content-Length 是剩余部分的大小
-                let expected_len = if let Some(offset) = resume_from {
-                    expected_size.saturating_sub(offset)
-                } else {
-                    expected_size
-                };
+    if let Some(len_hdr) = response.headers().get(reqwest::header::CONTENT_LENGTH)
+        && let Ok(len_str) = len_hdr.to_str()
+        && let Ok(remote_len) = len_str.parse::<u64>()
+    {
+        // 对于续传，Content-Length 是剩余部分的大小
+        let expected_len = if let Some(offset) = resume_from {
+            expected_size.saturating_sub(offset)
+        } else {
+            expected_size
+        };
 
-                if remote_len == 0 && expected_len > 0 {
-                    return Err(LauncherError::Custom(format!(
-                        "Unexpected Content-Length 0 for {}, expected {}",
-                        url, expected_len
-                    )));
-                }
-            }
+        if remote_len == 0 && expected_len > 0 {
+            return Err(LauncherError::Custom(format!(
+                "Unexpected Content-Length 0 for {}, expected {}",
+                url, expected_len
+            )));
         }
     }
     Ok(())

@@ -37,8 +37,7 @@ impl DownloadState {
     }
 
     pub fn save_to_file(&mut self, path: &std::path::Path) -> Result<(), std::io::Error> {
-        let content = serde_json::to_string(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let content = serde_json::to_string(self).map_err(std::io::Error::other)?;
         std::fs::write(path, content)?;
         self.dirty = false;
         Ok(())

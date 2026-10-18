@@ -135,10 +135,10 @@ fn extract_native_jar(
 
         let outpath = natives_dir.join(file_stem);
 
-        if let Some(p) = outpath.parent() {
-            if !p.exists() {
-                fs::create_dir_all(p)?;
-            }
+        if let Some(p) = outpath.parent()
+            && !p.exists()
+        {
+            fs::create_dir_all(p)?;
         }
 
         let mut outfile = fs::File::create(&outpath)?;

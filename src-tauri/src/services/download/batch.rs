@@ -71,7 +71,7 @@ pub async fn download_all_files(
     .await?;
 
     let download_state = Arc::new(Mutex::new(
-        DownloadState::load_from_file(&state_file).unwrap_or_else(DownloadState::new),
+        DownloadState::load_from_file(&state_file).unwrap_or_default(),
     ));
 
     let mut filtered_jobs: Vec<DownloadJob> = {
@@ -209,10 +209,10 @@ pub async fn download_all_files(
 
     {
         let mut state = download_state.lock().await;
-        if state.dirty {
-            if let Err(e) = state.save_to_file(&state_file) {
-                warn!("Failed to write final state file: {}", e);
-            }
+        if state.dirty
+            && let Err(e) = state.save_to_file(&state_file)
+        {
+            warn!("Failed to write final state file: {}", e);
         }
     }
 
@@ -263,10 +263,10 @@ pub async fn download_all_files(
 
     if failed_list.is_empty() {
         let _ = std::fs::remove_file(&state_file);
-        if let Ok(entries) = std::fs::read_dir(&state_dir) {
-            if entries.count() == 0 {
-                let _ = std::fs::remove_dir(&state_dir);
-            }
+        if let Ok(entries) = std::fs::read_dir(&state_dir)
+            && entries.count() == 0
+        {
+            let _ = std::fs::remove_dir(&state_dir);
         }
     }
 
@@ -349,6 +349,7 @@ fn spawn_state_saver(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_download_task(
     job: DownloadJob,
     http: reqwest::Client,

@@ -411,17 +411,13 @@ pub async fn launch_minecraft(
     let width_present = has_arg("--width");
     let height_present = has_arg("--height");
 
-    if !width_present {
-        if let Some(width) = options.window_width.or(config.window_width) {
-            final_args.push("--width".to_string());
-            final_args.push(width.to_string());
-        }
+    if !width_present && let Some(width) = options.window_width.or(config.window_width) {
+        final_args.push("--width".to_string());
+        final_args.push(width.to_string());
     }
-    if !height_present {
-        if let Some(height) = options.window_height.or(config.window_height) {
-            final_args.push("--height".to_string());
-            final_args.push(height.to_string());
-        }
+    if !height_present && let Some(height) = options.window_height.or(config.window_height) {
+        final_args.push("--height".to_string());
+        final_args.push(height.to_string());
     }
 
     // 未替换的 ${...} 占位符会让游戏直接崩溃，这里提前告警
@@ -437,10 +433,10 @@ pub async fn launch_minecraft(
 
     let working_dir = isolation::content_root_of(&config, &game_dir, &version_dir);
 
-    if let Some(ref lang) = config.language {
-        if let Err(e) = crate::utils::minecraft::set_game_language(&working_dir, lang) {
-            emit("log-warning", format!("无法设置游戏语言: {}", e));
-        }
+    if let Some(ref lang) = config.language
+        && let Err(e) = crate::utils::minecraft::set_game_language(&working_dir, lang)
+    {
+        emit("log-warning", format!("无法设置游戏语言: {}", e));
     }
 
     let mods_root = java_requirement::mods_dir(

@@ -377,18 +377,18 @@ fn find_hs_err_log(working_dir: &Path, launched_after: SystemTime) -> Option<Str
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            if name_str.starts_with("hs_err_pid") && name_str.ends_with(".log") {
-                if let Ok(metadata) = entry.metadata() {
-                    if let Ok(modified) = metadata.modified() {
-                        if modified < launched_after {
-                            continue;
-                        }
-                        if latest.as_ref().is_none_or(|(t, _)| modified > *t) {
-                            if let Ok(content) = fs::read_to_string(entry.path()) {
-                                latest = Some((modified, content));
-                            }
-                        }
-                    }
+            if name_str.starts_with("hs_err_pid")
+                && name_str.ends_with(".log")
+                && let Ok(metadata) = entry.metadata()
+                && let Ok(modified) = metadata.modified()
+            {
+                if modified < launched_after {
+                    continue;
+                }
+                if latest.as_ref().is_none_or(|(t, _)| modified > *t)
+                    && let Ok(content) = fs::read_to_string(entry.path())
+                {
+                    latest = Some((modified, content));
                 }
             }
         }
@@ -416,7 +416,7 @@ fn handle_process_exit(
     );
 
     if exit_code.unwrap_or(-1) != 0 {
-        let hs_err = find_hs_err_log(working_dir, launched_at).and_then(|text| {
+        let hs_err = find_hs_err_log(working_dir, launched_at).map(|text| {
             let total = text.lines().count();
             let mut head = text
                 .lines()
@@ -426,7 +426,7 @@ fn handle_process_exit(
             if total > HS_ERR_MAX_LINES {
                 head.push_str("\n… hs_err 其余部分见工作目录里的原文件");
             }
-            Some(head)
+            head
         });
 
         let mut ctx = launch_ctx.clone();

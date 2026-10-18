@@ -102,7 +102,7 @@ pub async fn get_quilt_versions(
 
     // 接口按「兼容性登记顺序」返回，第一条可能是几年前的老版本；
     // 调用方默认取第一条，所以这里必须自己按版本号倒序
-    versions.sort_by(|a, b| version_key(&b.version).cmp(&version_key(&a.version)));
+    versions.sort_by_key(|a| std::cmp::Reverse(version_key(&a.version)));
     versions.dedup_by(|a, b| a.version == b.version);
 
     Ok(versions)
@@ -382,7 +382,7 @@ mod tests {
             "0.20.0-beta.10",
             "0.26.4",
         ];
-        versions.sort_by(|a, b| version_key(b).cmp(&version_key(a)));
+        versions.sort_by_key(|a| std::cmp::Reverse(version_key(a)));
 
         assert_eq!(
             versions,

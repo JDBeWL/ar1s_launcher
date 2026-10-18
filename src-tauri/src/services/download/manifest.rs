@@ -80,7 +80,7 @@ pub async fn get_version_size(
     };
 
     let manifest: VersionManifest = client
-        .get(&format!("{}/mc/game/version_manifest.json", base_url))
+        .get(format!("{}/mc/game/version_manifest.json", base_url))
         .send()
         .await?
         .json()

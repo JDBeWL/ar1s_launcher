@@ -14,7 +14,7 @@ const TEST_URL: &str = "https://launchermeta.mojang.com/mc/game/version_manifest
 enum AppliedProxy {
     System,
     Direct,
-    Custom(reqwest::Proxy),
+    Custom(Box<reqwest::Proxy>),
 }
 
 pub fn current_settings() -> ProxySettings {
@@ -97,7 +97,7 @@ pub(crate) fn apply(builder: ClientBuilder) -> ClientBuilder {
     match build_proxy(&current_settings()) {
         Ok(AppliedProxy::System) => builder,
         Ok(AppliedProxy::Direct) => builder.no_proxy(),
-        Ok(AppliedProxy::Custom(proxy)) => builder.proxy(proxy),
+        Ok(AppliedProxy::Custom(proxy)) => builder.proxy(*proxy),
         Err(error) => {
             warn!("保存的代理配置无效，回退为跟随系统代理: {}", error);
             builder
@@ -112,7 +112,7 @@ fn configure(
     match build_proxy(settings)? {
         AppliedProxy::System => Ok(builder),
         AppliedProxy::Direct => Ok(builder.no_proxy()),
-        AppliedProxy::Custom(proxy) => Ok(builder.proxy(proxy)),
+        AppliedProxy::Custom(proxy) => Ok(builder.proxy(*proxy)),
     }
 }
 
@@ -122,9 +122,9 @@ fn build_proxy(settings: &ProxySettings) -> Result<AppliedProxy, LauncherError> 
         ProxyMode::Direct => Ok(AppliedProxy::Direct),
         ProxyMode::Custom => {
             let url = normalize_proxy_url(settings.url.as_deref().unwrap_or(""))?;
-            reqwest::Proxy::all(&url)
-                .map(AppliedProxy::Custom)
-                .map_err(|_| LauncherError::Custom("代理地址无效".to_string()))
+            let proxy = reqwest::Proxy::all(&url)
+                .map_err(|_| LauncherError::Custom("代理地址无效".to_string()))?;
+            Ok(AppliedProxy::Custom(Box::new(proxy)))
         }
     }
 }

@@ -44,7 +44,7 @@ pub fn load_and_merge_version_json(
             }
             file_utils::validate_version_id_or_error(&parent_id)?;
             let parent_json_path = file_utils::version_dir(&versions_base, &parent_id)?
-                .join(format!("{}.json", &parent_id));
+                .join(format!("{}.json", parent_id));
             if !parent_json_path.exists() {
                 break;
             }
@@ -83,10 +83,10 @@ fn merge_libraries(version_json: &mut serde_json::Value, parent_json: &serde_jso
     }
 
     for lib in parent_libs {
-        if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
-            if seen.contains(name) {
-                continue;
-            }
+        if let Some(name) = lib.get("name").and_then(|n| n.as_str())
+            && seen.contains(name)
+        {
+            continue;
         }
         merged_libs.push(lib.clone());
     }
@@ -110,21 +110,21 @@ fn merge_arguments(version_json: &mut serde_json::Value, parent_json: &serde_jso
         if let Some(parent_jvm_arr) = parent_args.get("jvm").and_then(|j| j.as_array()).cloned() {
             merge_jvm_arguments(version_json, parent_jvm_arr);
         }
-    } else if let Some(parent_mc_args) = parent_json.get("minecraftArguments") {
-        if let Some(mc_args_str) = parent_mc_args.as_str() {
-            let parts: Vec<serde_json::Value> = mc_args_str
-                .split(' ')
-                .filter(|s| !s.is_empty())
-                .map(|s| serde_json::Value::String(s.to_string()))
-                .collect();
+    } else if let Some(parent_mc_args) = parent_json.get("minecraftArguments")
+        && let Some(mc_args_str) = parent_mc_args.as_str()
+    {
+        let parts: Vec<serde_json::Value> = mc_args_str
+            .split(' ')
+            .filter(|s| !s.is_empty())
+            .map(|s| serde_json::Value::String(s.to_string()))
+            .collect();
 
-            if version_json.get("arguments").is_none() {
-                let mut args_obj = serde_json::Map::new();
-                args_obj.insert("game".to_string(), serde_json::Value::Array(parts));
-                version_json["arguments"] = serde_json::Value::Object(args_obj);
-            } else {
-                merge_game_arguments(version_json, parts);
-            }
+        if version_json.get("arguments").is_none() {
+            let mut args_obj = serde_json::Map::new();
+            args_obj.insert("game".to_string(), serde_json::Value::Array(parts));
+            version_json["arguments"] = serde_json::Value::Object(args_obj);
+        } else {
+            merge_game_arguments(version_json, parts);
         }
     }
 }

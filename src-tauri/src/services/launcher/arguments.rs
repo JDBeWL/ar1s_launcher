@@ -20,10 +20,10 @@ fn get_base_minecraft_version(version_json: &serde_json::Value, fallback: &str) 
     }
 
     if let Some(inherits) = version_json.get("inheritsFrom").and_then(|i| i.as_str()) {
-        if inherits.contains("-forge") || inherits.contains("-neoforge") {
-            if let Some(mc_ver) = inherits.split('-').next() {
-                return mc_ver.to_string();
-            }
+        if (inherits.contains("-forge") || inherits.contains("-neoforge"))
+            && let Some(mc_ver) = inherits.split('-').next()
+        {
+            return mc_ver.to_string();
         }
         if inherits
             .chars()
@@ -36,15 +36,16 @@ fn get_base_minecraft_version(version_json: &serde_json::Value, fallback: &str) 
         }
     }
 
-    if fallback.contains("-forge") {
-        if let Some(mc_ver) = fallback.split("-forge").next() {
-            return mc_ver.to_string();
-        }
+    if fallback.contains("-forge")
+        && let Some(mc_ver) = fallback.split("-forge").next()
+    {
+        return mc_ver.to_string();
     }
 
     fallback.to_string()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_arguments(
     version_json: &serde_json::Value,
     config: &GameConfig,
@@ -161,17 +162,16 @@ fn parse_jvm_arguments(
     for arg in jvm {
         if let Some(s) = arg.as_str() {
             jvm_args.push(replace_placeholders(s));
-        } else if let Some(obj) = arg.as_object() {
-            if evaluate_rules_for_arguments_with_features(obj.get("rules"), support) {
-                if let Some(value) = obj.get("value") {
-                    if let Some(s) = value.as_str() {
+        } else if let Some(obj) = arg.as_object()
+            && evaluate_rules_for_arguments_with_features(obj.get("rules"), support)
+            && let Some(value) = obj.get("value")
+        {
+            if let Some(s) = value.as_str() {
+                jvm_args.push(replace_placeholders(s));
+            } else if let Some(arr) = value.as_array() {
+                for item in arr {
+                    if let Some(s) = item.as_str() {
                         jvm_args.push(replace_placeholders(s));
-                    } else if let Some(arr) = value.as_array() {
-                        for item in arr {
-                            if let Some(s) = item.as_str() {
-                                jvm_args.push(replace_placeholders(s));
-                            }
-                        }
                     }
                 }
             }
@@ -192,17 +192,16 @@ fn parse_game_arguments(
         for arg in game {
             if let Some(s) = arg.as_str() {
                 game_args.push(replace_placeholders(s));
-            } else if let Some(obj) = arg.as_object() {
-                if evaluate_rules_for_arguments_with_features(obj.get("rules"), support) {
-                    if let Some(value) = obj.get("value") {
-                        if let Some(s) = value.as_str() {
+            } else if let Some(obj) = arg.as_object()
+                && evaluate_rules_for_arguments_with_features(obj.get("rules"), support)
+                && let Some(value) = obj.get("value")
+            {
+                if let Some(s) = value.as_str() {
+                    game_args.push(replace_placeholders(s));
+                } else if let Some(arr) = value.as_array() {
+                    for item in arr {
+                        if let Some(s) = item.as_str() {
                             game_args.push(replace_placeholders(s));
-                        } else if let Some(arr) = value.as_array() {
-                            for item in arr {
-                                if let Some(s) = item.as_str() {
-                                    game_args.push(replace_placeholders(s));
-                                }
-                            }
                         }
                     }
                 }

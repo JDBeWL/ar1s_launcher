@@ -7,6 +7,7 @@ use crate::models::modpack::*;
 use crate::services::modpack_installer;
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn search_modrinth_modpacks(
     query: Option<String>,
     game_versions: Option<Vec<String>>,

@@ -10,7 +10,7 @@ use crate::services::config::{self, load_config};
 use crate::utils::file_utils;
 use log::{info, warn};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{Emitter, Window};
 
 /// 只补这份版本 JSON 自己声明的库（不递归父版本），供加载器装完后补齐
@@ -106,7 +106,7 @@ pub async fn process_and_download_version(
         (version_id.clone(), local_json, local_text)
     } else {
         let manifest: VersionManifest = client
-            .get(&format!("{}/mc/game/version_manifest.json", base_url))
+            .get(format!("{}/mc/game/version_manifest.json", base_url))
             .send()
             .await?
             .json()
@@ -190,7 +190,7 @@ pub async fn process_and_download_version(
 
 async fn download_modpack_libraries(
     version_json: &serde_json::Value,
-    libraries_base_dir: &PathBuf,
+    libraries_base_dir: &Path,
     is_mirror: bool,
     base_url: &str,
     window: &Window,
@@ -216,7 +216,7 @@ async fn download_modpack_libraries(
 
 fn collect_client_jar(
     version_json: &serde_json::Value,
-    version_dir: &PathBuf,
+    version_dir: &Path,
     version_id: &str,
     is_mirror: bool,
     base_url: &str,
@@ -254,7 +254,7 @@ fn collect_client_jar(
 async fn collect_assets(
     client: &reqwest::Client,
     version_json: &serde_json::Value,
-    assets_base_dir: &PathBuf,
+    assets_base_dir: &Path,
     is_mirror: bool,
     base_url: &str,
     downloads: &mut Vec<DownloadJob>,
@@ -325,7 +325,7 @@ async fn collect_assets(
 
 fn collect_libraries(
     version_json: &serde_json::Value,
-    libraries_base_dir: &PathBuf,
+    libraries_base_dir: &Path,
     is_mirror: bool,
     base_url: &str,
     downloads: &mut Vec<DownloadJob>,

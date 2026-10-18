@@ -304,22 +304,20 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         jvm_advanced: crate::models::JvmAdvancedOptions::default(),
     };
 
-    if is_first_run {
-        if let Ok(java_paths) = auto_detect_java() {
-            if !java_paths.is_empty() {
-                let best = java_paths
-                    .iter()
-                    .filter_map(|p| {
-                        crate::services::launcher::java::detect_java_version(p)
-                            .map(|v| (p.clone(), v))
-                    })
-                    .max_by_key(|(_, v)| *v)
-                    .map(|(p, _)| p)
-                    .unwrap_or_else(|| java_paths[0].clone());
-                config.java_path = Some(best.clone());
-                log::info!("首次启动自动检测到Java路径: {}", best);
-            }
-        }
+    if is_first_run
+        && let Ok(java_paths) = auto_detect_java()
+        && !java_paths.is_empty()
+    {
+        let best = java_paths
+            .iter()
+            .filter_map(|p| {
+                crate::services::launcher::java::detect_java_version(p).map(|v| (p.clone(), v))
+            })
+            .max_by_key(|(_, v)| *v)
+            .map(|(p, _)| p)
+            .unwrap_or_else(|| java_paths[0].clone());
+        config.java_path = Some(best.clone());
+        log::info!("首次启动自动检测到Java路径: {}", best);
     }
 
     // 首次启动/损坏重建由 load_config 在锁内落盘，这里只负责构造
@@ -663,13 +661,13 @@ pub fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
 
     if versions_dir.is_dir() {
         for entry in fs::read_dir(versions_dir)? {
-            if let Ok(entry) = entry {
-                if entry.file_type()?.is_dir() {
-                    let version_id = entry.file_name().to_string_lossy().into_owned();
-                    let version_json_path = entry.path().join(format!("{}.json", version_id));
-                    if version_json_path.exists() {
-                        versions.push(version_id);
-                    }
+            if let Ok(entry) = entry
+                && entry.file_type()?.is_dir()
+            {
+                let version_id = entry.file_name().to_string_lossy().into_owned();
+                let version_json_path = entry.path().join(format!("{}.json", version_id));
+                if version_json_path.exists() {
+                    versions.push(version_id);
                 }
             }
         }

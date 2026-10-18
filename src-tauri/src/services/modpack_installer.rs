@@ -12,7 +12,7 @@ use log::{error, info, warn};
 use serde::Deserialize;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
@@ -144,7 +144,7 @@ impl ModpackInstaller {
             );
         }
         let temp_dir = game_dir.join("temp");
-        let extract_dir = temp_dir.join(format!("{}_extract", &options.instance_name));
+        let extract_dir = temp_dir.join(format!("{}_extract", options.instance_name));
 
         // 与实例创建/删除/重命名共用一把锁；失败清理会删实例目录，不能和另一实例互相踩
         let _install_lock = crate::utils::file_lock::acquire_async(
@@ -199,15 +199,16 @@ impl ModpackInstaller {
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn do_install_modrinth_modpack(
         &self,
         options: &ModpackInstallOptions,
         window: &tauri::Window,
-        game_dir: &PathBuf,
-        instance_dir: &PathBuf,
-        content_root: &PathBuf,
-        temp_dir: &PathBuf,
-        extract_dir: &PathBuf,
+        game_dir: &Path,
+        instance_dir: &Path,
+        content_root: &Path,
+        temp_dir: &Path,
+        extract_dir: &Path,
     ) -> Result<(), LauncherError> {
         let send_progress = |progress: u8, message: &str, indeterminate: bool| {
             let _ = window.emit(
@@ -257,7 +258,7 @@ impl ModpackInstaller {
             .ok_or_else(|| LauncherError::Custom("整合包没有可用的文件".to_string()))?;
 
         if !temp_dir.exists() {
-            fs::create_dir_all(&temp_dir)?;
+            fs::create_dir_all(temp_dir)?;
         }
 
         file_utils::validate_file_name_or_error(&primary_file.filename)?;
@@ -287,11 +288,11 @@ impl ModpackInstaller {
         check_cancelled()?;
 
         if extract_dir.exists() {
-            fs::remove_dir_all(&extract_dir)?;
+            fs::remove_dir_all(extract_dir)?;
         }
-        fs::create_dir_all(&extract_dir)?;
+        fs::create_dir_all(extract_dir)?;
 
-        self.extract_modpack(&modpack_file_path, &extract_dir)
+        self.extract_modpack(&modpack_file_path, extract_dir)
             .await
             .map_err(|e| LauncherError::Custom(format!("解压整合包失败: {}", e)))?;
 
@@ -310,7 +311,7 @@ impl ModpackInstaller {
             None
         };
 
-        fs::create_dir_all(&instance_dir)?;
+        fs::create_dir_all(instance_dir)?;
         if content_root != instance_dir {
             fs::create_dir_all(content_root)?;
         }
@@ -345,7 +346,7 @@ impl ModpackInstaller {
             self.install_game_and_loader(
                 &index.dependencies,
                 &options.instance_name,
-                &game_dir,
+                game_dir,
                 window,
             )
             .await?;
@@ -409,7 +410,7 @@ impl ModpackInstaller {
             let _ = fs::remove_file(&modpack_file_path);
         }
         if extract_dir.exists() {
-            let _ = fs::remove_dir_all(&extract_dir);
+            let _ = fs::remove_dir_all(extract_dir);
         }
 
         send_progress(100, "整合包安装完成！", false);
@@ -426,7 +427,7 @@ impl ModpackInstaller {
     async fn download_modpack_files(
         &self,
         files: &[ModrinthIndexFile],
-        instance_dir: &PathBuf,
+        instance_dir: &Path,
         window: &tauri::Window,
     ) -> Result<(), LauncherError> {
         let total_files = files.len();
@@ -601,7 +602,7 @@ impl ModpackInstaller {
         &self,
         deps: &ModrinthDependencies,
         instance_name: &str,
-        game_dir: &PathBuf,
+        game_dir: &Path,
         window: &tauri::Window,
     ) -> Result<(), LauncherError> {
         let mc_version = &deps.minecraft;
@@ -687,7 +688,7 @@ impl ModpackInstaller {
         &self,
         instance_name: &str,
         inherits_from: &str,
-        game_dir: &PathBuf,
+        game_dir: &Path,
     ) -> Result<(), LauncherError> {
         let version_dir = game_dir.join("versions").join(instance_name);
         fs::create_dir_all(&version_dir)?;
@@ -714,7 +715,7 @@ impl ModpackInstaller {
         &self,
         mc_version: &str,
         instance_name: &str,
-        game_dir: &PathBuf,
+        game_dir: &Path,
     ) -> Result<(), LauncherError> {
         self.create_loader_version_json(instance_name, mc_version, game_dir)
     }
@@ -722,12 +723,13 @@ impl ModpackInstaller {
     /// 解压整合包，防止 zip 路径遍历与 zip bomb
     async fn extract_modpack(
         &self,
-        modpack_file_path: &PathBuf,
-        extract_dir: &PathBuf,
+        modpack_file_path: &Path,
+        extract_dir: &Path,
     ) -> Result<(), LauncherError> {
         extract_zip_limited(modpack_file_path, extract_dir, MAX_EXTRACTED_BYTES)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn search_modpacks(
         &self,
         query: Option<String>,

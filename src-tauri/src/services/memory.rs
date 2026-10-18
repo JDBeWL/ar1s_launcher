@@ -227,7 +227,7 @@ pub fn optimize_jvm_memory_args(
             } else {
                 args.push("-XX:+UseZGC".to_string());
                 // 分代 ZGC：Java 21~23 需显式开启，Java 24+ 默认分代且该标志已移除
-                if java_major >= 21 && java_major < 24 {
+                if (21..24).contains(&java_major) {
                     args.push("-XX:+ZGenerational".to_string());
                 }
             }

@@ -291,7 +291,7 @@ pub async fn batch_verify_files(
     Ok(results)
 }
 
-pub fn cleanup_instance_creation(game_dir: &PathBuf, instance_name: &str, _base_version_id: &str) {
+pub fn cleanup_instance_creation(game_dir: &Path, instance_name: &str, _base_version_id: &str) {
     info!("file_utils: 开始清理实例创建过程中的文件和目录");
 
     let instance_dir = game_dir.join("versions").join(instance_name);

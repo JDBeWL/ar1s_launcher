@@ -288,7 +288,7 @@ pub async fn get_forge_versions(mc_version: &str) -> Result<Vec<ForgeVersion>, L
 
 fn is_new_forge(mc_version: &str) -> bool {
     crate::utils::minecraft::parse_mc_version(mc_version)
-        .map_or(false, |(major, minor)| major == 1 && minor >= 13)
+        .is_some_and(|(major, minor)| major == 1 && minor >= 13)
 }
 
 /// 安装器写入 versions 目录的 id，后续目录重命名依赖它
@@ -321,7 +321,7 @@ fn forge_installer_sources(mc: &str, v: &str) -> Vec<String> {
     let plain = format!("{mc}-{v}");
 
     let prefer_suffixed = crate::utils::minecraft::parse_mc_version(mc)
-        .map_or(false, |(major, minor)| major == 1 && minor <= 8);
+        .is_some_and(|(major, minor)| major == 1 && minor <= 8);
 
     let coords = if prefer_suffixed {
         vec![suffixed, plain]
@@ -357,30 +357,30 @@ async fn download_forge_installer(
 
     for url in &sources {
         info!("Forge: 尝试下载: {}", url);
-        if let Ok(resp) = download_with_retry(url, &client, 3).await {
-            if let Ok(bytes) = resp.bytes().await {
-                if bytes.len() > 1024 && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
-                    match download_sha1(&client, url).await {
-                        Some(expected) if !file_utils::verify_sha1(&bytes, &expected) => {
-                            warn!("Forge: 安装器 sha1 不匹配，跳过该源: {}", url);
-                            continue;
-                        }
-                        Some(_) => {}
-                        None => warn!("Forge: 未取到安装器 sha1，仅校验 ZIP 头: {}", url),
-                    }
-
-                    let mut tmp = tempfile::Builder::new()
-                        .prefix(&installer_filename)
-                        .suffix(".jar")
-                        .tempfile()
-                        .map_err(|e| LauncherError::Custom(format!("创建临时文件失败: {}", e)))?;
-                    tmp.write_all(&bytes)
-                        .map_err(|e| LauncherError::Custom(format!("写入安装器失败: {}", e)))?;
-                    let temp_path = tmp.into_temp_path();
-                    info!("Forge: 安装器已下载");
-                    return Ok(temp_path);
+        if let Ok(resp) = download_with_retry(url, &client, 3).await
+            && let Ok(bytes) = resp.bytes().await
+            && bytes.len() > 1024
+            && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04])
+        {
+            match download_sha1(&client, url).await {
+                Some(expected) if !file_utils::verify_sha1(&bytes, &expected) => {
+                    warn!("Forge: 安装器 sha1 不匹配，跳过该源: {}", url);
+                    continue;
                 }
+                Some(_) => {}
+                None => warn!("Forge: 未取到安装器 sha1，仅校验 ZIP 头: {}", url),
             }
+
+            let mut tmp = tempfile::Builder::new()
+                .prefix(&installer_filename)
+                .suffix(".jar")
+                .tempfile()
+                .map_err(|e| LauncherError::Custom(format!("创建临时文件失败: {}", e)))?;
+            tmp.write_all(&bytes)
+                .map_err(|e| LauncherError::Custom(format!("写入安装器失败: {}", e)))?;
+            let temp_path = tmp.into_temp_path();
+            info!("Forge: 安装器已下载");
+            return Ok(temp_path);
         }
     }
 
@@ -537,11 +537,11 @@ pub(crate) async fn download_sha1(client: &Client, url: &str) -> Option<String> 
 }
 
 fn payload_valid(path: &Path, bytes: &[u8], expected_sha1: Option<&str>) -> bool {
-    if let Some(expected) = expected_sha1 {
-        if !file_utils::verify_sha1(bytes, expected) {
-            warn!("Forge: sha1 校验失败: {}", path.display());
-            return false;
-        }
+    if let Some(expected) = expected_sha1
+        && !file_utils::verify_sha1(bytes, expected)
+    {
+        warn!("Forge: sha1 校验失败: {}", path.display());
+        return false;
     }
 
     let expects_zip = path.extension().is_some_and(|ext| {
@@ -609,14 +609,14 @@ async fn download_library(
 
     let client = http_client::get_client();
     for url in &sources {
-        if let Ok(response) = download_with_retry(url, &client, 3).await {
-            if let Ok(bytes) = response.bytes().await {
-                if bytes.len() >= 4 && bytes[0..4] == [0x50, 0x4B, 0x03, 0x04] {
-                    fs::write(&target_path, &bytes)?;
-                    info!("Forge: {} 下载成功", lib_name);
-                    return Ok(());
-                }
-            }
+        if let Ok(response) = download_with_retry(url, &client, 3).await
+            && let Ok(bytes) = response.bytes().await
+            && bytes.len() >= 4
+            && bytes[0..4] == [0x50, 0x4B, 0x03, 0x04]
+        {
+            fs::write(&target_path, &bytes)?;
+            info!("Forge: {} 下载成功", lib_name);
+            return Ok(());
         }
     }
 
@@ -723,43 +723,39 @@ pub(crate) async fn download_library_from_profile(
         });
     let expected_sha1 = artifact_sha1.or(checksum_sha1);
 
-    if let Some(artifact) = library.get("downloads").and_then(|d| d.get("artifact")) {
-        if let Some(path) = artifact.get("path").and_then(|p| p.as_str()) {
-            let target_path = libraries_dir.join(path);
-            if target_path.exists() {
+    if let Some(artifact) = library.get("downloads").and_then(|d| d.get("artifact"))
+        && let Some(path) = artifact.get("path").and_then(|p| p.as_str())
+    {
+        let target_path = libraries_dir.join(path);
+        if target_path.exists() {
+            return Ok(());
+        }
+
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+
+        let mut sources = Vec::new();
+        if let Some(url) = artifact.get("url").and_then(|u| u.as_str()) {
+            // 镜像优先：官方 maven 在国内可能整段超时，先试镜像能把等待从几十秒压到几百毫秒
+            if let Some(mirrored) = mirror_url(url) {
+                sources.push(mirrored);
+            }
+            sources.push(url.to_string());
+        }
+        sources.push(format!("{}/{}", BMCL_LIBRARIES_URL, path));
+        sources.push(format!("{}/{}", MAVEN_FORGE, path));
+
+        for url in &sources {
+            if let Ok(resp) = download_with_retry(url, client, 2).await
+                && let Ok(bytes) = resp.bytes().await
+                && bytes.len() > 100
+                && payload_valid(&target_path, &bytes, expected_sha1)
+            {
+                fs::write(&target_path, &bytes).map_err(|e| {
+                    LauncherError::Custom(format!("写入 {} 失败: {}", target_path.display(), e))
+                })?;
                 return Ok(());
-            }
-
-            if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent).ok();
-            }
-
-            let mut sources = Vec::new();
-            if let Some(url) = artifact.get("url").and_then(|u| u.as_str()) {
-                // 镜像优先：官方 maven 在国内可能整段超时，先试镜像能把等待从几十秒压到几百毫秒
-                if let Some(mirrored) = mirror_url(url) {
-                    sources.push(mirrored);
-                }
-                sources.push(url.to_string());
-            }
-            sources.push(format!("{}/{}", BMCL_LIBRARIES_URL, path));
-            sources.push(format!("{}/{}", MAVEN_FORGE, path));
-
-            for url in &sources {
-                if let Ok(resp) = download_with_retry(url, client, 2).await {
-                    if let Ok(bytes) = resp.bytes().await {
-                        if bytes.len() > 100 && payload_valid(&target_path, &bytes, expected_sha1) {
-                            fs::write(&target_path, &bytes).map_err(|e| {
-                                LauncherError::Custom(format!(
-                                    "写入 {} 失败: {}",
-                                    target_path.display(),
-                                    e
-                                ))
-                            })?;
-                            return Ok(());
-                        }
-                    }
-                }
             }
         }
     }
@@ -781,19 +777,15 @@ pub(crate) async fn download_library_from_profile(
         ];
 
         for url in &sources {
-            if let Ok(resp) = download_with_retry(url, &http_client::get_client(), 2).await {
-                if let Ok(bytes) = resp.bytes().await {
-                    if bytes.len() > 100 && payload_valid(&target_path, &bytes, expected_sha1) {
-                        fs::write(&target_path, &bytes).map_err(|e| {
-                            LauncherError::Custom(format!(
-                                "写入 {} 失败: {}",
-                                target_path.display(),
-                                e
-                            ))
-                        })?;
-                        return Ok(());
-                    }
-                }
+            if let Ok(resp) = download_with_retry(url, &http_client::get_client(), 2).await
+                && let Ok(bytes) = resp.bytes().await
+                && bytes.len() > 100
+                && payload_valid(&target_path, &bytes, expected_sha1)
+            {
+                fs::write(&target_path, &bytes).map_err(|e| {
+                    LauncherError::Custom(format!("写入 {} 失败: {}", target_path.display(), e))
+                })?;
+                return Ok(());
             }
         }
     }
@@ -1043,26 +1035,27 @@ async fn manual_install_new_forge(
                     fs::write(&target, &buf).ok();
                 }
             }
-        } else if name.starts_with("data/") && !name.ends_with('/') {
-            if let Some(rel) = name.strip_prefix("data/") {
-                if rel.contains("..") {
-                    log::warn!("跳过可疑的 data 路径: {}", name);
-                    continue;
-                }
-                let target = libraries_dir
-                    .join("net/minecraftforge/forge")
-                    .join(format!(
-                        "{}-{}",
-                        forge_version.mcversion, forge_version.version
-                    ))
-                    .join(rel);
-                if let Some(p) = target.parent() {
-                    fs::create_dir_all(p).ok();
-                }
-                let mut buf = Vec::new();
-                if file.read_to_end(&mut buf).is_ok() {
-                    fs::write(&target, &buf).ok();
-                }
+        } else if name.starts_with("data/")
+            && !name.ends_with('/')
+            && let Some(rel) = name.strip_prefix("data/")
+        {
+            if rel.contains("..") {
+                log::warn!("跳过可疑的 data 路径: {}", name);
+                continue;
+            }
+            let target = libraries_dir
+                .join("net/minecraftforge/forge")
+                .join(format!(
+                    "{}-{}",
+                    forge_version.mcversion, forge_version.version
+                ))
+                .join(rel);
+            if let Some(p) = target.parent() {
+                fs::create_dir_all(p).ok();
+            }
+            let mut buf = Vec::new();
+            if file.read_to_end(&mut buf).is_ok() {
+                fs::write(&target, &buf).ok();
             }
         }
     }
@@ -1182,12 +1175,12 @@ pub(crate) async fn run_processors(
         let mut classpath = vec![jar_path.to_string_lossy().to_string()];
         if let Some(cp) = processor.get("classpath").and_then(|c| c.as_array()) {
             for lib in cp {
-                if let Some(lib_name) = lib.as_str() {
-                    if let Some(lib_path) = maven_name_to_path(lib_name, None, "jar") {
-                        let full_path = libraries_dir.join(&lib_path);
-                        if full_path.exists() {
-                            classpath.push(full_path.to_string_lossy().to_string());
-                        }
+                if let Some(lib_name) = lib.as_str()
+                    && let Some(lib_path) = maven_name_to_path(lib_name, None, "jar")
+                {
+                    let full_path = libraries_dir.join(&lib_path);
+                    if full_path.exists() {
+                        classpath.push(full_path.to_string_lossy().to_string());
                     }
                 }
             }
@@ -1288,15 +1281,15 @@ fn resolve_processor_arg(
 ) -> String {
     if arg.starts_with('{') && arg.ends_with('}') {
         let key = &arg[1..arg.len() - 1];
-        if let Some(data_map) = data {
-            if let Some(value) = data_map.get(key) {
-                let client_val = match value {
-                    Value::Object(obj) => obj.get("client").and_then(|v| v.as_str()),
-                    other => other.as_str(),
-                };
-                if let Some(client_val) = client_val {
-                    return resolve_data_value(client_val, vars);
-                }
+        if let Some(data_map) = data
+            && let Some(value) = data_map.get(key)
+        {
+            let client_val = match value {
+                Value::Object(obj) => obj.get("client").and_then(|v| v.as_str()),
+                other => other.as_str(),
+            };
+            if let Some(client_val) = client_val {
+                return resolve_data_value(client_val, vars);
             }
         }
     }
@@ -1312,7 +1305,7 @@ fn resolve_processor_arg(
             .replace("{INSTALLER}", &vars.installer.to_string_lossy())
             .replace(
                 "{MINECRAFT_JAR}",
-                &vars.minecraft_jar.to_string_lossy().to_string(),
+                vars.minecraft_jar.to_string_lossy().as_ref(),
             )
             .replace("{MINECRAFT_VERSION}", vars.mc_version)
             .replace("{FORGE_VERSION}", vars.loader_version);

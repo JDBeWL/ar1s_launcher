@@ -319,13 +319,12 @@ pub fn probe_java_exe(exe: &Path) -> Option<JavaProbe> {
 }
 
 fn get_cached_java_paths() -> Option<Vec<String>> {
-    if let Ok(cache) = JAVA_CACHE.read() {
-        if let Some(ref cached) = *cache {
-            if cached.cached_at.elapsed() < JAVA_CACHE_DURATION {
-                log::debug!("使用缓存的 Java 路径列表 ({} 个)", cached.paths.len());
-                return Some(cached.paths.clone());
-            }
-        }
+    if let Ok(cache) = JAVA_CACHE.read()
+        && let Some(ref cached) = *cache
+        && cached.cached_at.elapsed() < JAVA_CACHE_DURATION
+    {
+        log::debug!("使用缓存的 Java 路径列表 ({} 个)", cached.paths.len());
+        return Some(cached.paths.clone());
     }
     None
 }
@@ -446,15 +445,15 @@ fn get_java_installation_dirs() -> Vec<PathBuf> {
             );
         }
 
-        if let Ok(pf) = std::env::var("ProgramFiles") {
-            if !dirs.iter().any(|d| d.starts_with(&pf)) {
-                dirs.push(PathBuf::from(&pf).join("Java"));
-            }
+        if let Ok(pf) = std::env::var("ProgramFiles")
+            && !dirs.iter().any(|d| d.starts_with(&pf))
+        {
+            dirs.push(PathBuf::from(&pf).join("Java"));
         }
-        if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
-            if !dirs.iter().any(|d| d.starts_with(&pf86)) {
-                dirs.push(PathBuf::from(&pf86).join("Java"));
-            }
+        if let Ok(pf86) = std::env::var("ProgramFiles(x86)")
+            && !dirs.iter().any(|d| d.starts_with(&pf86))
+        {
+            dirs.push(PathBuf::from(&pf86).join("Java"));
         }
     }
 
@@ -643,7 +642,7 @@ pub async fn find_java_installations_command() -> Result<Vec<String>, LauncherEr
     log::info!("开始扫描 Java 安装路径...");
     let start_time = Instant::now();
 
-    let paths = tokio::task::spawn_blocking(|| scan_java_installations_parallel())
+    let paths = tokio::task::spawn_blocking(scan_java_installations_parallel)
         .await
         .map_err(|e| LauncherError::Custom(format!("Java 扫描任务失败: {}", e)))?;
 
@@ -837,10 +836,10 @@ pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
 
 pub async fn get_java_version(path: String) -> Result<String, LauncherError> {
     // 走探测缓存：设置页会为每个已检测安装各问一次，缓存后第二次起是纯内存读取
-    if let Some(probe) = probe_java(&path) {
-        if let Some(raw) = probe.raw {
-            return Ok(raw);
-        }
+    if let Some(probe) = probe_java(&path)
+        && let Some(raw) = probe.raw
+    {
+        return Ok(raw);
     }
 
     let resolved = resolve_java_exe(&path);
@@ -864,10 +863,10 @@ pub async fn get_java_version(path: String) -> Result<String, LauncherError> {
 
             for line in version_output.lines() {
                 if line.contains("version") {
-                    if let Some(start) = line.find('"') {
-                        if let Some(end) = line[start + 1..].find('"') {
-                            return Ok(line[start + 1..start + 1 + end].to_string());
-                        }
+                    if let Some(start) = line.find('"')
+                        && let Some(end) = line[start + 1..].find('"')
+                    {
+                        return Ok(line[start + 1..start + 1 + end].to_string());
                     }
                     return Ok(line.trim().to_string());
                 }
@@ -904,17 +903,17 @@ pub fn auto_detect_java() -> Result<Vec<String>, LauncherError> {
         for base_dir in common_dirs {
             if let Ok(entries) = std::fs::read_dir(&base_dir) {
                 for entry in entries.flatten() {
-                    if let Ok(file_type) = entry.file_type() {
-                        if file_type.is_dir() {
-                            let dir_name = entry.file_name().to_string_lossy().to_lowercase();
-                            if dir_name.contains("java")
-                                || dir_name.contains("jdk")
-                                || dir_name.contains("jre")
-                            {
-                                let java_exe = entry.path().join("bin").join("java.exe");
-                                if java_exe.exists() && is_valid_java_executable(&java_exe) {
-                                    java_paths.push(java_exe.to_string_lossy().into_owned());
-                                }
+                    if let Ok(file_type) = entry.file_type()
+                        && file_type.is_dir()
+                    {
+                        let dir_name = entry.file_name().to_string_lossy().to_lowercase();
+                        if dir_name.contains("java")
+                            || dir_name.contains("jdk")
+                            || dir_name.contains("jre")
+                        {
+                            let java_exe = entry.path().join("bin").join("java.exe");
+                            if java_exe.exists() && is_valid_java_executable(&java_exe) {
+                                java_paths.push(java_exe.to_string_lossy().into_owned());
                             }
                         }
                     }

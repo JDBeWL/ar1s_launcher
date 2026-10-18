@@ -169,11 +169,11 @@ pub async fn create_instance(
         return Err(LauncherError::Custom(format!("重命名 JSON 失败: {}", e)));
     }
 
-    if old_jar_path.exists() {
-        if let Err(e) = fs::rename(&old_jar_path, &new_jar_path) {
-            cleanup();
-            return Err(LauncherError::Custom(format!("重命名 JAR 失败: {}", e)));
-        }
+    if old_jar_path.exists()
+        && let Err(e) = fs::rename(&old_jar_path, &new_jar_path)
+    {
+        cleanup();
+        return Err(LauncherError::Custom(format!("重命名 JAR 失败: {}", e)));
     }
 
     let update_json_id = || -> Result<(), LauncherError> {
@@ -320,10 +320,8 @@ fn parse_fml_arguments(json_value: &Value) -> (Option<String>, Option<String>, O
                             is_neoforge = true;
                         }
                     }
-                    "--fml.mcVersion" => {
-                        if i + 1 < tokens.len() {
-                            mc_ver = Some(tokens[i + 1].to_string());
-                        }
+                    "--fml.mcVersion" if i + 1 < tokens.len() => {
+                        mc_ver = Some(tokens[i + 1].to_string());
                     }
                     _ => {}
                 }
@@ -448,12 +446,20 @@ fn parse_loader_from_libraries(json_value: &Value) -> (Option<String>, Option<St
         let version = parts[2];
 
         if group == "net.minecraftforge" && artifact == "forge" {
-            let loader_ver = version.split('-').last().unwrap_or(version).to_string();
+            let loader_ver = version
+                .split('-')
+                .next_back()
+                .unwrap_or(version)
+                .to_string();
             return (Some("Forge".to_string()), Some(loader_ver));
         }
 
         if group == "net.minecraftforge" && artifact == "fmlloader" {
-            let loader_ver = version.split('-').last().unwrap_or(version).to_string();
+            let loader_ver = version
+                .split('-')
+                .next_back()
+                .unwrap_or(version)
+                .to_string();
             return (Some("Forge".to_string()), Some(loader_ver));
         }
 
@@ -466,7 +472,11 @@ fn parse_loader_from_libraries(json_value: &Value) -> (Option<String>, Option<St
         }
 
         if group == "net.neoforged" && (artifact == "neoforge" || artifact == "fml") {
-            let loader_ver = version.split('-').last().unwrap_or(version).to_string();
+            let loader_ver = version
+                .split('-')
+                .next_back()
+                .unwrap_or(version)
+                .to_string();
             return (Some("NeoForge".to_string()), Some(loader_ver));
         }
     }
@@ -511,12 +521,11 @@ fn find_real_minecraft_version(
         let parent_json_path = versions_dir
             .join(inherits)
             .join(format!("{}.json", inherits));
-        if parent_json_path.exists() {
-            if let Ok(parent_content) = fs::read_to_string(&parent_json_path) {
-                if let Ok(parent_json) = serde_json::from_str::<Value>(&parent_content) {
-                    return find_real_minecraft_version(inherits, &parent_json, versions_dir);
-                }
-            }
+        if parent_json_path.exists()
+            && let Ok(parent_content) = fs::read_to_string(&parent_json_path)
+            && let Ok(parent_json) = serde_json::from_str::<Value>(&parent_content)
+        {
+            return find_real_minecraft_version(inherits, &parent_json, versions_dir);
         }
         Some(inherits.to_string())
     } else {
@@ -548,186 +557,185 @@ fn get_instances_sync(
 
     if let Ok(entries) = fs::read_dir(versions_dir) {
         for entry in entries.flatten() {
-            if let Ok(file_type) = entry.file_type() {
-                if file_type.is_dir() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    let path = entry.path();
-                    let json_path = path.join(format!("{}.json", name));
+            if let Ok(file_type) = entry.file_type()
+                && file_type.is_dir()
+            {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let path = entry.path();
+                let json_path = path.join(format!("{}.json", name));
 
-                    if json_path.exists() {
-                        let json_content = fs::read_to_string(&json_path).ok();
-                        let json_value = json_content
-                            .as_ref()
-                            .and_then(|c| serde_json::from_str::<Value>(c).ok());
+                if json_path.exists() {
+                    let json_content = fs::read_to_string(&json_path).ok();
+                    let json_value = json_content
+                        .as_ref()
+                        .and_then(|c| serde_json::from_str::<Value>(c).ok());
 
-                        let version_id = json_value
-                            .as_ref()
-                            .and_then(|v| v["id"].as_str().map(String::from))
-                            .unwrap_or_else(|| name.clone());
+                    let version_id = json_value
+                        .as_ref()
+                        .and_then(|v| v["id"].as_str().map(String::from))
+                        .unwrap_or_else(|| name.clone());
 
-                        let content_dir = if isolated { &path } else { &shared_root };
-                        let mod_count = count_mods(content_dir);
+                    let content_dir = if isolated { &path } else { &shared_root };
+                    let mod_count = count_mods(content_dir);
 
-                        let main_class = json_value
-                            .as_ref()
-                            .and_then(|v| v["mainClass"].as_str())
-                            .unwrap_or("");
+                    let main_class = json_value
+                        .as_ref()
+                        .and_then(|v| v["mainClass"].as_str())
+                        .unwrap_or("");
 
-                        let mut loader_type: Option<String> = None;
-                        let mut loader_version: Option<String> = None;
-                        let mut game_version: Option<String> = None;
-                        let mut icon_url: Option<String> = None;
+                    let mut loader_type: Option<String> = None;
+                    let mut loader_version: Option<String> = None;
+                    let mut game_version: Option<String> = None;
+                    let mut icon_url: Option<String> = None;
 
-                        if let Some(ref json) = json_value {
-                            if let (Some(lt), fv, mv) = parse_fml_arguments(json) {
-                                loader_type = Some(lt);
-                                loader_version = fv;
-                                game_version = mv;
-                            }
-                        }
-
-                        if let Some(ref json) = json_value {
-                            let (plt, plv, pgv) = parse_patches(json);
-                            if plt.is_some() {
-                                if loader_type.is_none() {
-                                    loader_type = plt;
-                                }
-                                if loader_version.is_none() {
-                                    loader_version = plv;
-                                }
-                                if game_version.is_none() {
-                                    game_version = pgv;
-                                }
-                            }
-                        }
-
-                        if let Some(meta) = read_instance_metadata(&path) {
-                            if game_version.is_none() {
-                                game_version = Some(meta.minecraft);
-                            }
-                            if icon_url.is_none() {
-                                icon_url = meta.icon_url;
-                            }
-                            if loader_type.is_none() {
-                                if let Some(lt) = meta.loader {
-                                    loader_type = Some(match lt.as_str() {
-                                        "forge" => "Forge".to_string(),
-                                        "fabric" => "Fabric".to_string(),
-                                        "quilt" => "Quilt".to_string(),
-                                        "neoforge" => "NeoForge".to_string(),
-                                        other => {
-                                            let mut c = other.chars();
-                                            match c.next() {
-                                                Some(f) => {
-                                                    f.to_uppercase().collect::<String>()
-                                                        + c.as_str()
-                                                }
-                                                None => other.to_string(),
-                                            }
-                                        }
-                                    });
-                                }
-                            }
-                        }
-
-                        if let Some(ref json) = json_value {
-                            if let (Some(lt), Some(lv)) = parse_loader_from_libraries(json) {
-                                if loader_type.is_none() {
-                                    loader_type = Some(lt);
-                                }
-                                if loader_version.is_none() {
-                                    loader_version = Some(lv);
-                                }
-                            }
-                        }
-
-                        if loader_type.is_none() {
-                            if main_class.contains("forge")
-                                || main_class.contains("LaunchWrapper")
-                                || main_class.contains("modlauncher")
-                            {
-                                loader_type = Some("Forge".to_string());
-                            } else if main_class.contains("fabricmc")
-                                || (main_class.contains("knot")
-                                    && main_class.to_lowercase().contains("fabric"))
-                            {
-                                loader_type = Some("Fabric".to_string());
-                            } else if main_class.contains("quiltmc")
-                                || (main_class.contains("knot")
-                                    && main_class.to_lowercase().contains("quilt"))
-                            {
-                                loader_type = Some("Quilt".to_string());
-                            } else if main_class.contains("neoforge") {
-                                loader_type = Some("NeoForge".to_string());
-                            }
-                        }
-
-                        if game_version.is_none() {
-                            if let Some(json) = json_value.as_ref() {
-                                game_version =
-                                    find_real_minecraft_version(&version_id, json, versions_dir);
-                            } else {
-                                game_version = Some(version_id.clone());
-                            }
-                        }
-
-                        if loader_type.is_none() {
-                            if json_value
-                                .as_ref()
-                                .and_then(|v| v["inheritsFrom"].as_str())
-                                .is_some()
-                            {
-                                loader_type = Some("Unknown".to_string());
-                            } else if mod_count.unwrap_or(0) > 0 {
-                                loader_type = Some("Modded".to_string());
-                            } else {
-                                loader_type = Some("None".to_string());
-                            }
-                        }
-
-                        let auto_memory_mb = auto_memory_available_mb.map(|available| {
-                            compute_auto_memory(
-                                game_version.as_deref().unwrap_or(&version_id),
-                                loader_type.as_deref().is_some_and(|lt| lt != "None"),
-                                mod_count.unwrap_or(0) as usize,
-                                available,
-                                false,
-                            )
-                            .memory_mb
-                        });
-
-                        let created = entry
-                            .metadata()
-                            .and_then(|m| m.created())
-                            .ok()
-                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs().to_string());
-
-                        let config_last_played = config::get_instance_last_played(&name);
-                        let json_last_played =
-                            json_value.as_ref().and_then(|v| v["lastPlayed"].as_i64());
-                        let last_played = match (config_last_played, json_last_played) {
-                            (Some(c), Some(j)) => Some(c.max(j)),
-                            (Some(c), None) => Some(c),
-                            (None, Some(j)) => Some(j),
-                            (None, None) => None,
-                        };
-
-                        instances.push(InstanceInfo {
-                            id: name.clone(),
-                            name: name.clone(),
-                            version: version_id,
-                            path: path.to_string_lossy().to_string(),
-                            created_time: created,
-                            loader_type,
-                            loader_version,
-                            game_version,
-                            last_played,
-                            mod_count,
-                            icon_url,
-                            auto_memory_mb,
-                        });
+                    if let Some(ref json) = json_value
+                        && let (Some(lt), fv, mv) = parse_fml_arguments(json)
+                    {
+                        loader_type = Some(lt);
+                        loader_version = fv;
+                        game_version = mv;
                     }
+
+                    if let Some(ref json) = json_value {
+                        let (plt, plv, pgv) = parse_patches(json);
+                        if plt.is_some() {
+                            if loader_type.is_none() {
+                                loader_type = plt;
+                            }
+                            if loader_version.is_none() {
+                                loader_version = plv;
+                            }
+                            if game_version.is_none() {
+                                game_version = pgv;
+                            }
+                        }
+                    }
+
+                    if let Some(meta) = read_instance_metadata(&path) {
+                        if game_version.is_none() {
+                            game_version = Some(meta.minecraft);
+                        }
+                        if icon_url.is_none() {
+                            icon_url = meta.icon_url;
+                        }
+                        if loader_type.is_none()
+                            && let Some(lt) = meta.loader
+                        {
+                            loader_type = Some(match lt.as_str() {
+                                "forge" => "Forge".to_string(),
+                                "fabric" => "Fabric".to_string(),
+                                "quilt" => "Quilt".to_string(),
+                                "neoforge" => "NeoForge".to_string(),
+                                other => {
+                                    let mut c = other.chars();
+                                    match c.next() {
+                                        Some(f) => {
+                                            f.to_uppercase().collect::<String>() + c.as_str()
+                                        }
+                                        None => other.to_string(),
+                                    }
+                                }
+                            });
+                        }
+                    }
+
+                    if let Some(ref json) = json_value
+                        && let (Some(lt), Some(lv)) = parse_loader_from_libraries(json)
+                    {
+                        if loader_type.is_none() {
+                            loader_type = Some(lt);
+                        }
+                        if loader_version.is_none() {
+                            loader_version = Some(lv);
+                        }
+                    }
+
+                    if loader_type.is_none() {
+                        if main_class.contains("forge")
+                            || main_class.contains("LaunchWrapper")
+                            || main_class.contains("modlauncher")
+                        {
+                            loader_type = Some("Forge".to_string());
+                        } else if main_class.contains("fabricmc")
+                            || (main_class.contains("knot")
+                                && main_class.to_lowercase().contains("fabric"))
+                        {
+                            loader_type = Some("Fabric".to_string());
+                        } else if main_class.contains("quiltmc")
+                            || (main_class.contains("knot")
+                                && main_class.to_lowercase().contains("quilt"))
+                        {
+                            loader_type = Some("Quilt".to_string());
+                        } else if main_class.contains("neoforge") {
+                            loader_type = Some("NeoForge".to_string());
+                        }
+                    }
+
+                    if game_version.is_none() {
+                        if let Some(json) = json_value.as_ref() {
+                            game_version =
+                                find_real_minecraft_version(&version_id, json, versions_dir);
+                        } else {
+                            game_version = Some(version_id.clone());
+                        }
+                    }
+
+                    if loader_type.is_none() {
+                        if json_value
+                            .as_ref()
+                            .and_then(|v| v["inheritsFrom"].as_str())
+                            .is_some()
+                        {
+                            loader_type = Some("Unknown".to_string());
+                        } else if mod_count.unwrap_or(0) > 0 {
+                            loader_type = Some("Modded".to_string());
+                        } else {
+                            loader_type = Some("None".to_string());
+                        }
+                    }
+
+                    let auto_memory_mb = auto_memory_available_mb.map(|available| {
+                        compute_auto_memory(
+                            game_version.as_deref().unwrap_or(&version_id),
+                            loader_type.as_deref().is_some_and(|lt| lt != "None"),
+                            mod_count.unwrap_or(0) as usize,
+                            available,
+                            false,
+                        )
+                        .memory_mb
+                    });
+
+                    let created = entry
+                        .metadata()
+                        .and_then(|m| m.created())
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs().to_string());
+
+                    let config_last_played = config::get_instance_last_played(&name);
+                    let json_last_played =
+                        json_value.as_ref().and_then(|v| v["lastPlayed"].as_i64());
+                    let last_played = match (config_last_played, json_last_played) {
+                        (Some(c), Some(j)) => Some(c.max(j)),
+                        (Some(c), None) => Some(c),
+                        (None, Some(j)) => Some(j),
+                        (None, None) => None,
+                    };
+
+                    instances.push(InstanceInfo {
+                        id: name.clone(),
+                        name: name.clone(),
+                        version: version_id,
+                        path: path.to_string_lossy().to_string(),
+                        created_time: created,
+                        loader_type,
+                        loader_version,
+                        game_version,
+                        last_played,
+                        mod_count,
+                        icon_url,
+                        auto_memory_mb,
+                    });
                 }
             }
         }
@@ -1069,11 +1077,11 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
 
     // 把固化下来的版本写进 instance.json，读取端会优先采用它
     let meta_path = new_dir.join("instance.json");
-    if !meta_path.exists() {
-        if let Some(mc) = real_mc_version {
-            let meta = serde_json::json!({ "minecraft": mc });
-            fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
-        }
+    if !meta_path.exists()
+        && let Some(mc) = real_mc_version
+    {
+        let meta = serde_json::json!({ "minecraft": mc });
+        fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
     }
 
     Ok(())
@@ -1136,15 +1144,14 @@ pub async fn launch_instance(
     }
 
     let config_last_played = config.instance_last_played.get(&instance_name).copied();
-    if let Some(ts) = config_last_played {
-        if let Some(json_played) = json.get("lastPlayed").and_then(|v| v.as_i64()) {
-            if json_played != ts {
-                warn!(
-                    "实例 '{}' 的 lastPlayed 不一致 (config: {}, json: {}), 使用 config 值",
-                    instance_name, ts, json_played
-                );
-            }
-        }
+    if let Some(ts) = config_last_played
+        && let Some(json_played) = json.get("lastPlayed").and_then(|v| v.as_i64())
+        && json_played != ts
+    {
+        warn!(
+            "实例 '{}' 的 lastPlayed 不一致 (config: {}, json: {}), 使用 config 值",
+            instance_name, ts, json_played
+        );
     }
 
     // lastPlayed 已由 launcher::launch_minecraft 更新，此处不重复
@@ -1305,27 +1312,27 @@ async fn merge_and_complete_instance(
         for job in index_jobs {
             if job.path.exists() {
                 let content = fs::read_to_string(&job.path)?;
-                if let Ok(idx_json) = serde_json::from_str::<Value>(&content) {
-                    if let Some(objects) = idx_json["objects"].as_object() {
-                        let assets_objects_dir = game_dir.join("assets").join("objects");
-                        for obj in objects.values() {
-                            if let Some(hash) = obj["hash"].as_str() {
-                                let size = obj["size"].as_u64().unwrap_or(0);
-                                let prefix = &hash[..2];
-                                let path = assets_objects_dir.join(prefix).join(hash);
-                                let url = format!(
-                                    "https://resources.download.minecraft.net/{}/{}",
-                                    prefix, hash
-                                );
+                if let Ok(idx_json) = serde_json::from_str::<Value>(&content)
+                    && let Some(objects) = idx_json["objects"].as_object()
+                {
+                    let assets_objects_dir = game_dir.join("assets").join("objects");
+                    for obj in objects.values() {
+                        if let Some(hash) = obj["hash"].as_str() {
+                            let size = obj["size"].as_u64().unwrap_or(0);
+                            let prefix = &hash[..2];
+                            let path = assets_objects_dir.join(prefix).join(hash);
+                            let url = format!(
+                                "https://resources.download.minecraft.net/{}/{}",
+                                prefix, hash
+                            );
 
-                                all_jobs.push(DownloadJob {
-                                    url,
-                                    fallback_url: None,
-                                    path,
-                                    size,
-                                    hash: Some(hash.to_string()),
-                                });
-                            }
+                            all_jobs.push(DownloadJob {
+                                url,
+                                fallback_url: None,
+                                path,
+                                size,
+                                hash: Some(hash.to_string()),
+                            });
                         }
                     }
                 }
@@ -1350,46 +1357,46 @@ fn collect_download_jobs(
     let assets_indexes_dir = game_dir.join("assets").join("indexes");
     let versions_dir = game_dir.join("versions");
 
-    if let Some(client) = json.get("downloads").and_then(|d| d.get("client")) {
-        if let (Some(url), Some(sha1), Some(size)) = (
+    if let Some(client) = json.get("downloads").and_then(|d| d.get("client"))
+        && let (Some(url), Some(sha1), Some(size)) = (
             client["url"].as_str(),
             client["sha1"].as_str(),
             client["size"].as_u64(),
-        ) {
-            let path = versions_dir
-                .join(instance_id)
-                .join(format!("{}.jar", instance_id));
-            jobs.push(DownloadJob {
-                url: url.to_string(),
-                fallback_url: None,
-                path,
-                size,
-                hash: Some(sha1.to_string()),
-            });
-        }
+        )
+    {
+        let path = versions_dir
+            .join(instance_id)
+            .join(format!("{}.jar", instance_id));
+        jobs.push(DownloadJob {
+            url: url.to_string(),
+            fallback_url: None,
+            path,
+            size,
+            hash: Some(sha1.to_string()),
+        });
     }
 
-    if let Some(asset_idx) = json.get("assetIndex") {
-        if let (Some(id), Some(url), Some(sha1), Some(size)) = (
+    if let Some(asset_idx) = json.get("assetIndex")
+        && let (Some(id), Some(url), Some(sha1), Some(size)) = (
             asset_idx["id"].as_str(),
             asset_idx["url"].as_str(),
             asset_idx["sha1"].as_str(),
             asset_idx["size"].as_u64(),
-        ) {
-            let path = assets_indexes_dir.join(format!("{}.json", id));
-            jobs.push(DownloadJob {
-                url: url.to_string(),
-                fallback_url: None,
-                path,
-                size,
-                hash: Some(sha1.to_string()),
-            });
-        }
+        )
+    {
+        let path = assets_indexes_dir.join(format!("{}.json", id));
+        jobs.push(DownloadJob {
+            url: url.to_string(),
+            fallback_url: None,
+            path,
+            size,
+            hash: Some(sha1.to_string()),
+        });
     }
 
     if let Some(libs) = json["libraries"].as_array() {
         for lib in libs {
-            let allowed = lib["rules"].as_array().map_or(true, |rules| {
+            let allowed = lib["rules"].as_array().is_none_or(|rules| {
                 let current_os = std::env::consts::OS;
                 let target_os = if current_os == "macos" {
                     "osx"
@@ -1399,7 +1406,7 @@ fn collect_download_jobs(
                 let mut allow = false;
                 for rule in rules {
                     let action = rule["action"].as_str().unwrap_or("allow");
-                    let os_match = rule["os"]["name"].as_str().map_or(true, |o| o == target_os);
+                    let os_match = rule["os"]["name"].as_str().is_none_or(|o| o == target_os);
                     if os_match {
                         allow = action == "allow";
                     }
@@ -1411,45 +1418,43 @@ fn collect_download_jobs(
                 continue;
             }
 
-            if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
-                if let (Some(url), Some(path), Some(sha1), Some(size)) = (
+            if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact"))
+                && let (Some(url), Some(path), Some(sha1), Some(size)) = (
                     artifact["url"].as_str(),
                     artifact["path"].as_str(),
                     artifact["sha1"].as_str(),
                     artifact["size"].as_u64(),
-                ) {
-                    jobs.push(DownloadJob {
-                        url: url.to_string(),
-                        fallback_url: None,
-                        path: libraries_dir.join(path),
-                        size,
-                        hash: Some(sha1.to_string()),
-                    });
-                }
+                )
+            {
+                jobs.push(DownloadJob {
+                    url: url.to_string(),
+                    fallback_url: None,
+                    path: libraries_dir.join(path),
+                    size,
+                    hash: Some(sha1.to_string()),
+                });
             }
 
-            if let Some(classifiers) = lib.get("downloads").and_then(|d| d.get("classifiers")) {
-                if let Some(obj) = classifiers.as_object() {
-                    let current_os = std::env::consts::OS;
-                    for (key, artifact) in obj {
-                        if key.contains(current_os)
-                            || (current_os == "macos" && key.contains("osx"))
-                        {
-                            if let (Some(url), Some(path), Some(sha1), Some(size)) = (
-                                artifact["url"].as_str(),
-                                artifact["path"].as_str(),
-                                artifact["sha1"].as_str(),
-                                artifact["size"].as_u64(),
-                            ) {
-                                jobs.push(DownloadJob {
-                                    url: url.to_string(),
-                                    fallback_url: None,
-                                    path: libraries_dir.join(path),
-                                    size,
-                                    hash: Some(sha1.to_string()),
-                                });
-                            }
-                        }
+            if let Some(classifiers) = lib.get("downloads").and_then(|d| d.get("classifiers"))
+                && let Some(obj) = classifiers.as_object()
+            {
+                let current_os = std::env::consts::OS;
+                for (key, artifact) in obj {
+                    if (key.contains(current_os) || (current_os == "macos" && key.contains("osx")))
+                        && let (Some(url), Some(path), Some(sha1), Some(size)) = (
+                            artifact["url"].as_str(),
+                            artifact["path"].as_str(),
+                            artifact["sha1"].as_str(),
+                            artifact["size"].as_u64(),
+                        )
+                    {
+                        jobs.push(DownloadJob {
+                            url: url.to_string(),
+                            fallback_url: None,
+                            path: libraries_dir.join(path),
+                            size,
+                            hash: Some(sha1.to_string()),
+                        });
                     }
                 }
             }

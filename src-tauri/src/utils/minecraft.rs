@@ -4,16 +4,12 @@
 
 /// 1.17+ 或 26.x 新格式视为新版本；用数值解析而非字符串前缀匹配，`1.21.1` 才不会误判
 pub fn is_new_version(version: &str) -> bool {
-    parse_mc_version(version).map_or(false, |(major, minor)| {
-        major > 1 || (major == 1 && minor >= 17)
-    })
+    parse_mc_version(version).is_some_and(|(major, minor)| major > 1 || (major == 1 && minor >= 17))
 }
 
 /// 1.12 ~ 1.16.x 视为中等版本
 pub fn is_mid_version(version: &str) -> bool {
-    parse_mc_version(version).map_or(false, |(major, minor)| {
-        major == 1 && (12..=16).contains(&minor)
-    })
+    parse_mc_version(version).is_some_and(|(major, minor)| major == 1 && (12..=16).contains(&minor))
 }
 
 /// 只取前两段数字，忽略 patch 和 `-forge-` 之类后缀；不足两段返回 None

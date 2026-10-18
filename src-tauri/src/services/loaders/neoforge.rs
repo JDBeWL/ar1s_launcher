@@ -50,9 +50,7 @@ pub async fn install_neoforge(
     let client = http_client::get_client();
 
     // 1.20.2 起 NeoForge 版本号不再带 mc 前缀，旧版才是 `mc-ver-loader-ver` 格式
-    let full_version = if neoforge_version.contains('.') && !neoforge_version.contains('-') {
-        neoforge_version.to_string()
-    } else if neoforge_version.contains('-') {
+    let full_version = if neoforge_version.contains('.') || neoforge_version.contains('-') {
         neoforge_version.to_string()
     } else {
         format!("{}-{}", mc_version, neoforge_version)
@@ -74,31 +72,30 @@ pub async fn install_neoforge(
     let mut downloaded = false;
 
     info!("尝试从 BMCLAPI 下载 NeoForge installer");
-    if let Ok(response) = client.get(&bmclapi_url).send().await {
-        if response.status().is_success() {
-            if let Ok(bytes) = response.bytes().await {
-                if bytes.len() > 1024 && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
-                    let expected = match forge::download_sha1(&client, &bmclapi_url).await {
-                        Some(hash) => Some(hash),
-                        None => forge::download_sha1(&client, &official_url).await,
-                    };
-                    let hash_ok = expected
-                        .as_deref()
-                        .is_none_or(|hash| file_utils::verify_sha1(&bytes, hash));
-                    if hash_ok {
-                        if expected.is_none() {
-                            warn!("NeoForge: 未取到 installer sha1，仅校验 ZIP 头");
-                        }
-                        fs::write(&installer_path, &bytes)?;
-                        downloaded = true;
-                        info!("从 BMCLAPI 下载成功");
-                    } else {
-                        warn!("NeoForge: BMCLAPI installer sha1 不匹配，改试官方源");
-                    }
-                } else {
-                    warn!("NeoForge: BMCLAPI installer 不是有效 ZIP");
+    if let Ok(response) = client.get(&bmclapi_url).send().await
+        && response.status().is_success()
+        && let Ok(bytes) = response.bytes().await
+    {
+        if bytes.len() > 1024 && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
+            let expected = match forge::download_sha1(&client, &bmclapi_url).await {
+                Some(hash) => Some(hash),
+                None => forge::download_sha1(&client, &official_url).await,
+            };
+            let hash_ok = expected
+                .as_deref()
+                .is_none_or(|hash| file_utils::verify_sha1(&bytes, hash));
+            if hash_ok {
+                if expected.is_none() {
+                    warn!("NeoForge: 未取到 installer sha1，仅校验 ZIP 头");
                 }
+                fs::write(&installer_path, &bytes)?;
+                downloaded = true;
+                info!("从 BMCLAPI 下载成功");
+            } else {
+                warn!("NeoForge: BMCLAPI installer sha1 不匹配，改试官方源");
             }
+        } else {
+            warn!("NeoForge: BMCLAPI installer 不是有效 ZIP");
         }
     }
 
@@ -315,26 +312,25 @@ pub async fn get_neoforge_versions(
 
     let bmclapi_url = format!("{}/list/{}", BMCLAPI_NEOFORGE_URL, mc_version);
 
-    if let Ok(response) = client.get(&bmclapi_url).send().await {
-        if response.status().is_success() {
-            if let Ok(versions) = response.json::<Vec<BmclapiNeoForgeVersion>>().await {
-                let mut versions: Vec<NeoForgeVersion> = versions
-                    .into_iter()
-                    .map(|v| NeoForgeVersion {
-                        stable: !v.version.contains("beta"),
-                        version: v.version,
-                        mc_version: v.mc_version,
-                    })
-                    .collect();
+    if let Ok(response) = client.get(&bmclapi_url).send().await
+        && response.status().is_success()
+        && let Ok(versions) = response.json::<Vec<BmclapiNeoForgeVersion>>().await
+    {
+        let mut versions: Vec<NeoForgeVersion> = versions
+            .into_iter()
+            .map(|v| NeoForgeVersion {
+                stable: !v.version.contains("beta"),
+                version: v.version,
+                mc_version: v.mc_version,
+            })
+            .collect();
 
-                // BMCLAPI 的列表是升序（甚至混着字符串序，21.1.1 → 21.1.10 → 21.1.11），
-                // 调用方默认取第一条，不自己排就会装到最老的版本
-                versions.sort_by(|a, b| version_key(&b.version).cmp(&version_key(&a.version)));
-                versions.dedup_by(|a, b| a.version == b.version);
+        // BMCLAPI 的列表是升序（甚至混着字符串序，21.1.1 → 21.1.10 → 21.1.11），
+        // 调用方默认取第一条，不自己排就会装到最老的版本
+        versions.sort_by_key(|a| std::cmp::Reverse(version_key(&a.version)));
+        versions.dedup_by(|a, b| a.version == b.version);
 
-                return Ok(versions);
-            }
-        }
+        return Ok(versions);
     }
 
     warn!("BMCLAPI 获取 NeoForge 版本失败，返回空列表");
@@ -378,7 +374,7 @@ mod tests {
 
     fn sorted<'a>(versions: &[&'a str]) -> Vec<&'a str> {
         let mut list: Vec<&str> = versions.to_vec();
-        list.sort_by(|a, b| version_key(b).cmp(&version_key(a)));
+        list.sort_by_key(|a| std::cmp::Reverse(version_key(a)));
         list
     }
 

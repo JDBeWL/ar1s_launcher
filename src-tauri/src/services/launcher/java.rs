@@ -13,12 +13,11 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 pub fn generate_offline_uuid(username: &str) -> String {
-    if let Ok(config) = load_config() {
-        if let (Some(saved_username), Some(saved_uuid)) = (&config.username, &config.uuid) {
-            if saved_username == username {
-                return saved_uuid.clone();
-            }
-        }
+    if let Ok(config) = load_config()
+        && let (Some(saved_username), Some(saved_uuid)) = (&config.username, &config.uuid)
+        && saved_username == username
+    {
+        return saved_uuid.clone();
     }
 
     Uuid::new_v3(
@@ -51,20 +50,20 @@ pub fn resolve_path(path: &str) -> PathBuf {
 
 /// 解析 Java 可执行文件路径（支持相对路径与安装目录）
 pub fn resolve_java_path(config: &GameConfig) -> Result<String, LauncherError> {
-    if let Some(config_path) = &config.java_path {
-        if !config_path.is_empty() {
-            // 用户很可能填的是 JAVA_HOME 而不是 exe，这里统一落成可执行文件
-            let resolved = resolve_java_exe(config_path);
-            if resolved.exists() {
-                return Ok(resolved.to_string_lossy().into_owned());
-            }
-            if PathBuf::from(config_path).is_relative() {
-                return Err(LauncherError::Custom(format!(
-                    "Java 相对路径 '{}' 解析后不存在: {}",
-                    config_path,
-                    resolved.display()
-                )));
-            }
+    if let Some(config_path) = &config.java_path
+        && !config_path.is_empty()
+    {
+        // 用户很可能填的是 JAVA_HOME 而不是 exe，这里统一落成可执行文件
+        let resolved = resolve_java_exe(config_path);
+        if resolved.exists() {
+            return Ok(resolved.to_string_lossy().into_owned());
+        }
+        if PathBuf::from(config_path).is_relative() {
+            return Err(LauncherError::Custom(format!(
+                "Java 相对路径 '{}' 解析后不存在: {}",
+                config_path,
+                resolved.display()
+            )));
         }
     }
 
