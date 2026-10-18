@@ -1,6 +1,7 @@
 /**
  * 游戏进程事件存储
- * launched / exited / error 转成通知，minecraft-crash 转成崩溃诊断弹窗
+ * exited / error 转成通知，minecraft-crash 转成崩溃诊断弹窗；
+ * launched 只表示进程已派生，由启动入口提示“正在启动”，不再重复报成功
  */
 import { defineStore } from 'pinia';
 import { useMultiEventSubscription } from '../composables/useEventSubscription';
@@ -11,12 +12,6 @@ import { logError } from '../utils/logger';
 
 export const useLauncherStore = defineStore('launcher', () => {
   const eventSubs = useMultiEventSubscription();
-
-  eventSubs.add<string>('minecraft-launched', (event) => {
-    const msg = String(event.payload ?? '游戏已启动');
-    const notificationStore = useNotificationStore();
-    notificationStore.success('Minecraft 已启动', msg);
-  });
 
   eventSubs.add<string>('minecraft-exited', (event) => {
     const msg = String(event.payload ?? '游戏已退出');

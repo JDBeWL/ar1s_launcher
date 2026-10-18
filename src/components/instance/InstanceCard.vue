@@ -14,6 +14,7 @@ const emit = defineEmits<{
   (e: 'manage-mods', instance: GameInstance): void;
   (e: 'delete', instance: GameInstance): void;
   (e: 'rename', instance: GameInstance): void;
+  (e: 'export-diagnostics', instance: GameInstance): void;
 }>();
 
 const loaderColor = computed(() => getLoaderColor(props.instance.loaderType));
@@ -92,6 +93,12 @@ const chipLabel = computed(() => {
                 <v-icon size="18">mdi-puzzle-outline</v-icon>
               </template>
               <v-list-item-title class="text-body-medium">Mod 管理</v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="emit('export-diagnostics', instance)">
+              <template #prepend>
+                <v-icon size="18">mdi-zip-box-outline</v-icon>
+              </template>
+              <v-list-item-title class="text-body-medium">导出诊断包</v-list-item-title>
             </v-list-item>
             <v-list-item @click="emit('rename', instance)">
               <template #prepend>

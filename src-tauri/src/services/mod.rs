@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod credentials;
+pub mod diagnostics;
 pub mod download;
 pub mod file_verification;
 pub mod http_client;

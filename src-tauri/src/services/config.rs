@@ -391,6 +391,20 @@ fn config_for_disk(config: &GameConfig) -> GameConfig {
     disk_config
 }
 
+/// 诊断包里的配置快照：token、账户标识与代理 URL 都不能带出去
+pub(crate) fn config_for_diagnostics(config: &GameConfig) -> GameConfig {
+    let mut snapshot = config_for_disk(config);
+    snapshot.username = None;
+    snapshot.uuid = None;
+    snapshot.skin_url = None;
+    snapshot.ms_expires_at = None;
+    if snapshot.proxy_url.is_some() {
+        snapshot.proxy_url = Some("***".to_string());
+    }
+    snapshot.instance_last_played.clear();
+    snapshot
+}
+
 fn save_config_internal(config: &GameConfig, write_credentials: bool) -> Result<(), LauncherError> {
     if write_credentials {
         if has_tokens(config) {

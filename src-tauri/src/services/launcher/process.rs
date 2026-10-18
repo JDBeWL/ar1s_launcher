@@ -133,10 +133,13 @@ pub fn spawn_and_monitor_process(
         .spawn()?;
 
     let pid = child.id();
-    let _ = window.emit("log-debug", format!("游戏已启动，PID: {}", pid));
+    let _ = window.emit("log-debug", format!("游戏进程已启动，PID: {}", pid));
 
     // 进程已经起来了，事件发不出去也必须继续监控并持有运行锁
-    let _ = window.emit("minecraft-launched", format!("游戏已启动，PID: {}", pid));
+    let _ = window.emit(
+        "minecraft-launched",
+        format!("游戏进程已启动，PID: {}", pid),
+    );
 
     spawn_monitor_thread(
         child,
@@ -442,6 +445,15 @@ fn is_client_shutdown_watchdog(report: &str) -> bool {
     report.contains("Watchdog (Client shutdown")
 }
 
+/// 退出码留在诊断和日志里，通知文案只给人看
+fn exit_message(exit_code: Option<i32>) -> String {
+    match exit_code {
+        Some(0) => "游戏已退出".to_string(),
+        Some(code) => format!("游戏异常退出（代码 {}）", code),
+        None => "游戏已退出（状态未知）".to_string(),
+    }
+}
+
 /// hs_err 全文几十 KB，报告里只留头部这些行
 const HS_ERR_MAX_LINES: usize = 200;
 
@@ -460,24 +472,27 @@ fn handle_process_exit(
         format!("游戏进程退出，状态码: {:?}", exit_code),
     );
 
-    let mut exit_message = format!("游戏已退出，状态码: {:?}", exit_code);
+    let mut message = exit_message(exit_code);
 
     if exit_code.unwrap_or(-1) != 0 {
         // 关闭看门狗是玩家点了退出之后收尾超时，不是启动崩溃：弹“启动失败”会冤到模组
-        let shutdown_watchdog = find_new_crash_report(working_dir, launched_at)
-            .filter(|(_, report)| is_client_shutdown_watchdog(report));
+        let new_crash_report = find_new_crash_report(working_dir, launched_at);
+        let shutdown_watchdog = new_crash_report
+            .as_ref()
+            .is_some_and(|(_, report)| is_client_shutdown_watchdog(report));
 
-        if let Some((path, _)) = shutdown_watchdog {
-            let _ = window.emit(
-                "log-warning",
-                format!(
-                    "游戏关闭超时，已被客户端看门狗结束（常见于模组残留的非 daemon 线程）；崩溃报告: {}",
-                    path.display()
-                ),
-            );
-            exit_message =
-                "游戏已退出（关闭超时，已被游戏自身的看门狗结束；通常是模组残留线程导致）"
-                    .to_string();
+        if shutdown_watchdog {
+            if let Some((path, _)) = &new_crash_report {
+                let _ = window.emit(
+                    "log-warning",
+                    format!(
+                        "游戏关闭超时，已被客户端看门狗结束（常见于模组残留的非 daemon 线程）；崩溃报告: {}",
+                        path.display()
+                    ),
+                );
+            }
+            message = "游戏已退出（关闭超时，已被游戏自身的看门狗结束；通常是模组残留线程导致）"
+                .to_string();
         } else {
             let hs_err = find_hs_err_log(working_dir, launched_at).map(|text| {
                 let total = text.lines().count();
@@ -495,14 +510,28 @@ fn handle_process_exit(
             let mut ctx = launch_ctx.clone();
             ctx.runtime_secs = Some(runtime_secs);
 
-            let mut diagnosis =
-                crash_diagnosis::diagnose(exit_code, output_lines, &ctx, hs_err.as_deref());
+            let report_path = new_crash_report
+                .as_ref()
+                .map(|(path, _)| path.to_string_lossy().to_string());
+            let report_evidence = new_crash_report.as_ref().and_then(|(_, text)| {
+                report_path
+                    .as_deref()
+                    .map(|path| crash_diagnosis::CrashReportEvidence { path, text })
+            });
+
+            let mut diagnosis = crash_diagnosis::diagnose_with_crash_report(
+                exit_code,
+                output_lines,
+                &ctx,
+                hs_err.as_deref(),
+                report_evidence,
+            );
             attach_suggested_java(&mut diagnosis, &ctx);
             let _ = window.emit("minecraft-crash", &diagnosis);
         }
     }
 
-    let _ = window.emit("minecraft-exited", exit_message);
+    let _ = window.emit("minecraft-exited", message);
 }
 
 /// 诊断点到 Java 时，顺手挑一份判据允许、且不是本次用的 Java。
@@ -541,8 +570,8 @@ fn attach_suggested_java(diagnosis: &mut crash_diagnosis::CrashDiagnosis, ctx: &
 #[cfg(test)]
 mod tests {
     use super::{
-        OutputCapture, find_hs_err_log, find_new_crash_report, is_client_shutdown_watchdog,
-        redacted_args, wait_for_process_holding_lock,
+        OutputCapture, exit_message, find_hs_err_log, find_new_crash_report,
+        is_client_shutdown_watchdog, redacted_args, wait_for_process_holding_lock,
     };
     use std::fs;
     use std::path::Path;
@@ -551,6 +580,17 @@ mod tests {
 
     fn args(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn test_exit_message_never_leaks_debug_formatting() {
+        assert_eq!(exit_message(Some(0)), "游戏已退出");
+        assert_eq!(exit_message(Some(-8)), "游戏异常退出（代码 -8）");
+        assert_eq!(exit_message(None), "游戏已退出（状态未知）");
+        assert!(
+            !exit_message(Some(0)).contains("Some"),
+            "用户不该看到 Rust 的 Option 调试格式"
+        );
     }
 
     fn write_hs_err(dir: &Path, name: &str, body: &str, age: Duration) -> std::io::Result<()> {

@@ -39,6 +39,8 @@ pub enum FindingKind {
     Natives,
     JvmCrash,
     SecurityManager,
+    /// 游戏自己写下的 crash-reports 摘要
+    GameCrashReport,
     Unknown,
 }
 
@@ -115,6 +117,12 @@ pub struct CrashDiagnosis {
     pub instance: String,
     /// 判据允许、且不是本次用过的那份 Java；有它才给得出重试按钮
     pub suggested_java: Option<SuggestedJava>,
+}
+
+/// 本次运行由游戏写下的 crash-reports 原文
+pub struct CrashReportEvidence<'a> {
+    pub path: &'a str,
+    pub text: &'a str,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -630,6 +638,127 @@ fn rule_unknown(lines: &[String], hs_err_present: bool) -> Option<Finding> {
     })
 }
 
+/// 崩溃报告全文在磁盘上，弹窗里只带开头这些行
+const GAME_CRASH_REPORT_MAX_LINES: usize = 160;
+
+/// 报告里的异常行必须是全限定类名，别把模组列表或说明文字当异常
+static RE_REPORT_EXCEPTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:[A-Za-z_$][\w$]*\.)+[A-Za-z_$][\w$]*(?:Exception|Error)(?::|$)")
+        .expect("崩溃报告异常表达式合法")
+});
+
+struct ParsedCrashReport {
+    description: Option<(usize, String)>,
+    exception: Option<(usize, String)>,
+    cause: Option<(usize, String)>,
+}
+
+impl ParsedCrashReport {
+    fn description_text(&self) -> Option<&str> {
+        self.description
+            .as_ref()
+            .and_then(|(_, line)| line.strip_prefix("Description:"))
+            .map(str::trim)
+    }
+
+    fn exception_text(&self) -> Option<&str> {
+        self.exception.as_ref().map(|(_, line)| line.as_str())
+    }
+
+    fn cause_text(&self) -> Option<&str> {
+        self.cause
+            .as_ref()
+            .and_then(|(_, line)| line.strip_prefix("Caused by:"))
+            .map(str::trim)
+    }
+}
+
+/// 行号保留报告原文的 1-based 行号，evidence 里能直接对上文件
+fn parse_crash_report(text: &str) -> ParsedCrashReport {
+    let report_lines: Vec<&str> = text.lines().collect();
+
+    let description = report_lines.iter().enumerate().find_map(|(i, line)| {
+        line.trim()
+            .starts_with("Description:")
+            .then(|| (i + 1, line.trim().to_string()))
+    });
+
+    let exception = report_lines.iter().enumerate().find_map(|(i, line)| {
+        let trimmed = line.trim();
+        RE_REPORT_EXCEPTION
+            .is_match(trimmed)
+            .then(|| (i + 1, trimmed.to_string()))
+    });
+
+    // 只看异常行后面一小段，别把线程转储里无关的 Caused by 当直接原因
+    let cause = exception.as_ref().and_then(|(line_no, _)| {
+        report_lines
+            .iter()
+            .enumerate()
+            .skip(*line_no)
+            .take(100)
+            .find_map(|(i, line)| {
+                line.trim()
+                    .starts_with("Caused by:")
+                    .then(|| (i + 1, line.trim().to_string()))
+            })
+    });
+
+    ParsedCrashReport {
+        description,
+        exception,
+        cause,
+    }
+}
+
+fn rule_game_crash_report(report: &ParsedCrashReport) -> Option<Finding> {
+    let description = report.description_text();
+    let exception = report.exception_text();
+    if description.is_none() && exception.is_none() {
+        return None;
+    }
+    let cause = report.cause_text();
+
+    let summary = description
+        .map(|value| format!("游戏崩溃于「{}」", value))
+        .unwrap_or_else(|| "游戏崩溃报告".to_string());
+
+    let mut conclusion = String::new();
+    if let Some(value) = description {
+        conclusion.push_str(&format!("游戏在「{}」阶段崩溃", value));
+    }
+    if let Some(value) = exception {
+        if !conclusion.is_empty() {
+            conclusion.push('：');
+        }
+        conclusion.push_str(value);
+    }
+    if let Some(value) = cause {
+        conclusion.push_str(&format!("；直接原因：{}", value));
+    }
+
+    let evidence: Vec<Evidence> = [&report.description, &report.exception, &report.cause]
+        .into_iter()
+        .flatten()
+        .map(|(line_no, text)| Evidence {
+            line_no: *line_no,
+            text: text.clone(),
+        })
+        .collect();
+
+    Some(Finding {
+        kind: FindingKind::GameCrashReport,
+        role: FindingRole::Root,
+        summary,
+        conclusion,
+        confidence: Confidence::High,
+        culprit_label: "崩溃报告",
+        culprits: Vec::new(),
+        evidence,
+        suggestion: "先按报告里的直接原因排查对应模组或驱动；完整报告已随诊断附带。".to_string(),
+    })
+}
+
 /// 报告里的原文只留尾部这么多行，再早的内容由 excerpt 窗口负责给出
 const RAW_OUTPUT_MAX_LINES: usize = 2000;
 
@@ -673,7 +802,7 @@ fn context_lines(ctx: &LaunchContext) -> Vec<ContextLine> {
 fn excerpt_window(lines: &[String], findings: &[Finding]) -> Vec<Evidence> {
     let hit = findings
         .iter()
-        .filter(|f| f.kind != FindingKind::JvmCrash)
+        .filter(|f| !matches!(f.kind, FindingKind::JvmCrash | FindingKind::GameCrashReport))
         .flat_map(|f| f.evidence.iter().map(|e| e.line_no))
         .min()
         .map(|line_no| line_no.saturating_sub(1).min(lines.len().saturating_sub(1)));
@@ -767,6 +896,19 @@ pub fn diagnose(
     ctx: &LaunchContext,
     hs_err: Option<&str>,
 ) -> CrashDiagnosis {
+    diagnose_with_crash_report(exit_code, lines, ctx, hs_err, None)
+}
+
+pub fn diagnose_with_crash_report(
+    exit_code: Option<i32>,
+    lines: &[String],
+    ctx: &LaunchContext,
+    hs_err: Option<&str>,
+    crash_report: Option<CrashReportEvidence<'_>>,
+) -> CrashDiagnosis {
+    let parsed_report = crash_report
+        .as_ref()
+        .map(|report| parse_crash_report(report.text));
     let mut findings: Vec<Finding> = Vec::new();
     let mut causes = 0usize;
 
@@ -794,9 +936,15 @@ pub fn diagnose(
         .inspect(|_| causes += 1),
     );
 
-    let recognized = causes > 0;
+    let mut recognized = causes > 0;
     if !recognized {
-        findings.extend(rule_unknown(lines, !findings.is_empty()));
+        // stdout 没特征时，游戏自己写下的报告比“最后一行异常”可靠
+        if let Some(finding) = parsed_report.as_ref().and_then(rule_game_crash_report) {
+            findings.push(finding);
+            recognized = true;
+        } else {
+            findings.extend(rule_unknown(lines, !findings.is_empty()));
+        }
     }
 
     // 工具链读不了本次 JDK 的 class 时，mixin 和缺类都只是下游表象；
@@ -823,13 +971,45 @@ pub fn diagnose(
         "未识别出已知的崩溃特征".to_string()
     };
 
-    let context = context_lines(ctx);
+    let mut context = context_lines(ctx);
+    if let Some(report) = &crash_report {
+        if let Some(description) = parsed_report
+            .as_ref()
+            .and_then(ParsedCrashReport::description_text)
+        {
+            context.push(ContextLine {
+                label: "崩溃阶段".to_string(),
+                value: description.to_string(),
+            });
+        }
+        context.push(ContextLine {
+            label: "崩溃报告".to_string(),
+            value: report.path.to_string(),
+        });
+    }
     let excerpt = excerpt_window(lines, &findings);
 
     let mut raw_output = raw_window(lines);
     if let Some(hs) = hs_err {
         raw_output.push_str("\n\n--- JVM 崩溃日志 (hs_err_pid) ---\n");
         raw_output.push_str(hs);
+    }
+    if let Some(report) = &crash_report {
+        let total = report.text.lines().count();
+        let mut body = report
+            .text
+            .lines()
+            .take(GAME_CRASH_REPORT_MAX_LINES)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if total > GAME_CRASH_REPORT_MAX_LINES {
+            body.push_str(&format!(
+                "\n… 其余 {} 行见原文件",
+                total - GAME_CRASH_REPORT_MAX_LINES
+            ));
+        }
+        raw_output.push_str(&format!("\n\n--- 游戏崩溃报告 ({}) ---\n", report.path));
+        raw_output.push_str(&body);
     }
 
     let report_text = plain_text(exit_code, &headline, &findings, &context, &raw_output);
@@ -1116,6 +1296,105 @@ Caused by: org.spongepowered.asm.mixin.throwables.ClassMetadataNotFoundException
             unknown
                 .conclusion
                 .contains("缺少必需的配置项 registry_seed")
+        );
+    }
+
+    /// 游戏自己写下的报告：stdout 没有可用特征时，报告里的阶段/异常/直接原因才是证据
+    const GAME_CRASH_REPORT: &str = r#"---- Minecraft Crash Report ----
+// I bet Cylons wouldn't have this problem.
+Time: 2026-10-18 22:35:26
+Description: Rendering overlay
+
+java.lang.NullPointerException: Cannot invoke "net.minecraft.client.Minecraft" because "this.mc" is null
+	at com.example.Mod.overlay(Mod.java:10)
+Caused by: java.lang.IllegalStateException: renderer already closed
+	at com.example.Renderer.close(Renderer.java:42)
+
+A detailed walkthrough of the error, its code path and all known details is as follows:
+"#;
+
+    #[test]
+    fn test_game_crash_report_supplies_a_finding_when_stdout_has_none() {
+        let d = diagnose_with_crash_report(
+            Some(1),
+            &[],
+            &ctx_plain(),
+            None,
+            Some(CrashReportEvidence {
+                path: "crash-reports/crash-test-client.txt",
+                text: GAME_CRASH_REPORT,
+            }),
+        );
+
+        assert!(d.recognized);
+        let f = only(&d, FindingKind::GameCrashReport);
+        assert_eq!(f.role, FindingRole::Root);
+        assert!(f.summary.contains("Rendering overlay"));
+        assert!(f.conclusion.contains("NullPointerException"));
+        assert!(f.conclusion.contains("renderer already closed"));
+        assert_eq!(f.evidence.len(), 3);
+        assert_eq!(f.evidence[0].line_no, 4);
+        assert!(
+            d.context
+                .iter()
+                .any(|c| c.label == "崩溃阶段" && c.value == "Rendering overlay")
+        );
+        assert!(
+            d.context
+                .iter()
+                .any(|c| c.label == "崩溃报告" && c.value.ends_with("crash-test-client.txt"))
+        );
+        assert!(d.raw_output.contains("--- 游戏崩溃报告"));
+        assert!(d.report_text.contains("renderer already closed"));
+    }
+
+    #[test]
+    fn test_existing_stdout_root_keeps_precedence_over_the_report() {
+        let log = "java.lang.OutOfMemoryError: Java heap space";
+
+        let d = diagnose_with_crash_report(
+            Some(1),
+            &lines(log),
+            &ctx_plain(),
+            None,
+            Some(CrashReportEvidence {
+                path: "crash-reports/crash-test-client.txt",
+                text: GAME_CRASH_REPORT,
+            }),
+        );
+
+        only(&d, FindingKind::Memory);
+        assert!(
+            !d.findings
+                .iter()
+                .any(|f| f.kind == FindingKind::GameCrashReport),
+            "stdout 已经定位到根因时，报告摘要不该抢 headline"
+        );
+        assert!(
+            d.context.iter().any(|c| c.label == "崩溃报告"),
+            "报告路径仍要附在环境里"
+        );
+    }
+
+    #[test]
+    fn test_report_evidence_does_not_shift_stdout_excerpt() {
+        let stdout = lines("stdout first line\nstdout second line");
+
+        let d = diagnose_with_crash_report(
+            Some(1),
+            &stdout,
+            &ctx_plain(),
+            None,
+            Some(CrashReportEvidence {
+                path: "crash-reports/crash-test-client.txt",
+                text: GAME_CRASH_REPORT,
+            }),
+        );
+
+        assert!(
+            d.excerpt.iter().all(|e| e.text.starts_with("stdout")),
+            "报告行号不能拿来截 stdout: {:?}",
+            d.excerpt
         );
     }
 

@@ -306,6 +306,7 @@ export type CrashFindingKind =
   | 'natives'
   | 'jvmCrash'
   | 'securityManager'
+  | 'gameCrashReport'
   | 'unknown';
 
 export interface CrashEvidence {

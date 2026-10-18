@@ -6,6 +6,7 @@ import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
 import { useNotificationStore } from '../stores/notificationStore';
 import { configApi, instanceApi } from '../services';
 import { useGameLaunch } from '../composables/useGameLaunch';
+import { useDiagnosticsExport } from '../composables/useDiagnosticsExport';
 import type { GameInstance, ModInfo } from '../types/events';
 import { formatLastPlayed, getErrorMessage } from '../utils/format';
 import { logError } from '../utils/logger';
@@ -14,6 +15,7 @@ import { getInstanceViewMode, getInstanceSortBy } from '../utils/storage';
 const route = useRoute();
 const notificationStore = useNotificationStore();
 const { launchInstance: startInstance } = useGameLaunch();
+const { exportDiagnostics } = useDiagnosticsExport();
 const instances = ref<GameInstance[]>([]);
 const loading = ref(false);
 const launchingInstanceId = ref<string | null>(null);
@@ -382,6 +384,7 @@ onUnmounted(() => {
           @launch="launchInstance"
           @open-folder="openInstanceFolder"
           @manage-mods="openModDialog"
+          @export-diagnostics="exportDiagnostics"
           @rename="openRenameDialog"
           @delete="openDeleteDialog"
         />
@@ -436,6 +439,12 @@ onUnmounted(() => {
                     <v-icon size="18">mdi-puzzle-outline</v-icon>
                   </template>
                   <v-list-item-title class="text-body-medium">Mod 管理</v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="exportDiagnostics(instance)">
+                  <template #prepend>
+                    <v-icon size="18">mdi-zip-box-outline</v-icon>
+                  </template>
+                  <v-list-item-title class="text-body-medium">导出诊断包</v-list-item-title>
                 </v-list-item>
                 <v-list-item @click="openRenameDialog(instance)">
                   <template #prepend>

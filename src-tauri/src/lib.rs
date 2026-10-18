@@ -77,6 +77,7 @@ pub fn run() {
             controllers::instance_controller::get_instance_mods,
             controllers::instance_controller::set_mod_enabled,
             controllers::instance_controller::delete_instance_mod,
+            controllers::diagnostics_controller::export_diagnostic_bundle,
             controllers::loader_controller::get_forge_versions,
             controllers::loader_controller::get_fabric_versions,
             controllers::loader_controller::get_quilt_versions,

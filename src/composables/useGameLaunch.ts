@@ -179,7 +179,8 @@ export function useGameLaunch() {
       }
 
       await instanceApi.launchInstance(instanceName, javaResolve.overrideJavaPath, javaResolve.forceJavaMismatch);
-      notificationStore.success('启动成功', `${instanceName} 正在启动`);
+      // 命令返回只代表 Java 进程已派生；真正启动成功要等游戏窗口/日志，失败会走崩溃诊断
+      notificationStore.info('Minecraft 正在启动', instanceName);
       return true;
     } catch (err) {
       logError('Failed to launch instance', err, 'useGameLaunch');
@@ -198,7 +199,7 @@ export function useGameLaunch() {
     try {
       loading.value = true;
       await instanceApi.launchInstance(instanceName, javaPath, false);
-      notificationStore.success('正在重新启动', `${instanceName} 已改用指定的 Java`);
+      notificationStore.info('Minecraft 正在重新启动', `${instanceName} 已改用指定的 Java`);
       return true;
     } catch (err) {
       logError('Failed to relaunch with another Java', err, 'useGameLaunch');

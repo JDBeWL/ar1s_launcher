@@ -18,11 +18,11 @@ const findings = computed(() => diagnosis.value?.findings ?? []);
 const context = computed(() => diagnosis.value?.context ?? []);
 const excerpt = computed(() => diagnosis.value?.excerpt ?? []);
 
-/** 只命中“Java 比声明新”这类推断时，别在标题上写“未识别”——下面明明有线索 */
+/** 这个弹窗也会接住运行期崩溃，标题不能一律写“启动失败” */
 const title = computed(() => {
-  if (diagnosis.value?.recognized) return '启动失败 · 已定位到可疑环节';
+  if (diagnosis.value?.recognized) return '游戏崩溃 · 已定位到可疑环节';
   const hasJavaHint = findings.value.some((finding) => finding.kind === 'javaVersion');
-  return hasJavaHint ? '启动失败 · 线索指向 Java 版本' : '启动失败 · 未识别出已知特征';
+  return hasJavaHint ? '游戏崩溃 · 线索指向 Java 版本' : '游戏崩溃 · 未识别出已知特征';
 });
 
 const rawLineCount = computed(() => diagnosis.value?.rawOutput.split('\n').length ?? 0);

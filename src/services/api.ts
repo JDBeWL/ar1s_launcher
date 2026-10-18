@@ -128,6 +128,11 @@ export const instanceApi = {
     await invoke('delete_instance_mod', { instanceName, fileName });
   },
 
+  /** 导出脱敏诊断包；目标路径由原生保存对话框选定 */
+  async exportDiagnostics(instanceName: string, targetPath: string): Promise<void> {
+    await invoke('export_diagnostic_bundle', { instanceName, targetPath });
+  },
+
   async launchInstance(instanceName: string, overrideJavaPath?: string, forceJavaMismatch?: boolean): Promise<void> {
     await invoke('launch_instance', { instanceName, overrideJavaPath, forceJavaMismatch });
   },
