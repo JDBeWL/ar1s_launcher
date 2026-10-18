@@ -96,6 +96,22 @@ export interface InstallProgressPayload {
   indeterminate: boolean;
 }
 
+export interface ModpackActiveFile {
+  path: string;
+  downloaded: number;
+  total: number;
+}
+
+// 对应后端 ModpackFilesProgress，只包含当前正在下载的文件
+export interface ModpackFilesProgress {
+  files: ModpackActiveFile[];
+  completed_files: number;
+  total_files: number;
+  downloaded_bytes: number;
+  total_bytes: number;
+  speed: number;
+}
+
 export interface ForgeVersion {
   version: string;
   mcversion: string;

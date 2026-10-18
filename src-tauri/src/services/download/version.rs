@@ -50,10 +50,34 @@ pub async fn ensure_declared_libraries(
     download_all_files(downloads, window).await
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VersionDownloadScope {
+    Full,
+    Core,
+}
+
 pub async fn process_and_download_version(
     version_id: String,
     mirror: Option<String>,
     window: &Window,
+) -> Result<(), LauncherError> {
+    download_version(version_id, mirror, window, VersionDownloadScope::Full).await
+}
+
+/// 只准备加载器安装和启动校验需要的原版核心：版本 JSON + client jar
+pub async fn ensure_version_core(
+    version_id: String,
+    mirror: Option<String>,
+    window: &Window,
+) -> Result<(), LauncherError> {
+    download_version(version_id, mirror, window, VersionDownloadScope::Core).await
+}
+
+async fn download_version(
+    version_id: String,
+    mirror: Option<String>,
+    window: &Window,
+    scope: VersionDownloadScope,
 ) -> Result<(), LauncherError> {
     let is_mirror = mirror.is_some();
     let base_url = if is_mirror {
@@ -85,22 +109,27 @@ pub async fn process_and_download_version(
         if let Some(inherits_from) = local_json["inheritsFrom"].as_str() {
             file_utils::validate_version_id_or_error(inherits_from)?;
             info!("版本 {} 继承自 {}", version_id, inherits_from);
-            Box::pin(process_and_download_version(
+            Box::pin(download_version(
                 inherits_from.to_string(),
                 mirror.clone(),
                 window,
+                scope,
             ))
             .await?;
 
-            // 基础版本已下载，整合包的库文件另行处理
-            return download_modpack_libraries(
-                &local_json,
-                &libraries_base_dir,
-                is_mirror,
-                base_url,
-                window,
-            )
-            .await;
+            if scope == VersionDownloadScope::Full {
+                // 基础版本已下载，整合包的库文件另行处理
+                return download_modpack_libraries(
+                    &local_json,
+                    &libraries_base_dir,
+                    is_mirror,
+                    base_url,
+                    window,
+                )
+                .await;
+            }
+
+            return Ok(());
         }
 
         (version_id.clone(), local_json, local_text)
@@ -146,23 +175,25 @@ pub async fn process_and_download_version(
         &mut downloads,
     )?;
 
-    collect_assets(
-        &client,
-        &version_json,
-        &assets_base_dir,
-        is_mirror,
-        base_url,
-        &mut downloads,
-    )
-    .await?;
+    if scope == VersionDownloadScope::Full {
+        collect_assets(
+            &client,
+            &version_json,
+            &assets_base_dir,
+            is_mirror,
+            base_url,
+            &mut downloads,
+        )
+        .await?;
 
-    collect_libraries(
-        &version_json,
-        &libraries_base_dir,
-        is_mirror,
-        base_url,
-        &mut downloads,
-    )?;
+        collect_libraries(
+            &version_json,
+            &libraries_base_dir,
+            is_mirror,
+            base_url,
+            &mut downloads,
+        )?;
+    }
 
     match download_all_files(downloads, window).await {
         Ok(_) => {

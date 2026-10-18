@@ -10,7 +10,7 @@ use log::{debug, info, warn};
 use reqwest::Client;
 use serde::Serialize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const MAX_VERIFY_CONCURRENCY: usize = 64;
@@ -140,6 +140,17 @@ pub async fn batch_repair_files(
     Ok(results)
 }
 
+/// 资源索引没落盘说明原版资源这条链还没下载过（核心安装只取 client jar）
+fn missing_asset_index(game_dir: &Path, version_json: &serde_json::Value) -> Option<String> {
+    let asset_index_id = version_json["assetIndex"]["id"].as_str()?;
+    let path = game_dir
+        .join("assets")
+        .join("indexes")
+        .join(format!("{}.json", asset_index_id));
+
+    (!path.exists()).then(|| format!("游戏资源文件未下载: {}", path.display()))
+}
+
 pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, LauncherError> {
     let config = load_config()?;
     let game_dir = PathBuf::from(&config.game_dir);
@@ -216,9 +227,14 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
         current_json = parent_json;
     }
 
-    // 继承链上所有版本声明的库都要检查
+    // 继承链上所有版本声明的库和资源索引都要检查
     for ver_json in &versions_to_check {
         let ver_id = ver_json["id"].as_str().unwrap_or("unknown");
+
+        if let Some(missing) = missing_asset_index(&game_dir, ver_json) {
+            missing_files.push(missing);
+        }
+
         if let Some(libraries) = ver_json["libraries"].as_array() {
             debug!("检查版本 {} 的 {} 个库", ver_id, libraries.len());
             for file in resolve_library_files(ver_json) {
@@ -243,3 +259,31 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
 
 use crate::utils::library::resolve_library_files;
 use crate::utils::minecraft::find_jar_version;
+
+#[cfg(test)]
+mod tests {
+    use super::missing_asset_index;
+    use serde_json::json;
+    use std::fs;
+
+    #[test]
+    fn test_missing_asset_index_is_reported() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let version = json!({ "assetIndex": { "id": "17" } });
+
+        assert!(missing_asset_index(dir.path(), &version).is_some());
+
+        let indexes = dir.path().join("assets").join("indexes");
+        fs::create_dir_all(&indexes).unwrap();
+        fs::write(indexes.join("17.json"), "{}").unwrap();
+
+        assert!(missing_asset_index(dir.path(), &version).is_none());
+    }
+
+    #[test]
+    fn test_version_without_asset_index_is_ignored() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        assert!(missing_asset_index(dir.path(), &json!({})).is_none());
+    }
+}

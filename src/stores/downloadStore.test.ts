@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
+import { listen } from '@tauri-apps/api/event';
 import { useDownloadStore } from './downloadStore';
 import * as api from '../services/api';
+import type { DownloadProgress } from '../types/events';
 
 vi.mock('../services/api', () => ({
   api: {
@@ -22,6 +24,25 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
   emit: vi.fn(() => Promise.resolve()),
 }));
+
+function progress(overrides: Partial<DownloadProgress> = {}): DownloadProgress {
+  return {
+    bytes_downloaded: 0,
+    total_bytes: 0,
+    speed: 0,
+    status: 'downloading',
+    percent: 0,
+    ...overrides,
+  };
+}
+
+async function getDownloadHandler() {
+  const store = useDownloadStore();
+  await store.init();
+  const handler = vi.mocked(listen).mock.calls[0]?.[1];
+  if (!handler) throw new Error('download-progress listener not registered');
+  return handler as (event: { payload: DownloadProgress }) => void;
+}
 
 describe('DownloadStore', () => {
   beforeEach(() => {
@@ -102,5 +123,50 @@ describe('DownloadStore', () => {
 
     expect(store.showNotification).toBe(false);
     expect(store.userHidNotification).toBe(true);
+  });
+
+  it('未由 store 发起的下载不占用全局通知', async () => {
+    const store = useDownloadStore();
+    const handler = await getDownloadHandler();
+
+    handler({ payload: progress({ bytes_downloaded: 10, total_bytes: 100, percent: 10 }) });
+
+    expect(store.downloadProgress.status).toBe('idle');
+    expect(store.isDownloading).toBe(false);
+    expect(store.showNotification).toBe(false);
+  });
+
+  it('store 发起的下载仍会更新并弹出通知', async () => {
+    const store = useDownloadStore();
+    vi.mocked(api.api.version.downloadVersion).mockResolvedValue(undefined);
+    await store.startDownload('1.20.1');
+    const handler = await getDownloadHandler();
+
+    handler({ payload: progress({ bytes_downloaded: 10, total_bytes: 100, percent: 10 }) });
+
+    expect(store.isDownloading).toBe(true);
+    expect(store.showNotification).toBe(true);
+    expect(store.downloadProgress.bytes_downloaded).toBe(10);
+  });
+
+  it('完成后不再接管后续下载事件', async () => {
+    const store = useDownloadStore();
+    vi.mocked(api.api.version.downloadVersion).mockResolvedValue(undefined);
+    await store.startDownload('1.20.1');
+    const handler = await getDownloadHandler();
+
+    handler({ payload: progress({ bytes_downloaded: 10, total_bytes: 100, percent: 10 }) });
+    handler({
+      payload: progress({
+        bytes_downloaded: 100,
+        total_bytes: 100,
+        percent: 100,
+        status: 'completed',
+      }),
+    });
+    handler({ payload: progress({ bytes_downloaded: 20, total_bytes: 100, percent: 20 }) });
+
+    expect(store.downloadProgress.status).toBe('completed');
+    expect(store.downloadProgress.bytes_downloaded).toBe(100);
   });
 });

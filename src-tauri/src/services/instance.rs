@@ -3,7 +3,7 @@
 //! 创建、重命名、删除实例，从版本 JSON 逐级推断加载器与游戏版本，兼管 mods 目录的 Mod 启停
 
 use crate::errors::LauncherError;
-use crate::models::{DownloadJob, InstanceInfo, LaunchOptions};
+use crate::models::{InstanceInfo, LaunchOptions};
 use crate::services::{
     config, download, launcher,
     loaders::{self, LoaderType},
@@ -127,22 +127,22 @@ pub async fn create_instance(
 
     send_progress(5, "检查基础版本...", false);
 
-    if !source_dir.exists() {
-        send_progress(10, "下载基础版本...", true);
-        let config = config::load_config()?;
-        download::process_and_download_version(
-            base_version_id.clone(),
-            config.download_mirror.clone(),
-            window,
-        )
-        .await?;
+    // 基础版本目录存在不代表文件齐全；每次先保证 JSON + client jar，
+    // 原版库/assets 交给创建完成后的自动补齐
+    send_progress(10, "准备基础版本核心...", true);
+    let config = config::load_config()?;
+    download::ensure_version_core(
+        base_version_id.clone(),
+        config.download_mirror.clone(),
+        window,
+    )
+    .await?;
 
-        if !source_dir.exists() {
-            return Err(LauncherError::Custom(format!(
-                "基础版本 '{}' 下载后仍未找到",
-                base_version_id
-            )));
-        }
+    if !source_dir.exists() {
+        return Err(LauncherError::Custom(format!(
+            "基础版本 '{}' 准备后仍未找到",
+            base_version_id
+        )));
     }
 
     let cleanup = || {
@@ -236,18 +236,14 @@ pub async fn create_instance(
                     .join(format!("{}.json", base_version_id));
 
                 if forge_json_path.exists() && base_json_path.exists() {
-                    send_progress(70, "合并配置并补全依赖...", true);
+                    send_progress(70, "合并配置...", false);
 
-                    if let Err(e) = merge_and_complete_instance(
+                    if let Err(e) = merge_forge_instance_json(
                         &new_instance_name,
                         &new_json_path,
                         &base_json_path,
                         &forge_json_path,
-                        &game_dir,
-                        window,
-                    )
-                    .await
-                    {
+                    ) {
                         cleanup();
                         return Err(e);
                     }
@@ -1221,13 +1217,11 @@ pub async fn launch_instance(
     launcher::launch_minecraft(launch_options, window).await
 }
 
-async fn merge_and_complete_instance(
+fn merge_forge_instance_json(
     instance_id: &str,
     target_json_path: &Path,
     base_json_path: &Path,
     forge_json_path: &Path,
-    game_dir: &Path,
-    window: &Window,
 ) -> Result<(), LauncherError> {
     let base_content = fs::read_to_string(base_json_path)?;
     let forge_content = fs::read_to_string(forge_json_path)?;
@@ -1297,171 +1291,7 @@ async fn merge_and_complete_instance(
 
     fs::write(target_json_path, serde_json::to_string_pretty(&merged)?)?;
 
-    let jobs = collect_download_jobs(&merged, game_dir, instance_id)?;
-
-    if !jobs.is_empty() {
-        let (index_jobs, other_jobs): (Vec<_>, Vec<_>) = jobs
-            .into_iter()
-            .partition(|j| j.path.to_string_lossy().contains("indexes"));
-
-        if !index_jobs.is_empty() {
-            download::download_all_files(index_jobs.clone(), window).await?;
-        }
-
-        let mut all_jobs = other_jobs;
-        for job in index_jobs {
-            if job.path.exists() {
-                let content = fs::read_to_string(&job.path)?;
-                if let Ok(idx_json) = serde_json::from_str::<Value>(&content)
-                    && let Some(objects) = idx_json["objects"].as_object()
-                {
-                    let assets_objects_dir = game_dir.join("assets").join("objects");
-                    for obj in objects.values() {
-                        if let Some(hash) = obj["hash"].as_str() {
-                            let size = obj["size"].as_u64().unwrap_or(0);
-                            let prefix = &hash[..2];
-                            let path = assets_objects_dir.join(prefix).join(hash);
-                            let url = format!(
-                                "https://resources.download.minecraft.net/{}/{}",
-                                prefix, hash
-                            );
-
-                            all_jobs.push(DownloadJob {
-                                url,
-                                fallback_url: None,
-                                path,
-                                size,
-                                hash: Some(hash.to_string()),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        if !all_jobs.is_empty() {
-            download::download_all_files(all_jobs, window).await?;
-        }
-    }
-
     Ok(())
-}
-
-fn collect_download_jobs(
-    json: &Value,
-    game_dir: &Path,
-    instance_id: &str,
-) -> Result<Vec<DownloadJob>, LauncherError> {
-    let mut jobs = Vec::new();
-    let libraries_dir = game_dir.join("libraries");
-    let assets_indexes_dir = game_dir.join("assets").join("indexes");
-    let versions_dir = game_dir.join("versions");
-
-    if let Some(client) = json.get("downloads").and_then(|d| d.get("client"))
-        && let (Some(url), Some(sha1), Some(size)) = (
-            client["url"].as_str(),
-            client["sha1"].as_str(),
-            client["size"].as_u64(),
-        )
-    {
-        let path = versions_dir
-            .join(instance_id)
-            .join(format!("{}.jar", instance_id));
-        jobs.push(DownloadJob {
-            url: url.to_string(),
-            fallback_url: None,
-            path,
-            size,
-            hash: Some(sha1.to_string()),
-        });
-    }
-
-    if let Some(asset_idx) = json.get("assetIndex")
-        && let (Some(id), Some(url), Some(sha1), Some(size)) = (
-            asset_idx["id"].as_str(),
-            asset_idx["url"].as_str(),
-            asset_idx["sha1"].as_str(),
-            asset_idx["size"].as_u64(),
-        )
-    {
-        let path = assets_indexes_dir.join(format!("{}.json", id));
-        jobs.push(DownloadJob {
-            url: url.to_string(),
-            fallback_url: None,
-            path,
-            size,
-            hash: Some(sha1.to_string()),
-        });
-    }
-
-    if let Some(libs) = json["libraries"].as_array() {
-        for lib in libs {
-            let allowed = lib["rules"].as_array().is_none_or(|rules| {
-                let current_os = std::env::consts::OS;
-                let target_os = if current_os == "macos" {
-                    "osx"
-                } else {
-                    current_os
-                };
-                let mut allow = false;
-                for rule in rules {
-                    let action = rule["action"].as_str().unwrap_or("allow");
-                    let os_match = rule["os"]["name"].as_str().is_none_or(|o| o == target_os);
-                    if os_match {
-                        allow = action == "allow";
-                    }
-                }
-                allow
-            });
-
-            if !allowed {
-                continue;
-            }
-
-            if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact"))
-                && let (Some(url), Some(path), Some(sha1), Some(size)) = (
-                    artifact["url"].as_str(),
-                    artifact["path"].as_str(),
-                    artifact["sha1"].as_str(),
-                    artifact["size"].as_u64(),
-                )
-            {
-                jobs.push(DownloadJob {
-                    url: url.to_string(),
-                    fallback_url: None,
-                    path: libraries_dir.join(path),
-                    size,
-                    hash: Some(sha1.to_string()),
-                });
-            }
-
-            if let Some(classifiers) = lib.get("downloads").and_then(|d| d.get("classifiers"))
-                && let Some(obj) = classifiers.as_object()
-            {
-                let current_os = std::env::consts::OS;
-                for (key, artifact) in obj {
-                    if (key.contains(current_os) || (current_os == "macos" && key.contains("osx")))
-                        && let (Some(url), Some(path), Some(sha1), Some(size)) = (
-                            artifact["url"].as_str(),
-                            artifact["path"].as_str(),
-                            artifact["sha1"].as_str(),
-                            artifact["size"].as_u64(),
-                        )
-                    {
-                        jobs.push(DownloadJob {
-                            url: url.to_string(),
-                            fallback_url: None,
-                            path: libraries_dir.join(path),
-                            size,
-                            hash: Some(sha1.to_string()),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(jobs)
 }
 
 #[cfg(test)]
@@ -1496,6 +1326,32 @@ mod tests {
 
         let shared = get_instances_sync(&versions, false).unwrap();
         assert_eq!(shared[0].mod_count, Some(2), "关闭隔离时应看根目录");
+    }
+
+    #[test]
+    fn test_base_and_loader_versions_are_both_listed() {
+        let game = tempfile::TempDir::new().unwrap();
+        let versions = game.path().join("versions");
+
+        fs::create_dir_all(versions.join("test-base")).unwrap();
+        fs::write(
+            versions.join("test-base/test-base.json"),
+            r#"{"id":"test-base","mainClass":"net.minecraft.client.main.Main"}"#,
+        )
+        .unwrap();
+
+        fs::create_dir_all(versions.join("test-forge")).unwrap();
+        fs::write(
+            versions.join("test-forge/test-forge.json"),
+            r#"{"id":"test-forge","inheritsFrom":"test-base","mainClass":"cpw.mods.bootstraplauncher.BootstrapLauncher"}"#,
+        )
+        .unwrap();
+
+        let list = get_instances_sync(&versions, true).unwrap();
+
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|instance| instance.id == "test-base"));
+        assert!(list.iter().any(|instance| instance.id == "test-forge"));
     }
 
     #[test]

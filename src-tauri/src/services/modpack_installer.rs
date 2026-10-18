@@ -13,8 +13,9 @@ use serde::Deserialize;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::Emitter;
 
 static MODPACK_CANCEL_FLAG: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
@@ -54,6 +55,119 @@ pub struct ModpackInstallProgress {
     pub progress: u8,
     pub message: String,
     pub indeterminate: bool,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct ModpackActiveFile {
+    pub path: String,
+    pub downloaded: u64,
+    pub total: u64,
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct ModpackFilesProgress {
+    pub files: Vec<ModpackActiveFile>,
+    pub completed_files: usize,
+    pub total_files: usize,
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+    pub speed: f64,
+}
+
+const FILE_PENDING: u8 = 0;
+const FILE_DOWNLOADING: u8 = 1;
+const FILE_COMPLETED: u8 = 2;
+const FILE_FAILED: u8 = 3;
+
+struct ModpackFileState {
+    path: String,
+    size: u64,
+    downloaded: Arc<AtomicU64>,
+    status: AtomicU8,
+}
+
+impl ModpackFileState {
+    fn new(path: String, size: u64) -> Arc<Self> {
+        Arc::new(Self {
+            path,
+            size,
+            downloaded: Arc::new(AtomicU64::new(0)),
+            status: AtomicU8::new(FILE_PENDING),
+        })
+    }
+}
+
+fn snapshot_files(states: &[Arc<ModpackFileState>], speed: f64) -> ModpackFilesProgress {
+    let mut files = Vec::new();
+    let mut completed_files = 0usize;
+    let mut downloaded_bytes = 0u64;
+    let mut total_bytes = 0u64;
+
+    for state in states {
+        let downloaded = state.downloaded.load(Ordering::Relaxed);
+        downloaded_bytes = downloaded_bytes.saturating_add(downloaded);
+        total_bytes = total_bytes.saturating_add(state.size);
+
+        match state.status.load(Ordering::Acquire) {
+            FILE_DOWNLOADING => files.push(ModpackActiveFile {
+                path: state.path.clone(),
+                downloaded,
+                total: state.size,
+            }),
+            FILE_COMPLETED => completed_files += 1,
+            _ => {}
+        }
+    }
+
+    ModpackFilesProgress {
+        files,
+        completed_files,
+        total_files: states.len(),
+        downloaded_bytes,
+        total_bytes,
+        speed,
+    }
+}
+
+fn dispatch_order(files: &[ModrinthIndexFile]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..files.len()).collect();
+    // 大文件先占并发槽，避免最后只剩几个大文件把安装拖住
+    order.sort_by_key(|&index| std::cmp::Reverse(files[index].file_size.unwrap_or(0)));
+    order
+}
+
+const FILE_PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
+
+fn spawn_file_progress_reporter(
+    states: Arc<Vec<Arc<ModpackFileState>>>,
+    window: tauri::Window,
+    running: Arc<AtomicBool>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(FILE_PROGRESS_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last_bytes = 0u64;
+
+        loop {
+            ticker.tick().await;
+            if !running.load(Ordering::Acquire) {
+                break;
+            }
+
+            let downloaded: u64 = states
+                .iter()
+                .map(|state| state.downloaded.load(Ordering::Relaxed))
+                .sum();
+            let speed =
+                downloaded.saturating_sub(last_bytes) as f64 / FILE_PROGRESS_INTERVAL.as_secs_f64();
+            last_bytes = downloaded;
+
+            let _ = window.emit(
+                "modpack-file-progress",
+                snapshot_files(states.as_slice(), speed),
+            );
+        }
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -339,7 +453,7 @@ impl ModpackInstaller {
                 .await?;
         }
 
-        send_progress(75, "安装游戏版本...", false);
+        send_progress(75, "准备游戏核心文件...", false);
         check_cancelled()?;
 
         if let Some(ref index) = modrinth_index {
@@ -461,24 +575,53 @@ impl ModpackInstaller {
         // download_file 靠这两个标志在流式读取中途响应取消
         let running = Arc::new(AtomicBool::new(true));
         let cancelled = get_cancel_flag();
-        // 进度按文件数计算，字节计数只是 download_file 的出参
-        let bytes_downloaded = Arc::new(AtomicU64::new(0));
         let bytes_since_last = Arc::new(AtomicU64::new(0));
 
+        let states: Arc<Vec<Arc<ModpackFileState>>> = Arc::new(
+            files
+                .iter()
+                .map(|file| ModpackFileState::new(file.path.clone(), file.file_size.unwrap_or(0)))
+                .collect(),
+        );
+        let reporting = Arc::new(AtomicBool::new(true));
+        let reporter =
+            spawn_file_progress_reporter(states.clone(), window.clone(), reporting.clone());
+
+        let _ = window.emit(
+            "modpack-install-progress",
+            ModpackInstallProgress {
+                progress: 55,
+                message: format!("下载模组文件 (0/{})", total_files),
+                indeterminate: false,
+            },
+        );
+
         let mut handles = Vec::with_capacity(total_files);
+        let order = dispatch_order(files);
 
-        for file in files {
-            check_cancelled()?;
+        for &index in &order {
+            if is_cancelled() {
+                break;
+            }
 
-            let sem = semaphore.clone();
+            let permit = match semaphore.clone().acquire_owned().await {
+                Ok(permit) => permit,
+                Err(_) => break,
+            };
+
+            if is_cancelled() {
+                drop(permit);
+                break;
+            }
+
+            let file = &files[index];
+            let state = states[index].clone();
             let completed = completed_count.clone();
             let window_clone = window.clone();
             let file_path = file.path.clone();
-            let total = total_files;
             let failed = failed_files.clone();
             let running = running.clone();
             let cancelled = cancelled.clone();
-            let bytes_downloaded = bytes_downloaded.clone();
             let bytes_since_last = bytes_since_last.clone();
             let client = client.clone();
             // Modrinth 每个文件给多个镜像：第一个当主源、第二个当备源
@@ -492,30 +635,14 @@ impl ModpackInstaller {
             };
 
             let handle = tokio::spawn(async move {
-                let _permit = match sem.acquire().await {
-                    Ok(p) => p,
-                    Err(_) => return,
-                };
-
-                if is_cancelled() {
-                    return;
-                }
-
-                let current = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                let progress = 55 + ((current as f32 / total as f32) * 20.0) as u8;
-                let _ = window_clone.emit(
-                    "modpack-install-progress",
-                    ModpackInstallProgress {
-                        progress,
-                        message: format!("下载文件 ({}/{}): {}", current, total, file_path),
-                        indeterminate: false,
-                    },
-                );
+                let _permit = permit;
+                state.status.store(FILE_DOWNLOADING, Ordering::Release);
 
                 // 重试时 .part 已经落了半截，download_file 会带 Range 续传而不是从头再下
                 let mut last_error: Option<LauncherError> = None;
                 for attempt in 0..3 {
                     if is_cancelled() {
+                        state.status.store(FILE_PENDING, Ordering::Release);
                         return;
                     }
                     match download::download_file(
@@ -524,7 +651,7 @@ impl ModpackInstaller {
                         &job.url,
                         &running,
                         &cancelled,
-                        &bytes_downloaded,
+                        &state.downloaded,
                         &bytes_since_last,
                     )
                     .await
@@ -535,13 +662,13 @@ impl ModpackInstaller {
                         }
                         Err(e) => {
                             if e.is_cancelled() {
+                                state.status.store(FILE_PENDING, Ordering::Release);
                                 return;
                             }
                             warn!("下载失败 {} (第 {} 次尝试): {}", file_path, attempt + 1, e);
                             last_error = Some(e);
                             if attempt < 2 {
-                                tokio::time::sleep(std::time::Duration::from_secs(1 << attempt))
-                                    .await;
+                                tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
                             }
                         }
                     }
@@ -549,8 +676,22 @@ impl ModpackInstaller {
 
                 if let Some(e) = last_error {
                     error!("无法下载文件 {}: {}", file_path, e);
+                    state.status.store(FILE_FAILED, Ordering::Release);
                     failed.lock().unwrap().push(file_path);
+                    return;
                 }
+
+                state.status.store(FILE_COMPLETED, Ordering::Release);
+                let done = completed.fetch_add(1, Ordering::AcqRel) + 1;
+                let progress = 55 + ((done as f32 / total_files as f32) * 20.0) as u8;
+                let _ = window_clone.emit(
+                    "modpack-install-progress",
+                    ModpackInstallProgress {
+                        progress,
+                        message: format!("下载模组文件 ({}/{})", done, total_files),
+                        indeterminate: false,
+                    },
+                );
             });
 
             handles.push(handle);
@@ -563,6 +704,13 @@ impl ModpackInstaller {
                 error!("整合包下载任务异常终止: {}", e);
             }
         }
+
+        reporting.store(false, Ordering::Release);
+        let _ = reporter.await;
+        let _ = window.emit(
+            "modpack-file-progress",
+            snapshot_files(states.as_slice(), 0.0),
+        );
 
         check_cancelled()?;
 
@@ -610,7 +758,7 @@ impl ModpackInstaller {
         let cancel = get_cancel_flag();
 
         let config = config::load_config()?;
-        let download_result = download::process_and_download_version(
+        let core_result = download::ensure_version_core(
             mc_version.clone(),
             config.download_mirror.clone(),
             window,
@@ -618,7 +766,24 @@ impl ModpackInstaller {
         .await;
         // 下载被取消时错误文案来自下载模块，这里统一成安装取消
         check_cancelled()?;
-        download_result?;
+        core_result?;
+
+        let has_loader = deps.forge.is_some()
+            || deps.fabric_loader.is_some()
+            || deps.fabric.is_some()
+            || deps.quilt_loader.is_some()
+            || deps.quilt.is_some()
+            || deps.neoforge.is_some();
+        if has_loader {
+            let _ = window.emit(
+                "modpack-install-progress",
+                ModpackInstallProgress {
+                    progress: 80,
+                    message: "安装加载器...".to_string(),
+                    indeterminate: true,
+                },
+            );
+        }
 
         if let Some(forge_version) = &deps.forge {
             info!("安装 Forge {}", forge_version);
@@ -680,6 +845,26 @@ impl ModpackInstaller {
             // 无加载器依赖时手动补一份版本 JSON
             self.create_vanilla_version_json(mc_version, instance_name, game_dir)?;
         }
+
+        // 加载器安装器只负责自己的文件；Fabric/Quilt 的 profile 库需要在这里补
+        let instance_json = fs::read_to_string(
+            game_dir
+                .join("versions")
+                .join(instance_name)
+                .join(format!("{}.json", instance_name)),
+        )
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        if let Some(json) = instance_json
+            && let Err(e) = download::ensure_declared_libraries(&json, window).await
+        {
+            if e.is_cancelled() {
+                return Err(e);
+            }
+            warn!("加载器库文件没补全，首次启动前可能需要修复: {}", e);
+        }
+        // download_all_files 会重置自己的取消标志，这里再按整合包取消标志收口
+        check_cancelled()?;
 
         Ok(())
     }
@@ -839,11 +1024,70 @@ fn extract_zip_limited(
 
 #[cfg(test)]
 mod tests {
-    use super::extract_zip_limited;
+    use super::{
+        FILE_COMPLETED, FILE_DOWNLOADING, ModpackFileState, ModrinthIndexFile, ModrinthIndexHashes,
+        dispatch_order, extract_zip_limited, snapshot_files,
+    };
     use std::fs;
     use std::io::Write;
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions;
+
+    fn make_index_file(path: &str, size: Option<u64>) -> ModrinthIndexFile {
+        ModrinthIndexFile {
+            path: path.to_string(),
+            hashes: ModrinthIndexHashes {
+                sha1: String::new(),
+                sha512: None,
+            },
+            downloads: Vec::new(),
+            file_size: size,
+        }
+    }
+
+    fn make_file_state(path: &str, size: u64) -> Arc<ModpackFileState> {
+        ModpackFileState::new(path.to_string(), size)
+    }
+
+    #[test]
+    fn test_dispatch_order_starts_with_largest_files() {
+        let files = vec![
+            make_index_file("small.jar", Some(10)),
+            make_index_file("large.jar", Some(500)),
+            make_index_file("unknown.jar", None),
+            make_index_file("medium.jar", Some(100)),
+        ];
+
+        assert_eq!(dispatch_order(&files), vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn test_file_progress_snapshot_exposes_active_only() {
+        let active = make_file_state("mods/active.jar", 100);
+        active.downloaded.store(40, Ordering::Relaxed);
+        active.status.store(FILE_DOWNLOADING, Ordering::Release);
+
+        let completed = make_file_state("mods/done.jar", 200);
+        completed.downloaded.store(200, Ordering::Relaxed);
+        completed.status.store(FILE_COMPLETED, Ordering::Release);
+
+        let pending = make_file_state("config/pending.toml", 50);
+        let states = vec![active, completed, pending];
+
+        let snapshot = snapshot_files(&states, 1024.0);
+
+        assert_eq!(snapshot.total_files, 3);
+        assert_eq!(snapshot.completed_files, 1);
+        assert_eq!(snapshot.files.len(), 1);
+        assert_eq!(snapshot.files[0].path, "mods/active.jar");
+        assert_eq!(snapshot.files[0].downloaded, 40);
+        assert_eq!(snapshot.files[0].total, 100);
+        assert_eq!(snapshot.downloaded_bytes, 240);
+        assert_eq!(snapshot.total_bytes, 350);
+        assert_eq!(snapshot.speed, 1024.0);
+    }
 
     fn write_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
         let file = fs::File::create(path).unwrap();

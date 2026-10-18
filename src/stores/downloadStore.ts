@@ -35,9 +35,14 @@ export const useDownloadStore = defineStore('download', () => {
   const showNotification = ref(false);
   const userHidNotification = ref(false);
   const isInitialized = ref(false);
+  // 只有下载页主动发起的下载才归这个 store 管；整合包/实例创建/修复的内部下载不弹全局窗
+  const ownsDownload = ref(false);
 
   function handleDownloadProgress(event: DownloadProgress) {
+    if (!ownsDownload.value) return;
+
     const data = event as DownloadState;
+    downloadProgress.value = data;
 
     if (data.status === 'downloading' && !userHidNotification.value) {
       showNotification.value = true;
@@ -58,6 +63,10 @@ export const useDownloadStore = defineStore('download', () => {
         notificationStore.error('下载失败', data.error || '下载过程中发生未知错误', true);
       }
     }
+
+    if (data.status !== 'downloading') {
+      ownsDownload.value = false;
+    }
   }
 
   async function init() {
@@ -66,7 +75,6 @@ export const useDownloadStore = defineStore('download', () => {
     try {
       const { listen } = await import('@tauri-apps/api/event');
       const unlisten = await listen<DownloadProgress>('download-progress', (event) => {
-        downloadProgress.value = event.payload as DownloadState;
         handleDownloadProgress(event.payload);
       });
       downloadProgressUnlisten = unlisten;
@@ -92,11 +100,13 @@ export const useDownloadStore = defineStore('download', () => {
     completionNotified.value = false;
     userHidNotification.value = false;
     showNotification.value = true;
+    ownsDownload.value = true;
 
     try {
       await api.version.downloadVersion(selectedVersion.value, source === 'bmcl' ? 'bmcl' : undefined);
     } catch (err) {
       logError('Failed to start download invocation', err, 'DownloadStore');
+      ownsDownload.value = false;
       if (getErrorCode(err) === 'cancelled') {
         downloadProgress.value.status = 'cancelled';
         downloadError.value = null;

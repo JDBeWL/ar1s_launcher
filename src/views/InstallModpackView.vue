@@ -18,20 +18,25 @@
         <v-expand-transition>
           <v-card v-if="installing" color="surface-container-high" class="mb-4" variant="flat">
             <v-card-text class="pa-4">
-              <div class="d-flex align-center justify-space-between mb-2 num-mono">
-                <div class="d-flex align-center">
+              <div class="d-flex align-center justify-space-between mb-2">
+                <div class="d-flex align-center flex-grow-1 overflow-hidden">
                   <v-progress-circular
                     v-if="installProgress.indeterminate"
                     indeterminate
                     size="18"
                     width="2"
                     color="primary"
-                    class="mr-2"
+                    class="mr-2 flex-shrink-0"
                   />
-                  <v-icon v-else size="18" color="primary" class="mr-2">mdi-download</v-icon>
-                  <span class="text-body-medium">{{ installProgress.message }}</span>
+                  <v-icon v-else size="18" color="primary" class="mr-2 flex-shrink-0">mdi-download</v-icon>
+                  <span class="text-body-medium text-truncate">{{ installProgress.message }}</span>
                 </div>
-                <span class="text-body-medium font-weight-medium text-primary">{{ installProgress.progress }}%</span>
+                <span
+                  v-if="!validatingFiles && !completingFiles"
+                  class="text-body-medium font-weight-medium text-primary num-mono ml-4"
+                >
+                  {{ installProgress.progress }}%
+                </span>
               </div>
               <v-progress-linear
                 :model-value="installProgress.progress"
@@ -41,8 +46,157 @@
                 color="primary"
                 bg-color="surface-container"
               />
-              <div class="d-flex justify-end mt-3">
+
+              <div v-if="validatingFiles" class="d-flex align-center mt-3 text-body-small text-on-surface-variant">
+                <v-progress-circular indeterminate size="14" width="2" class="mr-2" />
+                正在校验游戏文件…
+              </div>
+
+              <template v-else-if="postInstallChecked && missingFileCount > 0">
+                <v-alert v-if="!completionError" type="info" variant="tonal" density="comfortable" class="mt-3">
+                  <template #title>正在补齐游戏文件</template>
+                  安装已完成，检测到 {{ missingFileCount }} 个游戏文件缺失，正在自动补齐；补齐后即可直接启动。
+                </v-alert>
+                <v-alert v-else type="warning" variant="tonal" density="comfortable" class="mt-3">
+                  <template #title>自动补齐未完成</template>
+                  还有 {{ missingFileCount }} 个文件缺失。可以重试补齐，或稍后启动时继续。
+                </v-alert>
+
+                <div v-if="completingFiles" class="mt-3">
+                  <div class="d-flex justify-space-between text-body-small text-on-surface-variant num-mono">
+                    <span v-if="versionDownload">
+                      {{ formatBytes(versionDownload.bytes_downloaded) }} /
+                      {{ formatBytes(versionDownload.total_bytes) }}
+                    </span>
+                    <span v-else>准备补齐…</span>
+                    <span v-if="versionDownload">
+                      {{ formatSpeed(versionDownload.speed) }} · {{ versionDownload.percent }}%
+                    </span>
+                  </div>
+                  <v-progress-linear
+                    :model-value="versionDownload?.percent ?? 0"
+                    :indeterminate="!versionDownload"
+                    height="4"
+                    rounded
+                    color="primary"
+                    bg-color="surface-container"
+                    class="mt-1"
+                  />
+                </div>
+                <div v-if="completionError" class="text-body-small text-error mt-2">{{ completionError }}</div>
+              </template>
+
+              <template v-else-if="filesStage">
+                <div class="d-flex flex-wrap align-center ga-2 mt-3">
+                  <v-chip size="x-small" color="primary" variant="tonal" prepend-icon="mdi-download">
+                    下载中 {{ activeFiles.length }}
+                  </v-chip>
+                  <v-chip v-if="queuedFileCount > 0" size="x-small" variant="tonal">
+                    排队 {{ queuedFileCount }}
+                  </v-chip>
+                  <v-chip v-if="fileProgress" size="x-small" color="success" variant="tonal">
+                    完成 {{ fileProgress.completed_files }}/{{ fileProgress.total_files }}
+                  </v-chip>
+                  <v-spacer />
+                  <span
+                    v-if="fileProgress && fileProgress.speed > 0"
+                    class="text-body-small text-on-surface-variant num-mono"
+                  >
+                    {{ formatSpeed(fileProgress.speed) }}
+                  </span>
+                </div>
+
+                <div
+                  v-if="fileProgress && fileProgress.total_bytes > 0"
+                  class="d-flex justify-space-between text-body-small text-on-surface-variant num-mono mt-1"
+                >
+                  <span>
+                    {{ formatBytes(fileProgress.downloaded_bytes) }} /
+                    {{ formatBytes(fileProgress.total_bytes) }}
+                  </span>
+                  <span v-if="etaText">{{ etaText }}</span>
+                </div>
+
+                <div class="file-list mt-2">
+                  <transition-group name="file-row" tag="div">
+                    <div v-for="file in activeFiles" :key="file.path" class="file-row">
+                      <div class="d-flex align-center ga-2">
+                        <v-icon size="15" class="text-on-surface-variant flex-shrink-0">
+                          mdi-file-download-outline
+                        </v-icon>
+                        <span class="file-name text-body-small" :title="file.path">{{ baseName(file.path) }}</span>
+                        <v-spacer />
+                        <span class="text-body-small text-on-surface-variant num-mono flex-shrink-0">
+                          {{ fileSizeLabel(file) }}
+                        </span>
+                      </div>
+                      <div v-if="dirName(file.path)" class="file-dir text-body-small text-on-surface-variant">
+                        {{ dirName(file.path) }}
+                      </div>
+                      <v-progress-linear
+                        class="mt-1"
+                        :model-value="filePercent(file)"
+                        :indeterminate="file.total === 0"
+                        height="3"
+                        rounded
+                        color="primary"
+                        bg-color="surface-container"
+                      />
+                    </div>
+                  </transition-group>
+
+                  <div
+                    v-if="activeFiles.length === 0"
+                    class="text-body-small text-on-surface-variant d-flex align-center pa-2"
+                  >
+                    <v-progress-circular indeterminate size="14" width="2" class="mr-2" />
+                    正在调度下一批文件…
+                  </div>
+                </div>
+              </template>
+
+              <template v-else-if="gameStage && versionDownload">
+                <div class="d-flex justify-space-between text-body-small text-on-surface-variant num-mono mt-3">
+                  <span>
+                    {{ formatBytes(versionDownload.bytes_downloaded) }} /
+                    {{ formatBytes(versionDownload.total_bytes) }}
+                  </span>
+                  <span>{{ formatSpeed(versionDownload.speed) }} · {{ versionDownload.percent }}%</span>
+                </div>
+                <v-progress-linear
+                  :model-value="versionDownload.percent"
+                  height="4"
+                  rounded
+                  color="primary"
+                  bg-color="surface-container"
+                  class="mt-1"
+                />
+                <div v-if="versionDownloadDone" class="text-body-small text-on-surface-variant mt-2">
+                  游戏核心已就绪，正在安装加载器…
+                </div>
+              </template>
+
+              <div v-if="!validatingFiles" class="d-flex justify-end ga-2 mt-3">
+                <template v-if="postInstallChecked && missingFileCount > 0">
+                  <v-btn
+                    v-if="completingFiles"
+                    variant="text"
+                    color="error"
+                    size="small"
+                    :loading="cancelling"
+                    :disabled="cancelling"
+                    @click="stopCompletion"
+                  >
+                    <v-icon start size="16">mdi-close</v-icon>
+                    停止补齐
+                  </v-btn>
+                  <template v-else-if="completionError">
+                    <v-btn variant="text" @click="finishLater">稍后启动</v-btn>
+                    <v-btn color="primary" variant="flat" @click="completeMissingFiles">重试补齐</v-btn>
+                  </template>
+                </template>
                 <v-btn
+                  v-else
                   variant="text"
                   color="error"
                   size="small"
@@ -234,16 +388,24 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useMultiEventSubscription } from '../composables/useEventSubscription';
 import { useNotificationStore } from '../stores/notificationStore';
-import { modpackApi, instanceApi } from '../services';
+import { useSettingsStore } from '../stores/settings';
+import { modpackApi, instanceApi, versionApi } from '../services';
 import { logError } from '../utils/logger';
 import { compareVersionDesc, getErrorMessage, getErrorCode } from '../utils/format';
-import type { ModrinthVersion, InstallProgressPayload } from '../types/events';
+import type {
+  DownloadProgress,
+  InstallProgressPayload,
+  ModpackActiveFile,
+  ModpackFilesProgress,
+  ModrinthVersion,
+} from '../types/events';
 
 const route = useRoute();
 const router = useRouter();
 const notificationStore = useNotificationStore();
+const settingsStore = useSettingsStore();
 
 const projectId = String(route.query.projectId || '');
 const title = String(route.query.title || '');
@@ -261,12 +423,61 @@ const installProgress = ref<InstallProgressPayload>({
   message: '准备安装...',
   indeterminate: false,
 });
+const fileProgress = ref<ModpackFilesProgress | null>(null);
+const versionDownload = ref<DownloadProgress | null>(null);
+const versionDownloadDone = ref(false);
+const validatingFiles = ref(false);
+const postInstallChecked = ref(false);
+const missingFileCount = ref(0);
+const completingFiles = ref(false);
+const completionError = ref<string | null>(null);
+const awaitingPostInstall = ref(false);
 
 const instanceNameError = ref<string | null>(null);
 const checkingInstanceName = ref(false);
 
-let unlistenProgress: UnlistenFn | null = null;
 let instanceNameCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+
+const activeFiles = computed(() => fileProgress.value?.files ?? []);
+const filesStage = computed(
+  () => installing.value && installProgress.value.progress >= 55 && installProgress.value.progress < 75,
+);
+const gameStage = computed(
+  () => installing.value && installProgress.value.progress >= 75 && installProgress.value.progress < 80,
+);
+const queuedFileCount = computed(() => {
+  const progress = fileProgress.value;
+  if (!progress) return 0;
+  return Math.max(0, progress.total_files - progress.completed_files - progress.files.length);
+});
+const etaText = computed(() => {
+  const progress = fileProgress.value;
+  if (!progress || progress.speed <= 0 || progress.total_bytes <= progress.downloaded_bytes) return '';
+
+  const seconds = Math.ceil((progress.total_bytes - progress.downloaded_bytes) / progress.speed);
+  if (!Number.isFinite(seconds) || seconds <= 0) return '';
+  if (seconds >= 3600) {
+    return `剩余 ${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  }
+  if (seconds >= 60) {
+    return `剩余 ${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  }
+  return `剩余 ${seconds}s`;
+});
+
+const installSubscriptions = useMultiEventSubscription();
+installSubscriptions.add<InstallProgressPayload>('modpack-install-progress', (event) => {
+  installProgress.value = event.payload;
+});
+installSubscriptions.add<ModpackFilesProgress>('modpack-file-progress', (event) => {
+  fileProgress.value = event.payload;
+});
+installSubscriptions.add<DownloadProgress>('download-progress', (event) => {
+  versionDownload.value = event.payload;
+  if (event.payload.status === 'completed') {
+    versionDownloadDone.value = true;
+  }
+});
 
 const selectedVersionInfo = computed(() => {
   if (!selectedVersionId.value) return null;
@@ -421,13 +632,20 @@ async function install() {
   if (!projectId || !selectedVersionId.value || !canInstall.value) return;
 
   installing.value = true;
-  installProgress.value = { progress: 0, message: '准备安装...', indeterminate: false } as InstallProgressPayload;
+  installProgress.value = { progress: 0, message: '准备安装...', indeterminate: false };
+  fileProgress.value = null;
+  versionDownload.value = null;
+  versionDownloadDone.value = false;
+  validatingFiles.value = false;
+  postInstallChecked.value = false;
+  missingFileCount.value = 0;
+  completingFiles.value = false;
+  completionError.value = null;
+  awaitingPostInstall.value = false;
+
+  await installSubscriptions.subscribeAll();
 
   try {
-    unlistenProgress = await listen<InstallProgressPayload>('modpack-install-progress', (event) => {
-      installProgress.value = event.payload;
-    });
-
     await modpackApi.installModrinthModpack({
       modpack_id: projectId,
       version_id: selectedVersionId.value!,
@@ -435,8 +653,32 @@ async function install() {
       install_path: '',
     });
 
-    notificationStore.success('安装成功', `${effectiveInstanceName.value} 已安装完成`);
-    router.push('/instance-manager');
+    installProgress.value = { progress: 100, message: '整合包安装完成！', indeterminate: false };
+    validatingFiles.value = true;
+    let validationFailed = false;
+    try {
+      const missing = await versionApi.validateVersionFiles(effectiveInstanceName.value);
+      missingFileCount.value = missing.length;
+    } catch (e) {
+      validationFailed = true;
+      logError('校验安装文件失败', e, 'InstallModpackView');
+    } finally {
+      validatingFiles.value = false;
+      postInstallChecked.value = true;
+    }
+
+    if (missingFileCount.value === 0) {
+      finishInstall(
+        validationFailed
+          ? `${effectiveInstanceName.value} 已安装完成；文件校验未完成，首次启动前会再检查`
+          : `${effectiveInstanceName.value} 已安装完成，文件校验通过`,
+      );
+      return;
+    }
+
+    // 默认直接补齐缺失的原版文件，不再让用户确认
+    awaitingPostInstall.value = true;
+    void completeMissingFiles();
   } catch (e) {
     if (getErrorCode(e) === 'cancelled') {
       notificationStore.info('已取消', '整合包安装已取消');
@@ -445,13 +687,113 @@ async function install() {
       notificationStore.error('安装失败', getErrorMessage(e), true);
     }
   } finally {
-    installing.value = false;
     cancelling.value = false;
-    if (unlistenProgress) {
-      unlistenProgress();
-      unlistenProgress = null;
+    if (!awaitingPostInstall.value) {
+      installSubscriptions.unsubscribeAll();
+      installing.value = false;
     }
   }
+}
+
+async function completeMissingFiles() {
+  if (completingFiles.value) return;
+
+  completingFiles.value = true;
+  completionError.value = null;
+  versionDownload.value = null;
+  installProgress.value = { progress: 100, message: '正在补齐游戏文件...', indeterminate: true };
+
+  try {
+    const mirror = settingsStore.downloadMirror === 'bmcl' ? 'bmcl' : undefined;
+    await versionApi.downloadVersion(effectiveInstanceName.value, mirror);
+    finishInstall(`${effectiveInstanceName.value} 已安装完成，游戏文件已补齐`);
+  } catch (e) {
+    installProgress.value = { progress: 100, message: '游戏文件未补齐', indeterminate: false };
+    if (getErrorCode(e) === 'cancelled') {
+      completionError.value = '已停止补齐，可以重试，或稍后启动时继续补齐';
+    } else {
+      logError('补齐游戏文件失败', e, 'InstallModpackView');
+      completionError.value = getErrorMessage(e);
+      notificationStore.error('补齐失败', getErrorMessage(e), true);
+    }
+  } finally {
+    completingFiles.value = false;
+    cancelling.value = false;
+  }
+}
+
+async function stopCompletion() {
+  if (cancelling.value) return;
+  cancelling.value = true;
+  try {
+    await versionApi.cancelDownload();
+    notificationStore.info('正在停止', '当前文件完成后停止补齐');
+  } catch (e) {
+    logError('停止补齐失败', e, 'InstallModpackView');
+    cancelling.value = false;
+  }
+}
+
+function finishInstall(message: string) {
+  notificationStore.success('安装成功', message);
+  closeInstallPanel();
+  router.push('/instance-manager');
+}
+
+function finishLater() {
+  notificationStore.warning(
+    '安装完成',
+    `${effectiveInstanceName.value} 已安装完成；游戏文件未补齐，首次启动时会继续补齐`,
+  );
+  closeInstallPanel();
+  router.push('/instance-manager');
+}
+
+function closeInstallPanel() {
+  awaitingPostInstall.value = false;
+  installing.value = false;
+  cancelling.value = false;
+  installSubscriptions.unsubscribeAll();
+  validatingFiles.value = false;
+  postInstallChecked.value = false;
+  missingFileCount.value = 0;
+  completingFiles.value = false;
+  completionError.value = null;
+  versionDownload.value = null;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / 1024 ** index;
+  const digits = index === 0 ? 0 : index >= 2 ? 2 : 1;
+  return `${value.toFixed(digits)} ${units[index]}`;
+}
+
+function formatSpeed(bytesPerSecond: number): string {
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return '0 B/s';
+  return `${formatBytes(bytesPerSecond)}/s`;
+}
+
+function filePercent(file: ModpackActiveFile): number {
+  if (file.total <= 0) return 0;
+  return Math.min(100, (file.downloaded / file.total) * 100);
+}
+
+function fileSizeLabel(file: ModpackActiveFile): string {
+  return file.total > 0 ? `${formatBytes(file.downloaded)} / ${formatBytes(file.total)}` : formatBytes(file.downloaded);
+}
+
+function baseName(path: string): string {
+  const index = path.lastIndexOf('/');
+  return index === -1 ? path : path.slice(index + 1);
+}
+
+function dirName(path: string): string {
+  const index = path.lastIndexOf('/');
+  return index === -1 ? '' : path.slice(0, index);
 }
 
 onMounted(async () => {
@@ -462,9 +804,6 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  if (unlistenProgress) {
-    unlistenProgress();
-  }
   if (instanceNameCheckTimeout) {
     clearTimeout(instanceNameCheckTimeout);
   }
@@ -476,5 +815,49 @@ onUnmounted(() => {
   padding: 16px;
   background: rgb(var(--v-theme-surface-container-low));
   border-radius: 12px;
+}
+
+.file-list {
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.file-row {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: rgb(var(--v-theme-surface-container));
+}
+
+.file-row:last-child {
+  margin-bottom: 0;
+}
+
+.file-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-dir {
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-row-enter-active,
+.file-row-leave-active {
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.file-row-enter-from,
+.file-row-leave-to {
+  opacity: 0;
+  transform: translateX(8px);
 }
 </style>

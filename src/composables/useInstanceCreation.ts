@@ -5,12 +5,14 @@
 import { ref, computed, watch } from 'vue';
 import { api } from '../services';
 import { useNotificationStore } from '../stores/notificationStore';
+import { useSettingsStore } from '../stores/settings';
 import { useDebounceFn } from './useDebounce';
 import { useEventSubscription } from './useEventSubscription';
 import { getErrorMessage } from '../utils/format';
 import { logError } from '../utils/logger';
 import { sortVersionsByReleaseTime } from '../utils/format';
 import type {
+  DownloadProgress,
   MinecraftVersion,
   InstallProgressPayload,
   ForgeVersion,
@@ -21,6 +23,7 @@ import type {
 } from '../types/events';
 
 export function useInstanceCreation() {
+  const settingsStore = useSettingsStore();
   const versions = ref<MinecraftVersion[]>([]);
   const loadingVersions = ref(false);
   const selectedVersion = ref<MinecraftVersion | null>(null);
@@ -207,6 +210,20 @@ export function useInstanceCreation() {
     progressIndeterminate.value = progressData.indeterminate;
   });
 
+  const downloadProgressSub = useEventSubscription<DownloadProgress>('download-progress', (event) => {
+    const data = event.payload;
+    if (data.status === 'downloading') {
+      progressValue.value = data.percent;
+      progressIndeterminate.value = false;
+      const speed = data.speed >= 1024 ? `${(data.speed / 1024).toFixed(1)} MB/s` : `${data.speed.toFixed(0)} KB/s`;
+      progressText.value = data.speed > 0 ? `补齐游戏文件 · ${speed}` : '补齐游戏文件...';
+    } else if (data.status === 'completed') {
+      progressValue.value = 100;
+      progressIndeterminate.value = false;
+      progressText.value = '补齐完成';
+    }
+  });
+
   async function createInstance() {
     const notificationStore = useNotificationStore();
 
@@ -287,7 +304,46 @@ export function useInstanceCreation() {
 
       await api.instance.createInstance(finalInstanceName, selectedVersion.value.id, payload.loader);
 
-      notificationStore.success('创建成功', `实例 '${finalInstanceName}' 已创建`);
+      progressValue.value = 0;
+      progressText.value = '校验文件...';
+      progressIndeterminate.value = true;
+
+      let validationFailed = false;
+      let missingFileCount = 0;
+      try {
+        const missing = await api.version.validateVersionFiles(finalInstanceName);
+        missingFileCount = missing.length;
+      } catch (error) {
+        validationFailed = true;
+        logError('Failed to validate instance files', error, 'useInstanceCreation');
+      }
+
+      let completionFailed = false;
+      if (missingFileCount > 0) {
+        progressValue.value = 0;
+        progressIndeterminate.value = true;
+        progressText.value = '补齐游戏文件...';
+        await downloadProgressSub.subscribe();
+        try {
+          const mirror = settingsStore.downloadMirror === 'bmcl' ? 'bmcl' : undefined;
+          await api.version.downloadVersion(finalInstanceName, mirror);
+        } catch (error) {
+          completionFailed = true;
+          logError('Failed to complete instance files', error, 'useInstanceCreation');
+          notificationStore.warning('实例已创建', '游戏文件未补齐，首次启动前会提示修复');
+        } finally {
+          downloadProgressSub.unsubscribe();
+        }
+      }
+
+      if (!completionFailed) {
+        notificationStore.success(
+          '创建成功',
+          validationFailed
+            ? `实例 '${finalInstanceName}' 已创建；文件校验未完成，首次启动前会再检查`
+            : `实例 '${finalInstanceName}' 已创建`,
+        );
+      }
 
       showProgress.value = false;
       installing.value = false;
