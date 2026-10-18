@@ -422,6 +422,10 @@ fn rule_main_class_missing(lines: &[String]) -> Option<Finding> {
 
 fn rule_missing_class(lines: &[String]) -> Option<Finding> {
     let (idx, class) = find_signal(lines, |line| {
+        // mixin 会探测可选目标并打同名 WARN，健康启动里也常见；真正缺类会带异常栈
+        if line.contains("Error loading class:") {
+            return None;
+        }
         RE_MISSING_CLASS
             .captures(line)
             .map(|cap| cap[1].to_string())
@@ -1030,7 +1034,7 @@ Caused by: org.spongepowered.asm.mixin.throwables.ClassMetadataNotFoundException
     }
 
     #[test]
-    fn test_downstream_mixin_and_missing_class_become_symptoms() {
+    fn test_downstream_mixin_becomes_symptom() {
         let d = diagnose(Some(1), &lines(ASM_CRASH), &ctx_java_26(), None);
 
         assert_eq!(
@@ -1042,21 +1046,35 @@ Caused by: org.spongepowered.asm.mixin.throwables.ClassMetadataNotFoundException
         assert!(mixin.suggestion.contains("根因"));
         assert!(!mixin.suggestion.contains("移出 mods"));
         assert!(
-            only(&d, FindingKind::MissingClass)
-                .suggestion
-                .contains("根因")
-        );
-        assert!(
-            !only(&d, FindingKind::MissingClass)
-                .suggestion
-                .contains("前置"),
-            "被降级成表象后不该再指挥用户去动前置模组"
+            !d.findings
+                .iter()
+                .any(|f| f.kind == FindingKind::MissingClass),
+            "mixin 探测可选目标的 WARN 不能当成缺类证据"
         );
         assert!(
             !d.findings
                 .iter()
                 .any(|f| f.kind == FindingKind::JavaVersion),
             "根因已经点明 Java，不该再补一条同样的推断"
+        );
+    }
+
+    /// 取自本机 2026-10-18 22:34 正常启动的 Vanilla Perfected 26.3 日志：
+    /// mixin 探测 Sodium 的几个可选目标失败，游戏照常跑完
+    const MIXIN_PROBE_WARNS: &str = r#"[22:34:41] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/render/chunk/DefaultChunkRenderer (java.lang.ClassNotFoundException: me/jellysquid/mods/sodium/client/render/chunk/DefaultChunkRenderer)
+[22:34:42] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/render/chunk/RenderSectionManager (java.lang.ClassNotFoundException: me/jellysquid/mods/sodium/client/render/chunk/RenderSectionManager)
+[22:34:42] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/render/SodiumWorldRenderer (java.lang.ClassNotFoundException: me/jellysquid/mods/sodium/client/render/SodiumWorldRenderer)"#;
+
+    #[test]
+    fn test_mixin_probe_warns_are_not_a_missing_class_root_cause() {
+        let d = diagnose(Some(-8), &lines(MIXIN_PROBE_WARNS), &ctx_plain(), None);
+
+        assert!(
+            !d.findings
+                .iter()
+                .any(|f| f.kind == FindingKind::MissingClass),
+            "这些 WARN 在正常跑完的游戏里也会出现，不能当缺类根因：{:?}",
+            d.findings
         );
     }
 

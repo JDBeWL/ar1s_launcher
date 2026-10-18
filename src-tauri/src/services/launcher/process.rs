@@ -397,6 +397,51 @@ fn find_hs_err_log(working_dir: &Path, launched_after: SystemTime) -> Option<Str
     None
 }
 
+/// 本次运行写下的崩溃报告。关闭看门狗会先把报告落盘，再 `System.exit(-8)`
+fn find_new_crash_report(
+    working_dir: &Path,
+    launched_after: SystemTime,
+) -> Option<(std::path::PathBuf, String)> {
+    let mut latest: Option<(SystemTime, std::path::PathBuf, String)> = None;
+
+    for entry in fs::read_dir(working_dir.join("crash-reports"))
+        .ok()?
+        .flatten()
+    {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("crash-") || !name_str.ends_with(".txt") {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        if modified < launched_after {
+            continue;
+        }
+        if latest
+            .as_ref()
+            .is_some_and(|(time, _, _)| modified <= *time)
+        {
+            continue;
+        }
+        let path = entry.path();
+        if let Ok(content) = fs::read_to_string(&path) {
+            latest = Some((modified, path, content));
+        }
+    }
+
+    latest.map(|(_, path, content)| (path, content))
+}
+
+/// 26.3 起客户端退出阶段卡住 15 秒，游戏会写这份报告并主动结束进程
+fn is_client_shutdown_watchdog(report: &str) -> bool {
+    report.contains("Watchdog (Client shutdown")
+}
+
 /// hs_err 全文几十 KB，报告里只留头部这些行
 const HS_ERR_MAX_LINES: usize = 200;
 
@@ -415,33 +460,49 @@ fn handle_process_exit(
         format!("游戏进程退出，状态码: {:?}", exit_code),
     );
 
+    let mut exit_message = format!("游戏已退出，状态码: {:?}", exit_code);
+
     if exit_code.unwrap_or(-1) != 0 {
-        let hs_err = find_hs_err_log(working_dir, launched_at).map(|text| {
-            let total = text.lines().count();
-            let mut head = text
-                .lines()
-                .take(HS_ERR_MAX_LINES)
-                .collect::<Vec<_>>()
-                .join("\n");
-            if total > HS_ERR_MAX_LINES {
-                head.push_str("\n… hs_err 其余部分见工作目录里的原文件");
-            }
-            head
-        });
+        // 关闭看门狗是玩家点了退出之后收尾超时，不是启动崩溃：弹“启动失败”会冤到模组
+        let shutdown_watchdog = find_new_crash_report(working_dir, launched_at)
+            .filter(|(_, report)| is_client_shutdown_watchdog(report));
 
-        let mut ctx = launch_ctx.clone();
-        ctx.runtime_secs = Some(runtime_secs);
+        if let Some((path, _)) = shutdown_watchdog {
+            let _ = window.emit(
+                "log-warning",
+                format!(
+                    "游戏关闭超时，已被客户端看门狗结束（常见于模组残留的非 daemon 线程）；崩溃报告: {}",
+                    path.display()
+                ),
+            );
+            exit_message =
+                "游戏已退出（关闭超时，已被游戏自身的看门狗结束；通常是模组残留线程导致）"
+                    .to_string();
+        } else {
+            let hs_err = find_hs_err_log(working_dir, launched_at).map(|text| {
+                let total = text.lines().count();
+                let mut head = text
+                    .lines()
+                    .take(HS_ERR_MAX_LINES)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if total > HS_ERR_MAX_LINES {
+                    head.push_str("\n… hs_err 其余部分见工作目录里的原文件");
+                }
+                head
+            });
 
-        let mut diagnosis =
-            crash_diagnosis::diagnose(exit_code, output_lines, &ctx, hs_err.as_deref());
-        attach_suggested_java(&mut diagnosis, &ctx);
-        let _ = window.emit("minecraft-crash", &diagnosis);
+            let mut ctx = launch_ctx.clone();
+            ctx.runtime_secs = Some(runtime_secs);
+
+            let mut diagnosis =
+                crash_diagnosis::diagnose(exit_code, output_lines, &ctx, hs_err.as_deref());
+            attach_suggested_java(&mut diagnosis, &ctx);
+            let _ = window.emit("minecraft-crash", &diagnosis);
+        }
     }
 
-    let _ = window.emit(
-        "minecraft-exited",
-        format!("游戏已退出，状态码: {:?}", exit_code),
-    );
+    let _ = window.emit("minecraft-exited", exit_message);
 }
 
 /// 诊断点到 Java 时，顺手挑一份判据允许、且不是本次用的 Java。
@@ -479,7 +540,10 @@ fn attach_suggested_java(diagnosis: &mut crash_diagnosis::CrashDiagnosis, ctx: &
 
 #[cfg(test)]
 mod tests {
-    use super::{OutputCapture, find_hs_err_log, redacted_args, wait_for_process_holding_lock};
+    use super::{
+        OutputCapture, find_hs_err_log, find_new_crash_report, is_client_shutdown_watchdog,
+        redacted_args, wait_for_process_holding_lock,
+    };
     use std::fs;
     use std::path::Path;
     use std::process::{Command, Stdio};
@@ -494,6 +558,100 @@ mod tests {
         fs::write(&path, body)?;
         let file = fs::OpenOptions::new().append(true).open(&path)?;
         file.set_modified(SystemTime::now() - age)
+    }
+
+    fn write_crash_report(
+        dir: &Path,
+        name: &str,
+        body: &str,
+        age: Duration,
+    ) -> std::io::Result<()> {
+        let reports = dir.join("crash-reports");
+        fs::create_dir_all(&reports)?;
+        let path = reports.join(name);
+        fs::write(&path, body)?;
+        let file = fs::OpenOptions::new().append(true).open(&path)?;
+        file.set_modified(SystemTime::now() - age)
+    }
+
+    const SHUTDOWN_WATCHDOG_REPORT: &str = "\
+---- Minecraft Crash Report ----
+Description: Client shutdown from post-main
+
+java.lang.Error: Watchdog (Client shutdown from post-main)
+\tat net.minecraft.server.dedicated.ServerWatchdog.createWatchdogCrashReport(ServerWatchdog.java:83)";
+
+    /// 26.3 的 ClientShutdownWatchdog 在关闭卡住 15 秒后写这份报告再 exit(-8)。
+    /// 这是玩家点了退出之后的收尾超时，不能拿去当“启动失败”弹窗。
+    #[test]
+    fn test_new_shutdown_watchdog_report_is_recognized() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_crash_report(
+            dir.path(),
+            "crash-2026-10-18_22.35.26-client.txt",
+            SHUTDOWN_WATCHDOG_REPORT,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let launched = SystemTime::now() - Duration::from_secs(60);
+        let (path, report) = find_new_crash_report(dir.path(), launched).expect("应当找到本次报告");
+        assert!(path.ends_with("crash-2026-10-18_22.35.26-client.txt"));
+        assert!(is_client_shutdown_watchdog(&report));
+    }
+
+    #[test]
+    fn test_previous_crash_report_is_ignored() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_crash_report(
+            dir.path(),
+            "crash-old-client.txt",
+            SHUTDOWN_WATCHDOG_REPORT,
+            Duration::from_secs(3600),
+        )
+        .unwrap();
+
+        let launched = SystemTime::now() - Duration::from_secs(60);
+        assert_eq!(find_new_crash_report(dir.path(), launched), None);
+    }
+
+    #[test]
+    fn test_launch_crash_report_is_not_mistaken_for_shutdown() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_crash_report(
+            dir.path(),
+            "crash-2026-10-18_22.35.26-client.txt",
+            "---- Minecraft Crash Report ----\nDescription: Rendering overlay\n\njava.lang.NullPointerException: test",
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let launched = SystemTime::now() - Duration::from_secs(60);
+        let (_, report) = find_new_crash_report(dir.path(), launched).expect("应当找到本次报告");
+        assert!(!is_client_shutdown_watchdog(&report));
+    }
+
+    #[test]
+    fn test_newest_crash_report_wins() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_crash_report(
+            dir.path(),
+            "crash-old-client.txt",
+            "---- Minecraft Crash Report ----\nDescription: old",
+            Duration::from_secs(120),
+        )
+        .unwrap();
+        write_crash_report(
+            dir.path(),
+            "crash-new-client.txt",
+            SHUTDOWN_WATCHDOG_REPORT,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+
+        let launched = SystemTime::now() - Duration::from_secs(180);
+        let (path, _) = find_new_crash_report(dir.path(), launched).expect("应当找到本次报告");
+        assert!(path.ends_with("crash-new-client.txt"));
     }
 
     #[test]
