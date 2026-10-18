@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const MAX_LOG_FILES: usize = 30;
+const FRONTEND_CONTEXT_MAX_CHARS: usize = 120;
+const FRONTEND_MESSAGE_MAX_CHARS: usize = 4000;
 
 pub fn setup_logger(log_dir: &Path) -> Result<(), fern::InitError> {
     // 此时 logger 还没初始化，这里不能用 log 宏
@@ -35,7 +37,49 @@ pub fn setup_logger(log_dir: &Path) -> Result<(), fern::InitError> {
         .chain(fern::log_file(&log_file)?)
         .apply()?;
 
+    install_panic_hook();
+
     Ok(())
+}
+
+/// 前端 logger 的 error 级输出落盘；换行转义，避免一条错误伪造多行日志
+pub(crate) fn log_frontend_message(context: &str, message: &str) {
+    let context = sanitize_frontend_text(context, FRONTEND_CONTEXT_MAX_CHARS);
+    let message = sanitize_frontend_text(message, FRONTEND_MESSAGE_MAX_CHARS);
+    log::error!(target: "frontend", "[{}] {}", context, message);
+}
+
+fn sanitize_frontend_text(input: &str, max_chars: usize) -> String {
+    let mut output = String::with_capacity(input.len().min(max_chars.saturating_mul(4)));
+    let mut truncated = false;
+
+    for (index, ch) in input.chars().enumerate() {
+        if index >= max_chars {
+            truncated = true;
+            break;
+        }
+        match ch {
+            '\r' => output.push_str("\\r"),
+            '\n' => output.push_str("\\n"),
+            '\t' => output.push_str("\\t"),
+            c if c.is_control() => output.push(' '),
+            c => output.push(c),
+        }
+    }
+
+    if truncated {
+        output.push('…');
+    }
+    output
+}
+
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // 命令里 panic 的线程会直接结束，invoke 也不会返回；至少让日志留下位置
+        log::error!("线程 panic: {}", info);
+        default_hook(info);
+    }));
 }
 
 /// 只保留最近的若干个 .log，避免每次启动都新增一个永不清理的文件
@@ -74,9 +118,20 @@ fn prune_old_logs(log_dir: &Path, keep: usize) {
 
 #[cfg(test)]
 mod tests {
-    use super::prune_old_logs;
+    use super::{FRONTEND_MESSAGE_MAX_CHARS, prune_old_logs, sanitize_frontend_text};
     use std::fs;
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn test_frontend_log_text_is_single_line_and_bounded() {
+        let text = sanitize_frontend_text("a\nb\r\nc\td\u{0}e", 100);
+        assert_eq!(text, "a\\nb\\r\\nc\\td e");
+
+        let long = "界".repeat(FRONTEND_MESSAGE_MAX_CHARS + 10);
+        let bounded = sanitize_frontend_text(&long, FRONTEND_MESSAGE_MAX_CHARS);
+        assert_eq!(bounded.chars().count(), FRONTEND_MESSAGE_MAX_CHARS + 1);
+        assert!(bounded.ends_with('…'));
+    }
 
     #[test]
     fn test_prune_old_logs_keeps_newest_and_ignores_other_files() {

@@ -28,14 +28,26 @@ pub fn reload() {
 }
 
 fn build_client() -> Client {
-    crate::services::proxy::apply(
-        Client::builder()
-            .timeout(Duration::from_secs(30))
-            .connect_timeout(Duration::from_secs(10))
-            .pool_max_idle_per_host(10)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .user_agent(USER_AGENT),
-    )
-    .build()
-    .expect("Failed to create HTTP client")
+    match crate::services::proxy::apply(client_builder()).build() {
+        Ok(client) => client,
+        Err(error) => {
+            log::error!("创建 HTTP 客户端失败，回退为不启用代理的客户端: {}", error);
+            client_builder().build().unwrap_or_else(|fallback_error| {
+                log::error!(
+                    "创建默认 HTTP 客户端仍失败，使用 reqwest 默认值: {}",
+                    fallback_error
+                );
+                Client::new()
+            })
+        }
+    }
+}
+
+fn client_builder() -> reqwest::ClientBuilder {
+    Client::builder()
+        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(10))
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .user_agent(USER_AGENT)
 }

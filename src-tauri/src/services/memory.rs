@@ -210,6 +210,7 @@ pub fn optimize_jvm_memory_args(
     match advanced.gc_strategy {
         GcStrategy::G1 => {
             args.push("-XX:+UseG1GC".to_string());
+            args.push("-XX:G1HeapRegionSize=32M".to_string());
             args.push("-XX:G1NewSizePercent=20".to_string());
             args.push("-XX:G1ReservePercent=20".to_string());
             args.push("-XX:MaxGCPauseMillis=50".to_string());
@@ -434,6 +435,7 @@ mod tests {
     fn test_jvm_args_default_has_only_g1gc() {
         let args = optimize_jvm_memory_args(2048, Some(17), &JvmAdvancedOptions::default());
         assert!(args.iter().any(|arg| arg == "-XX:+UseG1GC"));
+        assert!(args.iter().any(|arg| arg == "-XX:G1HeapRegionSize=32M"));
         assert!(args.iter().any(|arg| arg == "-XX:G1NewSizePercent=20"));
         assert!(args.iter().any(|arg| arg == "-XX:G1ReservePercent=20"));
         assert!(args.iter().any(|arg| arg == "-XX:MaxGCPauseMillis=50"));

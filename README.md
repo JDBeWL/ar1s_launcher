@@ -2,7 +2,7 @@
 
 一个基于Tauri框架构建的现代化Minecraft启动器，使用Vuetify提供Material Design 3风格的用户界面。
 
-![Version](https://img.shields.io/badge/version-0.6.1-blue)
+![Version](https://img.shields.io/badge/version-0.7.1-blue)
 ![Tauri](https://img.shields.io/badge/Tauri-2.12-orange)
 ![Vue](https://img.shields.io/badge/Vue-3.5-green)
 ![Rust](https://img.shields.io/badge/Rust-1.95+-red)
@@ -17,7 +17,9 @@
 - **整合包安装**: 支持从 Modrinth 平台搜索和安装整合包（CurseForge 开发中）
 - **智能下载**: 支持官方源和BMCL镜像源，提供稳定的下载体验，使用fallback机制下载时自动切换源
 - **文件验证**: 自动检测缺失文件，确保游戏完整性，支持一键修复
-- **离线模式**: 支持离线游戏启动，暂时不支持正版验证
+- **崩溃诊断**: 启动失败时按日志特征判断问题出在哪，输出可复制的纯文本报告
+- **正版登录**: 微软账号登录，支持设备代码轮询与浏览器回调两种方式，token 自动刷新
+- **离线模式**: 支持离线游戏启动，正版与离线身份可随时切换
 
 ### 实例系统
 
@@ -48,7 +50,7 @@
 
 - **Vue 3.5**: 现代化的前端框架，使用 Composition API
 - **Vuetify 4.2**: Material Design 3 组件库
-- **TypeScript 5.9**: 类型安全的JavaScript超集
+- **TypeScript 6.0**: 类型安全的JavaScript超集
 - **Pinia 4**: Vue 状态管理库
 - **Vue Router 5**: 前端路由管理
 
@@ -157,7 +159,7 @@ Ar1s_Launcher/
 │   │   │   ├── download_controller.rs   # 下载控制器
 │   │   │   ├── instance_controller.rs   # 实例控制器
 │   │   │   ├── java_controller.rs       # Java控制器
-│   │   │   ├── launcher_controller.rs   # 启动控制器
+│   │   │   ├── diagnostics_controller.rs # 诊断控制器
 │   │   │   ├── loader_controller.rs     # 加载器控制器
 │   │   │   └── modpack_controller.rs    # 整合包控制器
 │   │   ├── models/               # 数据模型
@@ -191,7 +193,7 @@ Ar1s_Launcher/
 
 - 选择已安装的游戏版本
 - 设置玩家名称
-- 切换离线/在线模式
+- 切换离线 / 微软正版身份
 - 一键启动游戏
 - 快捷访问下载、添加实例、实例管理功能
 
@@ -226,9 +228,12 @@ Ar1s_Launcher/
 
 ### 设置页面
 
-- **通用设置**: 游戏目录配置、优先下载源选择、下载线程数
-- **Java设置**: Java路径配置、自动检测系统Java
-- **内存设置**: JVM内存分配配置
+- **通用设置**: 游戏目录、下载源与线程数、网络代理
+- **账号设置**: 离线身份与微软正版登录
+- **Java设置**: Java路径配置、自动检测系统Java、按实例自动匹配版本
+- **内存设置**: JVM内存分配与自动内存
+- **窗口设置**: 启动窗口尺寸与全屏
+- **高级选项**: GC 策略、JVM 参数开关、Metaspace 上限
 
 ## 配置说明
 
@@ -240,7 +245,8 @@ Ar1s_Launcher/
 
 - 自动检测系统Java安装
 - 支持手动指定Java路径
-- Java版本兼容性验证
+- 启动时按版本 JSON 声明的 javaVersion 与 mods 实测结果自动挑选，不满足判据时给出诊断报告
+- 旧版 Forge 等已知不兼容的组合会被硬拦，不让启动
 
 ### 网络设置
 
@@ -276,9 +282,9 @@ Ar1s_Launcher/
 ### 常见问题
 
 1. **游戏启动失败**
-   - 检查Java环境配置，暂时需要手动切换Java版本
+   - 启动失败弹窗会按日志特征给出结论与可复制的诊断报告，先读它
+   - 检查Java环境配置（默认自动匹配，也可在设置里手动指定）
    - 验证游戏文件完整性（启动时会自动检测并提示修复）
-   - 查看日志文件获取详细信息
 
 2. **下载速度慢**
    - 尝试切换下载源（设置 → 通用设置 → 下载源）
@@ -302,7 +308,7 @@ Ar1s_Launcher/
 
 ### 日志文件
 
-日志文件位于应用目录下的`src-tauri/logs`文件夹，包含详细的运行信息，可用于问题诊断。
+日志文件位于 exe 同级目录的 `logs` 文件夹，每次启动一个文件，只保留最近 30 个。
 
 ## 贡献指南
 
@@ -340,8 +346,7 @@ Ar1s_Launcher/
 ## 路线图
 
 - [ ] CurseForge 整合包支持
-- [ ] 正版登录支持
-- [ ] Mod 管理功能
+- [ ] 模组安装与更新（列表、启停、删除已完成）
 - [ ] 资源包管理
 - [ ] 光影包管理
 - [ ] 多语言支持

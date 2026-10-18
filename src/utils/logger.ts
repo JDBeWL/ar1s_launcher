@@ -2,6 +2,8 @@
  * 前端日志模块
  * 带 [context] 前缀包装 console，生产环境完全静默以免泄露敏感信息
  */
+import { reportFrontendError } from '../services/frontendLog';
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 class Logger {
@@ -12,6 +14,11 @@ class Logger {
 
   private log(level: LogLevel, message: string, error?: unknown, context?: string): void {
     const formattedMessage = this.formatMessage(level, message, context);
+
+    if (level === 'error') {
+      const detail = error instanceof Error ? error.stack || error.message : error == null ? '' : String(error);
+      reportFrontendError(context ?? 'Frontend', detail ? `${formattedMessage}\n${detail}` : formattedMessage);
+    }
 
     if (import.meta.env.DEV) {
       switch (level) {
@@ -32,7 +39,7 @@ class Logger {
           break;
       }
     } else {
-      // 生产环境：禁用控制台输出，避免泄露敏感信息
+      // 生产环境不打 console，错误已通过 log_frontend_error 写进启动器日志
     }
   }
 

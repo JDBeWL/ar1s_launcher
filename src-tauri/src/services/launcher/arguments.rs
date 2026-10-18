@@ -4,14 +4,21 @@
 
 use crate::models::{GameConfig, LaunchOptions};
 use crate::utils::minecraft::{FeatureSupport, evaluate_rules_for_arguments_with_features};
-use std::path::Path;
+use std::fs::File;
+use std::path::{Path, PathBuf};
 
 /// Minecraft 未指定自定义分辨率时的默认窗口尺寸
 const DEFAULT_WINDOW_WIDTH: u32 = 854;
 const DEFAULT_WINDOW_HEIGHT: u32 = 480;
 
-/// 报给游戏的启动器名，会进 `-Dminecraft.launcher.brand`
-const LAUNCHER_NAME: &str = "ar1s_launcher";
+/// 报给游戏的启动器名，写入 `-Dminecraft.launcher.brand`
+const LAUNCHER_NAME: &str = "Ar1s Launcher";
+/// F3 显示的启动器标签，写入 `--versionType`
+const LAUNCHER_LABEL: &str = concat!("Ar1s Launcher ", env!("CARGO_PKG_VERSION"));
+
+/// 新 F3 的版本行实现；旧版是 DebugScreenOverlay
+const NEW_DEBUG_SCREEN_CLASS: &str =
+    "net/minecraft/client/gui/components/debug/DebugEntryVersion.class";
 
 /// 用于 Forge 的 ignoreList 参数，需要原版 MC jar 文件名
 fn get_base_minecraft_version(version_json: &serde_json::Value, fallback: &str) -> String {
@@ -68,6 +75,9 @@ pub fn build_arguments(
 
     let base_mc_version = get_base_minecraft_version(version_json, &options.version);
     let primary_jar_name = format!("{}.jar", base_mc_version);
+    let forge_family = is_forge_family(version_json);
+    let old_forge_f3 =
+        forge_family && !classpath_has_new_debug_screen(classpath, &primary_jar_name);
 
     let custom_width = options.window_width.or(config.window_width);
     let custom_height = options.window_height.or(config.window_height);
@@ -94,15 +104,7 @@ pub fn build_arguments(
             "mojang"
         };
 
-        let version_type = if let Some(t) = version_json["type"].as_str() {
-            if t == "snapshot" || t == "old_beta" || t == "old_alpha" {
-                t
-            } else {
-                "release"
-            }
-        } else {
-            "release"
-        };
+        let version_type = LAUNCHER_LABEL;
 
         arg.replace("${auth_player_name}", &options.username)
             .replace("${version_name}", &base_mc_version)
@@ -144,8 +146,86 @@ pub fn build_arguments(
     }
 
     auto_add_tweak_class(version_json, options, classpath, &mut game_args_vec, emit);
+    apply_launcher_branding(
+        &mut game_args_vec,
+        &options.version,
+        &base_mc_version,
+        old_forge_f3,
+    );
 
     (jvm_args, game_args_vec)
+}
+
+/// 旧 Forge 的 F3 是 `<实例>/<brand>/<versionType>`，版本行保留实例名，启动器标签交给 `--versionType`；
+/// 新 F3 和 Fabric 不显示 versionType，用 `实例名 - 启动器版本` 放进 `--version`。
+/// 不要改 `${version_name}`：Forge 的 `ignoreList` 还要用它拼基础 jar 名
+fn apply_launcher_branding(
+    game_args: &mut [String],
+    instance_name: &str,
+    base_mc_version: &str,
+    old_forge_f3: bool,
+) {
+    let Some(index) = game_args.iter().position(|arg| arg == "--version") else {
+        return;
+    };
+    let Some(value) = game_args.get_mut(index + 1) else {
+        return;
+    };
+
+    *value = if old_forge_f3 {
+        instance_name.to_string()
+    } else if instance_name == base_mc_version {
+        LAUNCHER_LABEL.to_string()
+    } else {
+        format!("{instance_name} - {LAUNCHER_LABEL}")
+    };
+}
+
+/// F3 的 versionType 只有 Forge 系会展示；用 Maven 组和主类识别，不按版本号列表判断
+fn is_forge_family(version_json: &serde_json::Value) -> bool {
+    let main_class = version_json["mainClass"]
+        .as_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if main_class.contains("forge") || main_class.contains("bootstraplauncher") {
+        return true;
+    }
+
+    version_json["libraries"]
+        .as_array()
+        .is_some_and(|libraries| {
+            libraries.iter().any(|library| {
+                library["name"].as_str().is_some_and(|name| {
+                    name.starts_with("net.minecraftforge:") || name.starts_with("net.neoforged:")
+                })
+            })
+        })
+}
+
+/// 用 F3 实现类判断新旧调试界面，避免写版本号判断表。
+/// 原版 jar、Forge/NeoForge 的 client/extra jar 都可能承载这些类，其他库不用扫
+fn classpath_has_new_debug_screen(classpath: &[PathBuf], primary_jar_name: &str) -> bool {
+    classpath.iter().any(|jar| {
+        let file_name = jar
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let lower_name = file_name.to_ascii_lowercase();
+        let relevant = file_name == primary_jar_name
+            || lower_name.contains("forge")
+            || lower_name.contains("client");
+        if !relevant {
+            return false;
+        }
+
+        let Ok(file) = File::open(jar) else {
+            return false;
+        };
+        let Ok(mut archive) = zip::ZipArchive::new(file) else {
+            return false;
+        };
+        archive.by_name(NEW_DEBUG_SCREEN_CLASS).is_ok()
+    })
 }
 
 fn parse_jvm_arguments(
@@ -277,7 +357,7 @@ fn auto_add_tweak_class(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn options() -> LaunchOptions {
         LaunchOptions {
@@ -343,6 +423,166 @@ mod tests {
             game_dir_arg(false),
             game_dir.to_string_lossy(),
             "关闭隔离时应指向根目录"
+        );
+    }
+
+    fn build_args_for(
+        json: &serde_json::Value,
+        instance_name: &str,
+        classpath: &[PathBuf],
+    ) -> (Vec<String>, Vec<String>) {
+        let root = tempfile::TempDir::new().unwrap();
+        let game_dir = root.path().to_path_buf();
+        let version_dir = game_dir.join("versions").join(instance_name);
+        let assets_dir = game_dir.join("assets");
+        let mut opts = options();
+        opts.version = instance_name.to_string();
+
+        build_arguments(
+            json,
+            &config(),
+            &opts,
+            "abc",
+            &version_dir,
+            &game_dir,
+            &assets_dir,
+            "26",
+            classpath,
+            &|_: &str, _: String| {},
+        )
+    }
+
+    fn write_client_jar(path: &Path, new_f3: bool) {
+        use zip::write::SimpleFileOptions;
+        let file = std::fs::File::create(path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let entry = if new_f3 {
+            NEW_DEBUG_SCREEN_CLASS
+        } else {
+            "other.class"
+        };
+        zip.start_file(entry, SimpleFileOptions::default()).unwrap();
+        std::io::Write::write_all(&mut zip, b"class").unwrap();
+        zip.finish().unwrap();
+    }
+
+    /// Forge 的 F3 是 `<实例>/<brand>/<versionType>`，版本行保持实例名，
+    /// 启动器标签交给 --versionType；ignoreList 仍用基础 jar 名
+    #[test]
+    fn test_forge_launch_version_uses_instance_name_and_launcher_version_type() {
+        let json = serde_json::json!({
+            "id": "26.3-NeoForge",
+            "jar": "26.3",
+            "mainClass": "net.neoforged.fml.startup.Client",
+            "arguments": {
+                "jvm": ["-DignoreList=forge-,${version_name}.jar"],
+                "game": ["--version", "${version_name}", "--versionType", "${version_type}"]
+            }
+        });
+
+        let (jvm, game) = build_args_for(&json, "26.3-NeoForge", &[]);
+        let version_pos = game.iter().position(|arg| arg == "--version").unwrap();
+        assert_eq!(game[version_pos + 1], "26.3-NeoForge");
+
+        let type_pos = game.iter().position(|arg| arg == "--versionType").unwrap();
+        assert_eq!(
+            game[type_pos + 1],
+            format!("{LAUNCHER_NAME} {}", env!("CARGO_PKG_VERSION"))
+        );
+        assert!(
+            jvm.iter().any(|arg| arg == "-DignoreList=forge-,26.3.jar"),
+            "ignoreList 必须继续用基础版本号: {:?}",
+            jvm
+        );
+    }
+
+    /// 新 F3 不再追加 versionType，启动器标签改放在 --version 里，用短横线分隔
+    #[test]
+    fn test_new_forge_f3_uses_hyphen_launcher_label() {
+        let json = serde_json::json!({
+            "id": "26.3-NeoForge",
+            "jar": "26.3",
+            "mainClass": "net.neoforged.fml.startup.Client",
+            "arguments": {
+                "game": ["--version", "${version_name}", "--versionType", "${version_type}"]
+            }
+        });
+
+        let root = tempfile::TempDir::new().unwrap();
+        let client_jar = root.path().join("26.3.jar");
+        write_client_jar(&client_jar, true);
+
+        let (_, game) = build_args_for(&json, "26.3-NeoForge", &[client_jar]);
+        let version_pos = game.iter().position(|arg| arg == "--version").unwrap();
+        assert_eq!(
+            game[version_pos + 1],
+            format!(
+                "26.3-NeoForge - {LAUNCHER_NAME} {}",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+
+        let type_pos = game.iter().position(|arg| arg == "--versionType").unwrap();
+        assert_eq!(
+            game[type_pos + 1],
+            format!("{LAUNCHER_NAME} {}", env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    /// 新旧 F3 靠客户端 jar 里的实现类判断，不能只看加载器或版本号
+    #[test]
+    fn test_new_debug_screen_detection_reads_client_jar() {
+        let root = tempfile::TempDir::new().unwrap();
+        let new_jar = root.path().join("26.3.jar");
+        let old_jar = root.path().join("1.20.1.jar");
+        write_client_jar(&new_jar, true);
+        write_client_jar(&old_jar, false);
+
+        assert!(classpath_has_new_debug_screen(&[new_jar], "26.3.jar"));
+        assert!(!classpath_has_new_debug_screen(&[old_jar], "1.20.1.jar"));
+    }
+
+    /// Fabric 的 F3 不显示 --versionType，启动器信息只能放在 --version 里
+    #[test]
+    fn test_fabric_launch_version_includes_launcher_label() {
+        let json = serde_json::json!({
+            "id": "26.3-Fabric",
+            "jar": "26.3",
+            "mainClass": "net.fabricmc.loader.impl.launch.knot.KnotClient",
+            "libraries": [{ "name": "net.fabricmc:fabric-loader:0.19.5" }],
+            "arguments": {
+                "game": ["--version", "${version_name}"]
+            }
+        });
+
+        let (_, game) = build_args_for(&json, "26.3-Fabric", &[]);
+        let version_pos = game.iter().position(|arg| arg == "--version").unwrap();
+        assert_eq!(
+            game[version_pos + 1],
+            format!(
+                "26.3-Fabric - {LAUNCHER_NAME} {}",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+    }
+
+    /// 基础版本的实例名与 MC 版本相同，不重复显示
+    #[test]
+    fn test_launcher_branding_skips_redundant_base_version_name() {
+        let json = serde_json::json!({
+            "id": "26.3",
+            "jar": "26.3",
+            "mainClass": "net.minecraft.client.main.Main",
+            "arguments": {
+                "game": ["--version", "${version_name}"]
+            }
+        });
+
+        let (_, game) = build_args_for(&json, "26.3", &[]);
+        let version_pos = game.iter().position(|arg| arg == "--version").unwrap();
+        assert_eq!(
+            game[version_pos + 1],
+            format!("{LAUNCHER_NAME} {}", env!("CARGO_PKG_VERSION"))
         );
     }
 

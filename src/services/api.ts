@@ -2,7 +2,7 @@
  * Tauri 后端接口调用模块
  * 按域封装 invoke，相同参数的并发请求合并，只读结果走缓存、写操作后按前缀失效
  */
-import { invoke } from '@tauri-apps/api/core';
+import { invokeCommand } from './invoke';
 import { withCache, cache, CacheKeys } from './cache';
 import type {
   VersionManifest,
@@ -50,7 +50,7 @@ async function dedupedInvoke<T>(
   options?: { skipDedup?: boolean },
 ): Promise<T> {
   if (options?.skipDedup) {
-    return invoke<T>(cmd, args);
+    return invokeCommand<T>(cmd, args);
   }
 
   const key = `${cmd}:${JSON.stringify(args ?? {})}`;
@@ -58,7 +58,7 @@ async function dedupedInvoke<T>(
     return pendingRequests.get(key) as Promise<T>;
   }
 
-  const promise = invoke<T>(cmd, args).finally(() => {
+  const promise = invokeCommand<T>(cmd, args).finally(() => {
     pendingRequests.delete(key);
   });
 
@@ -72,16 +72,16 @@ export const versionApi = {
   },
 
   async getVersionSize(versionId: string, mirror?: string): Promise<VersionSizeInfo> {
-    return invoke<VersionSizeInfo>('get_version_size', { versionId, mirror });
+    return invokeCommand<VersionSizeInfo>('get_version_size', { versionId, mirror });
   },
 
   async downloadVersion(versionId: string, mirror?: string): Promise<void> {
     // 下载不去重，每次都是新请求
-    return withGameDirInfoInvalidation(() => invoke('download_version', { versionId, mirror }));
+    return withGameDirInfoInvalidation(() => invokeCommand('download_version', { versionId, mirror }));
   },
 
   async cancelDownload(): Promise<void> {
-    return invoke('cancel_download');
+    return invokeCommand('cancel_download');
   },
 
   async validateVersionFiles(versionId: string): Promise<string[]> {
@@ -99,42 +99,44 @@ export const instanceApi = {
     baseVersionId: string,
     loader?: { type: string; mc_version: string; loader_version: string },
   ): Promise<void> {
-    return withGameDirInfoInvalidation(() => invoke('create_instance', { newInstanceName, baseVersionId, loader }));
+    return withGameDirInfoInvalidation(() =>
+      invokeCommand('create_instance', { newInstanceName, baseVersionId, loader }),
+    );
   },
 
   async deleteInstance(instanceName: string): Promise<void> {
-    return withGameDirInfoInvalidation(() => invoke('delete_instance', { instanceName }));
+    return withGameDirInfoInvalidation(() => invokeCommand('delete_instance', { instanceName }));
   },
 
   async renameInstance(oldName: string, newName: string): Promise<void> {
-    return withGameDirInfoInvalidation(() => invoke('rename_instance', { oldName, newName }));
+    return withGameDirInfoInvalidation(() => invokeCommand('rename_instance', { oldName, newName }));
   },
 
   async openInstanceFolder(instanceName: string): Promise<void> {
-    return invoke('open_instance_folder', { instanceName });
+    return invokeCommand('open_instance_folder', { instanceName });
   },
 
   /** mods 目录里的模组，含已禁用的；状态会变，不走缓存 */
   async getMods(instanceName: string): Promise<ModInfo[]> {
-    return invoke<ModInfo[]>('get_instance_mods', { instanceName });
+    return invokeCommand<ModInfo[]>('get_instance_mods', { instanceName });
   },
 
   /** 启用/禁用模组（改名 *.jar <-> *.jar.disabled） */
   async setModEnabled(instanceName: string, fileName: string, enabled: boolean): Promise<void> {
-    await invoke('set_mod_enabled', { instanceName, fileName, enabled });
+    await invokeCommand('set_mod_enabled', { instanceName, fileName, enabled });
   },
 
   async deleteMod(instanceName: string, fileName: string): Promise<void> {
-    await invoke('delete_instance_mod', { instanceName, fileName });
+    await invokeCommand('delete_instance_mod', { instanceName, fileName });
   },
 
   /** 导出脱敏诊断包；目标路径由原生保存对话框选定 */
   async exportDiagnostics(instanceName: string, targetPath: string): Promise<void> {
-    await invoke('export_diagnostic_bundle', { instanceName, targetPath });
+    await invokeCommand('export_diagnostic_bundle', { instanceName, targetPath });
   },
 
   async launchInstance(instanceName: string, overrideJavaPath?: string, forceJavaMismatch?: boolean): Promise<void> {
-    await invoke('launch_instance', { instanceName, overrideJavaPath, forceJavaMismatch });
+    await invokeCommand('launch_instance', { instanceName, overrideJavaPath, forceJavaMismatch });
   },
 
   async validateInstanceName(name: string): Promise<InstanceNameValidation> {
@@ -184,14 +186,14 @@ export const javaApi = {
   },
 
   async refreshJavaInstallations(): Promise<string[]> {
-    const result = await invoke<string[]>('refresh_java_installations');
+    const result = await invokeCommand<string[]>('refresh_java_installations');
     // 必须等后端刷完再失效，否则并发的 findJavaInstallations 会把旧列表写回缓存
     cache.delete(CacheKeys.JAVA);
     return result;
   },
 
   async setJavaPath(path: string): Promise<void> {
-    return invoke('set_java_path_command', { path });
+    return invokeCommand('set_java_path_command', { path });
   },
 
   async validateJavaPath(path: string): Promise<boolean> {
@@ -207,15 +209,15 @@ export const javaApi = {
   },
 
   async addCustomJavaPath(path: string): Promise<void> {
-    return invoke('add_custom_java_path', { path });
+    return invokeCommand('add_custom_java_path', { path });
   },
 
   async removeCustomJavaPath(path: string): Promise<void> {
-    return invoke('remove_custom_java_path', { path });
+    return invokeCommand('remove_custom_java_path', { path });
   },
 
   async checkJavaCompatibility(mcVersion: string): Promise<JavaCompatibilityResult> {
-    return invoke<JavaCompatibilityResult>('check_java_compatibility', { mcVersion });
+    return invokeCommand<JavaCompatibilityResult>('check_java_compatibility', { mcVersion });
   },
 };
 
@@ -229,7 +231,7 @@ export const configApi = {
   },
 
   async setGameDir(path: string): Promise<void> {
-    await withGameDirInfoInvalidation(() => invoke('set_game_dir', { path }));
+    await withGameDirInfoInvalidation(() => invokeCommand('set_game_dir', { path }));
   },
 
   async getGameDirInfo(): Promise<GameDirInfo> {
@@ -245,7 +247,7 @@ export const configApi = {
   },
 
   async setDownloadThreads(threads: number): Promise<void> {
-    return invoke('set_download_threads', { threads });
+    return invokeCommand('set_download_threads', { threads });
   },
 
   async getProxySettings(): Promise<ProxySettings> {
@@ -254,14 +256,14 @@ export const configApi = {
 
   /** 后端会校验并规范化地址，保存后立即重建共享 HTTP 客户端 */
   async setProxySettings(settings: ProxySettings): Promise<ProxySettings> {
-    const applied = await invoke<ProxySettings>('set_proxy_settings', { settings });
+    const applied = await invokeCommand<ProxySettings>('set_proxy_settings', { settings });
     cache.deleteByPrefix(CacheKeys.CONFIG);
     return applied;
   },
 
   /** 按传入设置临时建客户端测试，不保存配置 */
   async testProxy(settings: ProxySettings): Promise<ProxyTestResult> {
-    return invoke<ProxyTestResult>('test_proxy', { settings });
+    return invokeCommand<ProxyTestResult>('test_proxy', { settings });
   },
 
   async loadConfigKey(key: string): Promise<string | null> {
@@ -269,7 +271,7 @@ export const configApi = {
   },
 
   async saveConfigKey(key: string, value: string): Promise<void> {
-    await invoke('save_config_key', { key, value });
+    await invokeCommand('save_config_key', { key, value });
     cache.deleteByPrefix(CacheKeys.CONFIG);
   },
 
@@ -278,14 +280,14 @@ export const configApi = {
   },
 
   async setLastSelectedVersion(version: string): Promise<void> {
-    return invoke('set_last_selected_version', { version });
+    return invokeCommand('set_last_selected_version', { version });
   },
 
   async getMemoryStats(): Promise<MemoryStats> {
     // 占用要实时读，不能缓存；sysinfo 冷启动第一次可能返回 0，补一次
-    let stats = await invoke<MemoryStats>('get_memory_stats');
+    let stats = await invokeCommand<MemoryStats>('get_memory_stats');
     if (!stats.total_memory_mb) {
-      stats = await invoke<MemoryStats>('get_memory_stats');
+      stats = await invokeCommand<MemoryStats>('get_memory_stats');
     }
     return stats;
   },
@@ -295,19 +297,19 @@ export const configApi = {
   },
 
   async setWindowSettings(width: number | null, height: number | null, fullscreen: boolean): Promise<void> {
-    return invoke('set_window_settings', { width, height, fullscreen });
+    return invokeCommand('set_window_settings', { width, height, fullscreen });
   },
 
   async getJvmAdvancedOptions(): Promise<JvmAdvancedOptions> {
-    return invoke<JvmAdvancedOptions>('get_jvm_advanced_options');
+    return invokeCommand<JvmAdvancedOptions>('get_jvm_advanced_options');
   },
 
   async setJvmAdvancedOptions(options: JvmAdvancedOptions): Promise<void> {
-    return invoke('set_jvm_advanced_options', { options });
+    return invokeCommand('set_jvm_advanced_options', { options });
   },
 
   async getEffectiveJvmArgs(memoryMb?: number): Promise<string[]> {
-    return invoke<string[]>('get_effective_jvm_args', { memoryMb: memoryMb ?? null });
+    return invokeCommand<string[]>('get_effective_jvm_args', { memoryMb: memoryMb ?? null });
   },
 
   async checkMemoryWarning(memoryMb: number): Promise<string | null> {
@@ -321,7 +323,7 @@ export const userApi = {
   },
 
   async setSavedUsername(username: string): Promise<void> {
-    return invoke('set_saved_username', { username });
+    return invokeCommand('set_saved_username', { username });
   },
 
   async getSavedUuid(): Promise<string | null> {
@@ -329,7 +331,7 @@ export const userApi = {
   },
 
   async setSavedUuid(uuid: string): Promise<void> {
-    return invoke('set_saved_uuid', { uuid });
+    return invokeCommand('set_saved_uuid', { uuid });
   },
 
   async getAuthStatus(): Promise<AuthStatus> {
@@ -337,43 +339,43 @@ export const userApi = {
   },
 
   async startMicrosoftLogin(): Promise<DeviceCodeDisplay> {
-    return invoke<DeviceCodeDisplay>('start_microsoft_login');
+    return invokeCommand<DeviceCodeDisplay>('start_microsoft_login');
   },
 
   /** 轮询等待用户授权 */
   async completeMicrosoftLogin(): Promise<MicrosoftLoginResult> {
-    return invoke<MicrosoftLoginResult>('complete_microsoft_login');
+    return invokeCommand<MicrosoftLoginResult>('complete_microsoft_login');
   },
 
   /** Authorization Code + PKCE 流程，返回浏览器授权 URL */
   async startMicrosoftAuthCodeLogin(): Promise<string> {
-    return invoke<string>('start_microsoft_auth_code_login');
+    return invokeCommand<string>('start_microsoft_auth_code_login');
   },
 
   /** 等浏览器回调，而非轮询 */
   async completeMicrosoftAuthCodeLogin(): Promise<MicrosoftLoginResult> {
-    return invoke<MicrosoftLoginResult>('complete_microsoft_auth_code_login');
+    return invokeCommand<MicrosoftLoginResult>('complete_microsoft_auth_code_login');
   },
 
   async cancelMicrosoftLogin(): Promise<void> {
-    return invoke('cancel_microsoft_login');
+    return invokeCommand('cancel_microsoft_login');
   },
 
   async refreshMicrosoftAuth(): Promise<MicrosoftLoginResult> {
-    return invoke<MicrosoftLoginResult>('refresh_microsoft_auth');
+    return invokeCommand<MicrosoftLoginResult>('refresh_microsoft_auth');
   },
 
   /** 换皮肤不会触发 token 刷新，需用已存 access_token 重新取地址 */
   async refreshSkinUrl(): Promise<string | null> {
-    return invoke<string | null>('refresh_skin_url');
+    return invokeCommand<string | null>('refresh_skin_url');
   },
 
   async logoutMicrosoft(): Promise<void> {
-    return invoke('logout_microsoft');
+    return invokeCommand('logout_microsoft');
   },
 
   async setAuthType(authType: string): Promise<void> {
-    return invoke('set_auth_type', { authType });
+    return invokeCommand('set_auth_type', { authType });
   },
 };
 
@@ -387,7 +389,15 @@ export const modpackApi = {
     offset?: number;
     sortBy?: string;
   }): Promise<ModrinthSearchResult> {
-    return dedupedInvoke<ModrinthSearchResult>('search_modrinth_modpacks', params);
+    return dedupedInvoke<ModrinthSearchResult>('search_modrinth_modpacks', {
+      query: params.query,
+      gameVersions: params.gameVersions,
+      loaders: params.loaders,
+      categories: params.categories,
+      limit: params.limit,
+      offset: params.offset,
+      sortBy: params.sortBy,
+    });
   },
 
   async getModrinthModpackVersions(
@@ -408,11 +418,11 @@ export const modpackApi = {
     instance_name: string;
     install_path: string;
   }): Promise<void> {
-    return withGameDirInfoInvalidation(() => invoke('install_modrinth_modpack', { options }));
+    return withGameDirInfoInvalidation(() => invokeCommand('install_modrinth_modpack', { options }));
   },
 
   async cancelModpackInstall(): Promise<void> {
-    return invoke('cancel_modpack_install');
+    return invokeCommand('cancel_modpack_install');
   },
 };
 

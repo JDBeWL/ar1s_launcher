@@ -25,6 +25,27 @@ pub(crate) fn reload() {
 }
 
 fn create_client(max_connections_per_host: usize) -> reqwest::Client {
+    match crate::services::proxy::apply(client_builder(max_connections_per_host)).build() {
+        Ok(client) => client,
+        Err(error) => {
+            log::error!(
+                "创建下载 HTTP 客户端失败，回退为不启用代理的客户端: {}",
+                error
+            );
+            client_builder(max_connections_per_host)
+                .build()
+                .unwrap_or_else(|fallback_error| {
+                    log::error!(
+                        "创建默认下载 HTTP 客户端仍失败，使用 reqwest 默认值: {}",
+                        fallback_error
+                    );
+                    reqwest::Client::new()
+                })
+        }
+    }
+}
+
+fn client_builder(max_connections_per_host: usize) -> reqwest::ClientBuilder {
     let mut default_headers = reqwest::header::HeaderMap::new();
     default_headers.insert(
         reqwest::header::USER_AGENT,
@@ -37,18 +58,14 @@ fn create_client(max_connections_per_host: usize) -> reqwest::Client {
         reqwest::header::HeaderValue::from_static("identity"),
     );
 
-    crate::services::proxy::apply(
-        reqwest::Client::builder()
-            .default_headers(default_headers)
-            .no_gzip()
-            .no_brotli()
-            .no_deflate()
-            .pool_max_idle_per_host(max_connections_per_host * 4)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .tcp_keepalive(Some(Duration::from_secs(60)))
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(300)),
-    )
-    .build()
-    .expect("Failed to create HTTP client")
+    reqwest::Client::builder()
+        .default_headers(default_headers)
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .pool_max_idle_per_host(max_connections_per_host * 4)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .tcp_keepalive(Some(Duration::from_secs(60)))
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(300))
 }

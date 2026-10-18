@@ -7,27 +7,19 @@ use crate::models::modpack::*;
 use crate::services::modpack_installer;
 
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 pub async fn search_modrinth_modpacks(
     query: Option<String>,
     game_versions: Option<Vec<String>>,
-    // 兼容前端可能传来的不同命名
-    versions: Option<Vec<String>>,
-    game_version: Option<String>,
     loaders: Option<Vec<String>>,
     categories: Option<Vec<String>>,
     limit: Option<u32>,
     offset: Option<u32>,
     sort_by: Option<String>,
 ) -> Result<ModrinthSearchResponse, LauncherError> {
-    let merged_versions = game_versions
-        .or(versions)
-        .or_else(|| game_version.map(|single| vec![single]));
-
     modpack_installer::get_installer()
         .search_modpacks(
             query,
-            merged_versions,
+            game_versions,
             loaders,
             categories,
             limit,

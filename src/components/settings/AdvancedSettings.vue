@@ -44,7 +44,7 @@ const gcOptions: { value: GcStrategy; title: string; subtitle: string }[] = [
 const gcArgsPreview = computed(() => {
   switch (options.value.gcStrategy) {
     case 'g1':
-      return '-XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50';
+      return '-XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1HeapRegionSize=32M -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50';
     case 'parallel':
       return '-XX:+UseParallelGC';
     case 'serial':

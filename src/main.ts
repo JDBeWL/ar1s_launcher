@@ -5,7 +5,7 @@ import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from './App.vue';
 import router from './router';
-import { logError } from './utils/logger';
+import { installGlobalErrorHandlers } from './utils/globalErrors';
 
 // 字体全部自托管，@font-face 与度量覆盖见 style.css；别导入 @fontsource 的 CSS 入口，那组同名规则没有度量覆盖会互相干扰
 import './style.css';
@@ -19,12 +19,10 @@ if (import.meta.env.PROD) {
 }
 
 const app = createApp(App);
-
-app.config.errorHandler = (err, _instance, info) => {
-  logError('Unhandled Vue error', err, info);
-};
+const pinia = createPinia();
 
 app.use(vuetify);
-app.use(createPinia());
+app.use(pinia);
 app.use(router);
+installGlobalErrorHandlers(app);
 app.mount('#root');
