@@ -16,7 +16,7 @@ where
         .map_err(|e| LauncherError::Custom(format!("后台任务执行失败: {}", e)))?
 }
 
-#[tauri::command(rename = "get_config")]
+#[tauri::command]
 pub fn get_config() -> Result<GameConfig, LauncherError> {
     let mut config = (*config::load_config()?).clone();
     // token 只给后端用；界面要登录态就查 get_auth_status
@@ -66,34 +66,13 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
 }
 
 #[tauri::command]
-pub async fn get_total_memory() -> Result<u64, LauncherError> {
-    run_blocking(|| Ok(config::get_total_memory())).await
+pub async fn get_memory_stats() -> Result<crate::services::memory::MemoryStats, LauncherError> {
+    run_blocking(|| Ok(crate::services::memory::get_system_memory())).await
 }
 
 #[tauri::command]
 pub async fn check_memory_warning(memory_mb: u32) -> Result<Option<String>, LauncherError> {
     run_blocking(move || config::check_memory_warning(memory_mb)).await
-}
-
-#[tauri::command]
-pub fn get_auto_memory_config() -> Result<crate::services::memory::AutoMemoryConfig, LauncherError>
-{
-    config::get_auto_memory_config()
-}
-
-#[tauri::command]
-pub fn set_auto_memory_enabled(enabled: bool) -> Result<(), LauncherError> {
-    config::set_auto_memory_enabled(enabled)
-}
-
-#[tauri::command]
-pub async fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
-    run_blocking(config::auto_set_memory).await
-}
-
-#[tauri::command]
-pub async fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError> {
-    run_blocking(move || config::analyze_memory_efficiency(memory_mb)).await
 }
 
 #[tauri::command]

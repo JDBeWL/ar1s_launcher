@@ -115,7 +115,6 @@ export const useDownloadStore = defineStore('download', () => {
       await api.version.cancelDownload();
     } catch (err) {
       logError('Failed to cancel download', err, 'DownloadStore');
-      // 回退到 emit 方式
       await emit('cancel-download');
     }
   }

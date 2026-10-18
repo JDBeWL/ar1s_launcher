@@ -112,7 +112,7 @@ pub struct GameConfig {
     pub java_path: Option<String>,
     #[serde(default)]
     pub custom_java_paths: Vec<String>,
-    #[serde(default = "default_false")]
+    #[serde(default = "default_true")]
     pub auto_match_java: bool,
     #[serde(default = "default_download_threads")]
     pub download_threads: u8,
@@ -160,7 +160,7 @@ impl Default for GameConfig {
             version_isolation: true,
             java_path: None,
             custom_java_paths: Vec::new(),
-            auto_match_java: false,
+            auto_match_java: true,
             download_threads: default_download_threads(),
             language: None,
             username: None,
@@ -284,13 +284,6 @@ pub struct DownloadJob {
     pub hash: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct InstanceConfig {
-    pub display_name: String,
-    pub minecraft_version: String,
-    pub created_at: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceInfo {
@@ -306,6 +299,18 @@ pub struct InstanceInfo {
     pub mod_count: Option<u32>,
     /// 整合包自带的封面图 URL，没有时前端回退到加载器图标
     pub icon_url: Option<String>,
+    /// 自动内存开启时，本实例启动预计分配的堆大小
+    pub auto_memory_mb: Option<u32>,
 }
 
 pub mod modpack;
+
+#[cfg(test)]
+mod tests {
+    use super::GameConfig;
+
+    #[test]
+    fn test_auto_match_java_is_enabled_by_default() {
+        assert!(GameConfig::default().auto_match_java);
+    }
+}

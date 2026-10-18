@@ -144,7 +144,7 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
     let config = load_config()?;
     let game_dir = PathBuf::from(&config.game_dir);
     let version_dir = game_dir.join("versions").join(&version_id);
-    let version_json_path = version_dir.join(format!("{}.json", &version_id));
+    let version_json_path = version_dir.join(format!("{}.json", version_id));
 
     let mut missing_files = Vec::new();
 
@@ -178,7 +178,7 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
     let main_game_jar_path = game_dir
         .join("versions")
         .join(&jar_version)
-        .join(format!("{}.jar", &jar_version));
+        .join(format!("{}.jar", jar_version));
 
     if !main_game_jar_path.exists() {
         info!("主游戏JAR文件不存在: {}", main_game_jar_path.display());
@@ -221,8 +221,16 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
         let ver_id = ver_json["id"].as_str().unwrap_or("unknown");
         if let Some(libraries) = ver_json["libraries"].as_array() {
             debug!("检查版本 {} 的 {} 个库", ver_id, libraries.len());
-            for lib in libraries {
-                check_library(lib, &libraries_base_dir, &mut missing_files);
+            for file in resolve_library_files(ver_json) {
+                let lib_path = libraries_base_dir.join(&file.relative_path);
+                if !lib_path.exists() {
+                    debug!(
+                        "库文件缺失: {} -> {}",
+                        file.relative_path,
+                        lib_path.display()
+                    );
+                    missing_files.push(format!("库文件不存在: {}", lib_path.display()));
+                }
             }
         } else {
             debug!("版本 {} 没有 libraries 数组", ver_id);
@@ -233,75 +241,5 @@ pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, L
     Ok(missing_files)
 }
 
-use crate::utils::minecraft::{
-    evaluate_rules, find_jar_version, get_mc_os_name, maven_name_to_path,
-};
-
-fn check_library(
-    lib: &serde_json::Value,
-    libraries_base_dir: &PathBuf,
-    missing_files: &mut Vec<String>,
-) {
-    let lib_name = lib
-        .get("name")
-        .and_then(|n| n.as_str())
-        .unwrap_or("unknown");
-
-    if let Some(natives) = lib.get("natives") {
-        let os_key = get_mc_os_name();
-
-        if let Some(os_classifier) = natives.get(os_key) {
-            if let Some(classifier_str) = os_classifier.as_str() {
-                let arch = if std::env::consts::ARCH.contains("64") {
-                    "64"
-                } else {
-                    "32"
-                };
-                let classifier = classifier_str.replace("${arch}", arch);
-
-                if let Some(artifact) = lib
-                    .get("downloads")
-                    .and_then(|d| d.get("classifiers"))
-                    .and_then(|c| c.get(&classifier))
-                {
-                    let lib_path = libraries_base_dir.join(artifact["path"].as_str().unwrap_or(""));
-                    if !lib_path.exists() {
-                        missing_files.push(format!("Natives库文件不存在: {}", lib_path.display()));
-                    }
-                }
-            }
-        }
-    } else {
-        if !evaluate_rules(lib.get("rules")) {
-            return;
-        }
-
-        if let Some(path) = lib
-            .get("downloads")
-            .and_then(|d| d.get("artifact"))
-            .and_then(|a| a.get("path"))
-            .and_then(|p| p.as_str())
-        {
-            let lib_path = libraries_base_dir.join(path);
-            if !lib_path.exists() {
-                debug!("库文件缺失: {} -> {}", lib_name, lib_path.display());
-                missing_files.push(format!("库文件不存在: {}", lib_path.display()));
-            }
-        } else {
-            // 没有 downloads.artifact.path，尝试从 name 构建路径
-            if let Some(name) = lib.get("name").and_then(|n| n.as_str()) {
-                if let Some(path) = maven_name_to_path(name, None, "jar") {
-                    let lib_path = libraries_base_dir.join(&path);
-                    if !lib_path.exists() {
-                        debug!(
-                            "库文件缺失 (从name构建): {} -> {}",
-                            name,
-                            lib_path.display()
-                        );
-                        missing_files.push(format!("库文件不存在: {}", lib_path.display()));
-                    }
-                }
-            }
-        }
-    }
-}
+use crate::utils::library::resolve_library_files;
+use crate::utils::minecraft::find_jar_version;

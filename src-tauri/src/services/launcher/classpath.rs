@@ -3,7 +3,8 @@
 //! 按 rules 挑库、优先 downloads.artifact.path 定位 jar，LaunchWrapper 主类下递归补依赖
 
 use crate::errors::LauncherError;
-use crate::utils::minecraft::{evaluate_rules, find_jar_version, maven_name_to_path};
+use crate::utils::library::resolve_library_files;
+use crate::utils::minecraft::find_jar_version;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -76,53 +77,6 @@ pub fn precheck_and_heal_library(
     }
 }
 
-enum Resolved {
-    Path(PathBuf),
-    Missing(String),
-    Skip,
-}
-
-/// 只取 common artifact：natives 的 classifier 由 natives.rs 解压，不该进 classpath。
-/// 带 natives 键的库照样有自己那份 common jar，跳过它会丢类（1.12.2 的 text2speech 就是这样）
-fn resolve_library(lib: &serde_json::Value, libraries_base_dir: &Path) -> Resolved {
-    if let Some(path) = lib["downloads"]
-        .get("artifact")
-        .and_then(|a| a.get("path"))
-        .and_then(|p| p.as_str())
-    {
-        let lib_path = libraries_base_dir.join(path);
-        return if lib_path.exists() {
-            Resolved::Path(lib_path)
-        } else {
-            Resolved::Missing(path.to_string())
-        };
-    }
-
-    let Some(name) = lib.get("name").and_then(|n| n.as_str()) else {
-        return Resolved::Skip;
-    };
-
-    // 有 downloads 却没 artifact，说明这条只贡献 classifier（jinput/twitch-platform），
-    // 按坐标硬拼一个 common jar 会把好端端的实例判成装坏了
-    if lib.get("downloads").is_some() {
-        return Resolved::Skip;
-    }
-
-    // 老格式（Forge 1.12 及更早的 install_profile）没有 downloads，只能按 maven 坐标拼；
-    // classifier 也认，和安装侧的 maven_name_to_path 保持一致
-    match maven_name_to_path(name, None, "jar") {
-        Some(rel) => {
-            let candidate = libraries_base_dir.join(&rel);
-            if candidate.exists() {
-                Resolved::Path(candidate)
-            } else {
-                Resolved::Missing(rel)
-            }
-        }
-        None => Resolved::Missing(format!("{}（坐标无法解析）", name)),
-    }
-}
-
 pub fn build_classpath(
     version_json: &serde_json::Value,
     libraries_base_dir: &Path,
@@ -133,23 +87,21 @@ pub fn build_classpath(
     let mut classpath = vec![];
     let mut missing: Vec<String> = vec![];
 
-    if let Some(libraries) = version_json["libraries"].as_array() {
-        for lib in libraries {
-            if !evaluate_rules(lib.get("rules")) {
-                continue;
-            }
+    for file in resolve_library_files(version_json) {
+        // natives 的 classifier 由 natives.rs 解压，不进 classpath
+        if file.is_native {
+            continue;
+        }
 
-            match resolve_library(lib, libraries_base_dir) {
-                Resolved::Path(path) => {
-                    emit(
-                        "log-debug",
-                        format!("添加到Classpath的库: {}", path.display()),
-                    );
-                    classpath.push(path);
-                }
-                Resolved::Missing(rel) => missing.push(rel),
-                Resolved::Skip => {}
-            }
+        let path = libraries_base_dir.join(&file.relative_path);
+        if path.exists() {
+            emit(
+                "log-debug",
+                format!("添加到Classpath的库: {}", path.display()),
+            );
+            classpath.push(path);
+        } else {
+            missing.push(file.relative_path);
         }
     }
 

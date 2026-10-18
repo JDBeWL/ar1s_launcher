@@ -13,10 +13,7 @@ use tauri::Emitter;
 use crate::errors::LauncherError;
 use crate::models::{GameConfig, GameDirInfo};
 use crate::services::credentials;
-use crate::services::memory::{
-    AutoMemoryConfig, DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB, DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
-    auto_set_memory_if_enabled, get_memory_warning_message, get_system_memory,
-};
+use crate::services::memory::get_memory_warning_message;
 use crate::utils::file_lock;
 
 static CONFIG_CACHE: std::sync::LazyLock<RwLock<Option<CachedConfig>>> =
@@ -279,7 +276,7 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         version_isolation: true,
         java_path: None,
         custom_java_paths: Vec::new(),
-        auto_match_java: false,
+        auto_match_java: true,
         download_threads: 8,
         language: Some("zh_cn".to_string()),
         username: None,
@@ -331,8 +328,7 @@ use crate::services::java::auto_detect_java;
 pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
     let _guard = lock_config()?;
     let _file_lock = file_lock::acquire(&config_lock_path(), CONFIG_LOCK_TIMEOUT)?;
-    // 读取路径回写时只负责把已有 token 存起来；没有 token 不代表要登出，
-    // 不能顺手清掉另一实例刚写入的 credentials.json
+    // 没有 token 不代表登出，别清掉另一实例刚写入的 credentials.json
     let write_credentials = has_tokens(config);
     save_config_internal(config, write_credentials)?;
     cache_config(Arc::new(config.clone()));
@@ -709,51 +705,9 @@ pub fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
     set_config_value(|config| config.download_threads = threads)
 }
 
-/// 单位：MB
-pub fn get_total_memory() -> u64 {
-    let stats = get_system_memory();
-    stats.total_memory_mb
-}
-
 /// 超过系统内存 90% 时返回警告文案
 pub fn check_memory_warning(memory_mb: u32) -> Result<Option<String>, LauncherError> {
     Ok(get_memory_warning_message(memory_mb))
-}
-
-pub fn get_auto_memory_config() -> Result<AutoMemoryConfig, LauncherError> {
-    let config = load_config()?;
-    let auto_config = AutoMemoryConfig {
-        enabled: config.auto_memory_enabled,
-        max_limit_mb: DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB,
-        safety_margin_percent: DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
-    };
-    Ok(auto_config)
-}
-
-pub fn set_auto_memory_enabled(enabled: bool) -> Result<(), LauncherError> {
-    set_config_value(|config| config.auto_memory_enabled = enabled)
-}
-
-pub fn auto_set_memory() -> Result<Option<u32>, LauncherError> {
-    let config = load_config()?;
-    let auto_config = AutoMemoryConfig {
-        enabled: config.auto_memory_enabled,
-        max_limit_mb: DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB,
-        safety_margin_percent: DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
-    };
-
-    if !auto_config.enabled {
-        return Ok(None);
-    }
-
-    let recommended_memory = auto_set_memory_if_enabled(&auto_config);
-    Ok(recommended_memory)
-}
-
-pub fn analyze_memory_efficiency(memory_mb: u32) -> Result<String, LauncherError> {
-    Ok(crate::services::memory::analyze_memory_efficiency(
-        memory_mb,
-    ))
 }
 
 pub fn update_instance_last_played(instance_name: &str) -> Result<(), LauncherError> {

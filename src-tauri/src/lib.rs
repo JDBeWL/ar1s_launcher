@@ -8,7 +8,6 @@ mod models;
 pub mod services;
 pub mod utils;
 pub use errors::LauncherError;
-pub use models::*;
 pub use services::config::{load_config, save_config, update_config};
 pub use services::launcher::launch_minecraft;
 use utils::logger::setup_logger;
@@ -55,12 +54,8 @@ pub fn run() {
             controllers::auth_controller::refresh_skin_url,
             controllers::auth_controller::logout_microsoft,
             controllers::auth_controller::set_auth_type,
-            controllers::config_controller::get_total_memory,
+            controllers::config_controller::get_memory_stats,
             controllers::config_controller::check_memory_warning,
-            controllers::config_controller::get_auto_memory_config,
-            controllers::config_controller::set_auto_memory_enabled,
-            controllers::config_controller::auto_set_memory,
-            controllers::config_controller::analyze_memory_efficiency,
             controllers::config_controller::get_window_settings,
             controllers::config_controller::set_window_settings,
             controllers::config_controller::get_jvm_advanced_options,

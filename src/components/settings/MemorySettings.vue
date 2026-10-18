@@ -1,23 +1,40 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useSettingsStore } from '../../stores/settings';
 import { configApi } from '../../services';
 import { logError } from '../../utils/logger';
 
 const settingsStore = useSettingsStore();
 const memoryWarning = ref('');
-const autoMemoryEnabled = ref(false);
-const memoryEfficiency = ref('');
-const isInitialized = ref(false);
 
+const autoMemoryEnabled = computed(() => settingsStore.autoMemoryEnabled);
 const totalMemoryGB = computed(() => (settingsStore.totalMemoryMB / 1024).toFixed(1));
+const usedMemoryGB = computed(() => (settingsStore.usedMemoryMB / 1024).toFixed(1));
+const availableMemoryGB = computed(() => (settingsStore.availableMemoryMB / 1024).toFixed(1));
 const maxMemoryGB = computed(() => (settingsStore.maxMemory / 1024).toFixed(1));
 const memoryPercentage = computed(() =>
   settingsStore.totalMemoryMB > 0 ? Math.round((settingsStore.maxMemory / settingsStore.totalMemoryMB) * 100) : 0,
 );
+const projectedUsedMB = computed(() => settingsStore.usedMemoryMB + settingsStore.maxMemory);
+const projectedUsedGB = computed(() => (projectedUsedMB.value / 1024).toFixed(1));
+const projectedPercent = computed(() =>
+  settingsStore.totalMemoryMB > 0 ? Math.round((projectedUsedMB.value / settingsStore.totalMemoryMB) * 100) : 0,
+);
+const projectedBarPercent = computed(() => Math.min(100, Math.max(0, projectedPercent.value)));
+const projectedColor = computed(() => {
+  if (projectedPercent.value > 100) return 'error';
+  if (projectedPercent.value >= 90) return 'warning';
+  return 'primary';
+});
+const projectedWarning = computed(() => {
+  if (settingsStore.totalMemoryMB <= 0) return '';
+  if (projectedPercent.value > 100) return '预计占用会超过物理内存，可能导致系统卡顿或游戏崩溃';
+  if (projectedPercent.value >= 90) return '启动后预计占用接近系统上限，建议降低分配或关闭其他程序';
+  return '';
+});
 
-// 给系统留出 4GB，避免分配值可以拉到物理内存总量导致整机卡死
-const maxAllocatableMB = computed(() => Math.max(512, settingsStore.totalMemoryMB - 4096));
+// 手动模式上限就是物理内存总量，分配过高的风险由「预计占用」提示承担
+const maxAllocatableMB = computed(() => Math.max(512, settingsStore.totalMemoryMB));
 
 function clampMaxMemory() {
   const raw = Number(settingsStore.maxMemory);
@@ -27,6 +44,10 @@ function clampMaxMemory() {
 }
 
 async function checkMemoryWarning() {
+  if (settingsStore.autoMemoryEnabled) {
+    memoryWarning.value = '';
+    return;
+  }
   try {
     const warning = await configApi.checkMemoryWarning(settingsStore.maxMemory);
     memoryWarning.value = warning || '';
@@ -36,45 +57,13 @@ async function checkMemoryWarning() {
   }
 }
 
-async function loadAutoMemoryConfig() {
-  try {
-    const config = await configApi.getAutoMemoryConfig();
-    autoMemoryEnabled.value = config.enabled;
-  } catch (err) {
-    logError('Failed to load auto memory config', err, 'MemorySettings');
-  }
-}
-
-async function toggleAutoMemory() {
-  try {
-    await configApi.setAutoMemoryEnabled(autoMemoryEnabled.value);
-    if (autoMemoryEnabled.value) {
-      await applyAutoMemory();
-    }
-  } catch (err) {
-    logError('Failed to toggle auto memory', err, 'MemorySettings');
-  }
-}
-
-async function applyAutoMemory() {
-  try {
-    const recommendedMemory = await configApi.autoSetMemory();
-    if (recommendedMemory !== null && recommendedMemory !== undefined) {
-      settingsStore.maxMemory = recommendedMemory;
-      await settingsStore.saveMaxMemory();
-      await analyzeMemoryEfficiency();
-    }
-  } catch (err) {
-    logError('Failed to apply auto memory', err, 'MemorySettings');
-  }
-}
-
-async function analyzeMemoryEfficiency() {
-  try {
-    memoryEfficiency.value = await configApi.analyzeMemoryEfficiency(settingsStore.maxMemory);
-  } catch (err) {
-    logError('Failed to analyze memory efficiency', err, 'MemorySettings');
-    memoryEfficiency.value = '';
+async function toggleAutoMemory(value: boolean | null) {
+  settingsStore.autoMemoryEnabled = value === true;
+  await settingsStore.saveAutoMemoryEnabled();
+  if (settingsStore.autoMemoryEnabled) {
+    memoryWarning.value = '';
+  } else {
+    await checkMemoryWarning();
   }
 }
 
@@ -85,23 +74,23 @@ function setPresetMemory(mb: number) {
 
 watch(
   () => settingsStore.maxMemory,
-  async () => {
-    await checkMemoryWarning();
-    await analyzeMemoryEfficiency();
+  () => {
+    if (!settingsStore.autoMemoryEnabled) void checkMemoryWarning();
   },
 );
 
-watch(autoMemoryEnabled, async () => {
-  if (!isInitialized.value) return;
-  await toggleAutoMemory();
-});
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
 onMounted(async () => {
   await settingsStore.loadSystemMemory();
   await settingsStore.loadSettings();
-  await loadAutoMemoryConfig();
-  await analyzeMemoryEfficiency();
-  isInitialized.value = true;
+  await checkMemoryWarning();
+  // 手动分配时占用会变，页面停留期间每 5 秒刷新一次实际占用
+  refreshTimer = setInterval(() => void settingsStore.loadSystemMemory(), 5000);
+});
+
+onUnmounted(() => {
+  if (refreshTimer !== undefined) clearInterval(refreshTimer);
 });
 </script>
 
@@ -123,14 +112,22 @@ onMounted(async () => {
           </v-col>
           <v-col cols="12" sm="4">
             <div class="memory-stat text-center pa-4">
-              <div class="text-headline-medium font-weight-bold text-secondary num-mono">{{ maxMemoryGB }}</div>
-              <div class="text-body-medium text-on-surface-variant">分配给游戏 (GB)</div>
+              <div class="text-headline-medium font-weight-bold text-secondary num-mono">
+                {{ autoMemoryEnabled ? '自动' : maxMemoryGB }}
+              </div>
+              <div class="text-body-medium text-on-surface-variant">
+                {{ autoMemoryEnabled ? '启动时按实例计算' : '分配给游戏 (GB)' }}
+              </div>
             </div>
           </v-col>
           <v-col cols="12" sm="4">
             <div class="memory-stat text-center pa-4">
-              <div class="text-headline-medium font-weight-bold text-info num-mono">{{ memoryPercentage }}%</div>
-              <div class="text-body-medium text-on-surface-variant">占用比例</div>
+              <div class="text-headline-medium font-weight-bold text-info num-mono">
+                {{ autoMemoryEnabled ? '—' : memoryPercentage + '%' }}
+              </div>
+              <div class="text-body-medium text-on-surface-variant">
+                {{ autoMemoryEnabled ? '启动时计算' : '占用比例' }}
+              </div>
             </div>
           </v-col>
         </v-row>
@@ -145,23 +142,26 @@ onMounted(async () => {
             <span class="text-title-medium">自动内存管理</span>
           </div>
           <v-switch
-            v-model="autoMemoryEnabled"
+            :model-value="autoMemoryEnabled"
             aria-label="自动内存管理"
             hide-details
             inset
             density="compact"
             color="primary"
+            @update:model-value="toggleAutoMemory"
           />
         </div>
-        <p class="text-body-medium text-on-surface-variant mb-0">根据系统可用内存自动设置最佳值，上限 8.5GB</p>
+        <p class="text-body-medium text-on-surface-variant mb-0">
+          默认目标 4 GB，按实例规模抬高；最多使用当前可用内存的 75%，范围 2–16 GB
+        </p>
 
         <v-expand-transition>
           <div v-if="autoMemoryEnabled" class="mt-4">
             <v-alert color="primary-container" density="compact">
-              <div class="d-flex align-center justify-space-between num-mono">
-                <span class="text-on-primary-container">当前自动分配: {{ settingsStore.maxMemory }} MB</span>
-                <v-btn size="small" variant="text" color="primary" @click="applyAutoMemory"> 重新计算 </v-btn>
-              </div>
+              <span class="text-on-primary-container text-body-medium">
+                启动时动态计算 -Xmx/-Xms：默认 4 GB，最少 2 GB、最多 16 GB，上限为当前可用内存的 75%；32 位 Java 硬上限
+                1.5 GB。每张实例卡片会显示预计分配值，手动设置值关闭自动后继续使用。
+              </span>
             </v-alert>
           </div>
         </v-expand-transition>
@@ -173,6 +173,36 @@ onMounted(async () => {
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-tune-vertical</v-icon>
           <span class="text-title-medium">手动设置</span>
+        </div>
+
+        <div class="memory-usage mb-5">
+          <div class="d-flex justify-space-between align-center text-body-small mb-1">
+            <span class="text-on-surface-variant">系统当前占用</span>
+            <span class="num-mono">
+              {{ usedMemoryGB }} / {{ totalMemoryGB }} GB（{{ Math.round(settingsStore.memoryUsagePercent) }}%）
+            </span>
+          </div>
+          <div class="d-flex justify-space-between align-center text-body-small mb-1">
+            <span class="text-on-surface-variant">当前可用内存</span>
+            <span class="num-mono">{{ availableMemoryGB }} GB</span>
+          </div>
+          <div class="d-flex justify-space-between align-center text-body-small mb-1">
+            <span class="text-on-surface-variant">游戏预计占用</span>
+            <span class="num-mono">{{ maxMemoryGB }} GB</span>
+          </div>
+          <div class="d-flex justify-space-between align-center text-body-small">
+            <span class="text-on-surface-variant">启动后预计系统占用</span>
+            <span class="num-mono">{{ projectedUsedGB }} / {{ totalMemoryGB }} GB（{{ projectedPercent }}%）</span>
+          </div>
+          <v-progress-linear
+            :model-value="projectedBarPercent"
+            :color="projectedColor"
+            bg-color="surface-container-highest"
+            height="8"
+            rounded
+            class="mt-3"
+          />
+          <div v-if="projectedWarning" class="text-body-small text-warning mt-2">{{ projectedWarning }}</div>
         </div>
 
         <div class="mb-5">
@@ -227,21 +257,12 @@ onMounted(async () => {
       </v-card-text>
     </v-card>
 
-    <div v-if="memoryWarning || memoryEfficiency" class="mb-4">
-      <v-alert v-if="memoryWarning" color="warning-container" density="compact" class="mb-2">
-        <template #prepend>
-          <v-icon color="on-warning-container">mdi-alert-outline</v-icon>
-        </template>
-        <span class="text-on-warning-container">{{ memoryWarning }}</span>
-      </v-alert>
-
-      <v-alert v-if="memoryEfficiency" color="secondary-container" density="compact">
-        <template #prepend>
-          <v-icon color="on-secondary-container">mdi-lightbulb-outline</v-icon>
-        </template>
-        <span class="text-on-secondary-container">{{ memoryEfficiency }}</span>
-      </v-alert>
-    </div>
+    <v-alert v-if="memoryWarning" color="warning-container" density="compact" class="mb-4">
+      <template #prepend>
+        <v-icon color="on-warning-container">mdi-alert-outline</v-icon>
+      </template>
+      <span class="text-on-warning-container">{{ memoryWarning }}</span>
+    </v-alert>
 
     <v-alert color="secondary-container" class="tip-alert">
       <template #prepend>
@@ -254,7 +275,7 @@ onMounted(async () => {
         <li>原版游戏: 2-4 GB</li>
         <li>轻量整合包: 4-6 GB</li>
         <li>大型整合包: 6-8 GB</li>
-        <li>建议保留至少 2GB 给系统使用</li>
+        <li>自动模式默认按 4 GB 目标分配，大型整合包会按需求抬高；最多使用当前可用内存的 75%（上限 16 GB）</li>
       </ul>
     </v-alert>
   </div>

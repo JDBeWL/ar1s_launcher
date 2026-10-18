@@ -10,17 +10,24 @@ import { logError } from '../utils/logger';
 export const useSettingsStore = defineStore('settings', () => {
   const maxMemory = ref(4096);
   const totalMemoryMB = ref(0);
+  const usedMemoryMB = ref(0);
+  const availableMemoryMB = ref(0);
+  const memoryUsagePercent = ref(0);
   const downloadMirror = ref('bmcl');
   const javaInstallations = ref<string[]>([]);
   const hasFoundJavaInstallations = ref(false);
-  const autoMatchJava = ref(false);
+  const autoMatchJava = ref(true);
+  const autoMemoryEnabled = ref(false);
 
   async function loadSystemMemory() {
     try {
-      const mb = await configApi.getTotalMemory();
-      if (mb > 0) totalMemoryMB.value = mb;
+      const stats = await configApi.getMemoryStats();
+      if (stats.total_memory_mb > 0) totalMemoryMB.value = stats.total_memory_mb;
+      usedMemoryMB.value = stats.used_memory_mb;
+      availableMemoryMB.value = stats.available_memory_mb;
+      memoryUsagePercent.value = stats.memory_usage_percent;
     } catch (err) {
-      logError('Failed to get total memory', err, 'SettingsStore');
+      logError('Failed to get memory stats', err, 'SettingsStore');
     }
   }
 
@@ -34,6 +41,7 @@ export const useSettingsStore = defineStore('settings', () => {
         downloadMirror.value = config.download_mirror;
       }
       autoMatchJava.value = config.auto_match_java;
+      autoMemoryEnabled.value = config.auto_memory_enabled;
     } catch (err) {
       logError('Failed to load settings', err, 'SettingsStore');
     }
@@ -75,18 +83,31 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  async function saveAutoMemoryEnabled() {
+    try {
+      await configApi.saveConfigKey('autoMemoryEnabled', autoMemoryEnabled.value.toString());
+    } catch (err) {
+      logError('Failed to save auto memory setting', err, 'SettingsStore');
+    }
+  }
+
   return {
     maxMemory,
     totalMemoryMB,
+    usedMemoryMB,
+    availableMemoryMB,
+    memoryUsagePercent,
     downloadMirror,
     javaInstallations,
     hasFoundJavaInstallations,
     autoMatchJava,
+    autoMemoryEnabled,
     loadSystemMemory,
     loadSettings,
     saveMaxMemory,
     saveDownloadMirror,
     findJavaInstallations,
     saveAutoMatchJava,
+    saveAutoMemoryEnabled,
   };
 });

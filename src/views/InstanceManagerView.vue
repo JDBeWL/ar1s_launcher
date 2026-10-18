@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import InstanceCard from '../components/instance/InstanceCard.vue';
 import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
@@ -93,6 +93,10 @@ function instanceMeta(instance: GameInstance): string {
 
   if (instance.modCount) {
     parts.push(`${instance.modCount} Mods`);
+  }
+
+  if (instance.autoMemoryMb) {
+    parts.push(`自动内存 ≈ ${(instance.autoMemoryMb / 1024).toFixed(1)} GB`);
   }
 
   return parts.join(' · ');
@@ -227,18 +231,32 @@ function formatModSize(bytes: number): string {
 watch(viewMode, (v) => localStorage.setItem('instanceViewMode', v));
 watch(sortBy, (v) => localStorage.setItem('instanceSortBy', v));
 
+async function loadIsolationSetting() {
+  try {
+    const value = await configApi.loadConfigKey('versionIsolation');
+    if (value !== null) versionIsolation.value = value === 'true';
+  } catch (err) {
+    logError('Failed to load isolation setting', err, 'InstanceManagerView');
+  }
+}
+
+function handleWindowFocus() {
+  void loadInstances();
+  void loadIsolationSetting();
+}
+
 onMounted(() => {
   const searchParam = route.query.search;
   if (searchParam && typeof searchParam === 'string') {
     searchQuery.value = searchParam;
   }
-  configApi
-    .loadConfigKey('versionIsolation')
-    .then((value) => {
-      if (value !== null) versionIsolation.value = value === 'true';
-    })
-    .catch((err) => logError('Failed to load isolation setting', err, 'InstanceManagerView'));
+  void loadIsolationSetting();
   loadInstances();
+  window.addEventListener('focus', handleWindowFocus);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('focus', handleWindowFocus);
 });
 </script>
 

@@ -11,7 +11,6 @@ const isJavaPathValid = ref(false);
 const loadingJava = ref(false);
 const javaVersion = ref('');
 const customJavaPaths = ref<string[]>([]);
-const autoMatchJava = ref(false);
 const inputJavaPath = ref('');
 
 watch(
@@ -38,21 +37,9 @@ async function loadJavaPath() {
   }
 }
 
-async function loadAutoMatchJava() {
-  try {
-    const val = await configApi.loadConfigKey('autoMatchJava');
-    autoMatchJava.value = val === 'true';
-  } catch (error) {
-    logError('Failed to load autoMatchJava', error, 'JavaSettings');
-  }
-}
-
-async function toggleAutoMatchJava() {
-  try {
-    await configApi.saveConfigKey('autoMatchJava', autoMatchJava.value.toString());
-  } catch (error) {
-    logError('Failed to save autoMatchJava', error, 'JavaSettings');
-  }
+async function toggleAutoMatchJava(value: boolean | null) {
+  settingsStore.autoMatchJava = value === true;
+  await settingsStore.saveAutoMatchJava();
 }
 
 async function loadCustomJavaPaths() {
@@ -204,7 +191,7 @@ async function loadDetectedJavaVersions() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadJavaPath(), loadCustomJavaPaths(), loadAutoMatchJava()]);
+  await Promise.all([loadJavaPath(), loadCustomJavaPaths(), settingsStore.loadSettings()]);
 
   if (!settingsStore.hasFoundJavaInstallations && settingsStore.javaInstallations.length === 0) {
     await findJavaInstallations();
@@ -365,16 +352,16 @@ onMounted(async () => {
             </div>
           </div>
           <v-switch
-            v-model="autoMatchJava"
+            :model-value="settingsStore.autoMatchJava"
             aria-label="自动匹配 Java 版本"
             color="primary"
             hide-details
             inset
             density="compact"
-            @change="toggleAutoMatchJava"
+            @update:model-value="toggleAutoMatchJava"
           />
         </div>
-        <v-alert v-if="autoMatchJava" color="secondary-container" density="compact" class="mt-3">
+        <v-alert v-if="settingsStore.autoMatchJava" color="secondary-container" density="compact" class="mt-3">
           <template #prepend>
             <v-icon color="on-secondary-container" size="18">mdi-information-outline</v-icon>
           </template>

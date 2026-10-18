@@ -57,16 +57,6 @@ pub struct ModrinthDependency {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ModrinthSearchParams {
-    pub query: Option<String>,
-    pub game_versions: Option<Vec<String>>,
-    pub loaders: Option<Vec<String>>,
-    pub categories: Option<Vec<String>>,
-    pub limit: Option<u32>,
-    pub offset: Option<u32>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModrinthSearchResponse {
     pub hits: Vec<ModrinthModpack>,
     pub total_hits: u32,

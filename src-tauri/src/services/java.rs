@@ -643,7 +643,6 @@ pub async fn find_java_installations_command() -> Result<Vec<String>, LauncherEr
     log::info!("开始扫描 Java 安装路径...");
     let start_time = Instant::now();
 
-    // 磁盘扫描耗时，放阻塞线程池以免卡住异步运行时
     let paths = tokio::task::spawn_blocking(|| scan_java_installations_parallel())
         .await
         .map_err(|e| LauncherError::Custom(format!("Java 扫描任务失败: {}", e)))?;
@@ -666,7 +665,7 @@ pub fn find_java_installations_command_sync() -> Result<Vec<String>, LauncherErr
     }
 
     let paths = scan_java_installations_parallel();
-    // 扫一次几百毫秒，同步路径以前不回填缓存，导致每次选 Java 都要重扫一遍
+    // 扫一次几百毫秒，同步路径也回填缓存，选 Java 时不必重扫
     update_java_cache(paths.clone());
 
     Ok(paths)
@@ -755,7 +754,6 @@ fn scan_java_installations_parallel() -> Vec<String> {
         }
     }
 
-    // javapath 转发器换回真身，同一个 JVM 才不会在列表里出现两次
     let paths: Vec<String> = paths
         .into_iter()
         .map(|path| real_java_path(&path))
@@ -837,7 +835,6 @@ pub async fn validate_java_path(path: String) -> Result<bool, LauncherError> {
     Ok(exe.is_file() && is_valid_java_executable(&exe))
 }
 
-/// 获取 Java 版本信息，支持相对路径
 pub async fn get_java_version(path: String) -> Result<String, LauncherError> {
     // 走探测缓存：设置页会为每个已检测安装各问一次，缓存后第二次起是纯内存读取
     if let Some(probe) = probe_java(&path) {
@@ -988,7 +985,7 @@ mod tests {
         // 9 起直接是大版本
         assert_eq!(parse_major("17.0.8"), Some(17));
         assert_eq!(parse_major("21"), Some(21));
-        // 预览版：这里以前 `24-ea` 直接解析失败，候选被静默丢掉
+        // 预览版也要解析出来，否则 `24-ea` 这类候选被静默丢掉
         assert_eq!(parse_major("24-ea"), Some(24));
         assert_eq!(parse_major("23-ea+1-32"), Some(23));
         // 带 build 号与 LTS 尾巴
@@ -1008,7 +1005,7 @@ mod tests {
         assert_eq!(parse_arch("amd64"), JavaArch::Bits64);
         assert_eq!(parse_arch("x86_64"), JavaArch::Bits64);
         assert_eq!(parse_arch("aarch64"), JavaArch::Bits64);
-        // 32 位 JRE 是历史上最容易选错的一类：能起来但开不了大堆
+        // 32 位 JRE 最容易选错：能起来但开不了大堆
         assert_eq!(parse_arch("x86"), JavaArch::Bits32);
         assert_eq!(parse_arch("i386"), JavaArch::Bits32);
         assert_eq!(parse_arch(""), JavaArch::Unknown);

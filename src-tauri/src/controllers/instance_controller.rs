@@ -76,7 +76,7 @@ pub async fn set_mod_enabled(
     file_name: String,
     enabled: bool,
 ) -> Result<(), LauncherError> {
-    instance::set_mod_enabled(instance_name, file_name, enabled)
+    instance::set_mod_enabled(instance_name, file_name, enabled).await
 }
 
 #[tauri::command]
@@ -84,5 +84,5 @@ pub async fn delete_instance_mod(
     instance_name: String,
     file_name: String,
 ) -> Result<(), LauncherError> {
-    instance::delete_instance_mod(instance_name, file_name)
+    instance::delete_instance_mod(instance_name, file_name).await
 }

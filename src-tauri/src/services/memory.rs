@@ -1,6 +1,6 @@
 //! 内存测算与 JVM 参数模块
 //!
-//! 按系统内存与游戏版本给出推荐堆大小与超限告警，产出 -Xmx/-Xms、GC 策略与 Metaspace 参数
+//! 按系统可用内存、版本、加载器与模组规模计算启动堆大小，产出 -Xmx/-Xms、GC 策略与 Metaspace 参数
 
 use crate::errors::LauncherError;
 use crate::models::{GcStrategy, JvmAdvancedOptions};
@@ -19,23 +19,58 @@ pub struct MemoryStats {
     pub memory_usage_percent: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryRecommendation {
-    pub min_memory_mb: u32,
-    pub recommended_memory_mb: u32,
-    pub max_memory_mb: u32,
-    pub reason: String,
+pub const AUTO_MEMORY_MIN_MB: u32 = 2048;
+pub const AUTO_MEMORY_MAX_MB: u32 = 16384;
+
+const AUTO_MEMORY_DEFAULT_TARGET_MB: u32 = 4096;
+const AUTO_MEMORY_AVAILABLE_PERCENT: u32 = 75;
+const AUTO_MEMORY_32BIT_LIMIT_MB: u32 = 1536;
+const AUTO_MEMORY_STEP_MB: u32 = 256;
+
+#[derive(Debug, Clone)]
+pub struct AutoMemoryPlan {
+    pub memory_mb: u32,
+    /// 按实例规模算出的需求，不含默认目标
+    pub need_mb: u32,
+    /// 本次实际想要分配的值：max(需求, 4GB)
+    pub target_mb: u32,
+    pub cap_mb: u32,
+    pub base_mb: u32,
+    pub loader_mb: u32,
+    pub mods_mb: u32,
+    pub mod_count: usize,
+    pub available_memory_mb: u32,
+    pub is_32bit: bool,
+    pub clamped: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutoMemoryConfig {
-    pub enabled: bool,
-    pub max_limit_mb: u32,
-    pub safety_margin_percent: f32,
+impl AutoMemoryPlan {
+    pub fn describe(&self, version: &str, loader: &str) -> String {
+        let mut text = format!(
+            "自动内存 {} MB（{} / {}：版本基准 {} + 加载器 {} + {} 个模组 {} = 需求 {}，目标 {}；可用 {} MB，按 {}% 上限 {} MB",
+            self.memory_mb,
+            version,
+            loader,
+            self.base_mb,
+            self.loader_mb,
+            self.mod_count,
+            self.mods_mb,
+            self.need_mb,
+            self.target_mb,
+            self.available_memory_mb,
+            AUTO_MEMORY_AVAILABLE_PERCENT,
+            self.cap_mb
+        );
+        if self.clamped {
+            text.push_str("，已按上限压缩");
+        }
+        if self.is_32bit {
+            text.push_str("，32 位 Java");
+        }
+        text.push('）');
+        text
+    }
 }
-
-pub const DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB: u32 = 8500;
-pub const DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT: f32 = 20.0;
 
 pub fn get_system_memory() -> MemoryStats {
     let mut system = MEMORY_SYSTEM.lock().unwrap();
@@ -54,112 +89,90 @@ pub fn get_system_memory() -> MemoryStats {
     }
 }
 
-pub fn recommend_memory_for_game(version: &str, modded: bool) -> MemoryRecommendation {
-    let memory_stats = get_system_memory();
-    let total_memory_mb = memory_stats.total_memory_mb as u32;
+/// 每次启动时按系统当前可用内存和实例规模计算堆大小
+///
+/// 默认目标 4GB；大包按需求抬高。上限取可用内存的 75%，并限制在 2GB~16GB
+pub fn plan_auto_memory(
+    version: &str,
+    modded: bool,
+    mod_count: usize,
+    is_32bit: bool,
+) -> AutoMemoryPlan {
+    let stats = get_system_memory();
+    compute_auto_memory(
+        version,
+        modded,
+        mod_count,
+        stats.available_memory_mb as u32,
+        is_32bit,
+    )
+}
 
-    let base_memory = if crate::utils::minecraft::is_new_version(version) {
+pub fn compute_auto_memory(
+    version: &str,
+    modded: bool,
+    mod_count: usize,
+    available_memory_mb: u32,
+    is_32bit: bool,
+) -> AutoMemoryPlan {
+    let base_mb = version_base_mb(version);
+    let loader_mb = if modded { 512 } else { 0 };
+    let mods_mb = mods_extra_mb(mod_count);
+    let need_mb = base_mb + loader_mb + mods_mb;
+    let target_mb = need_mb.max(AUTO_MEMORY_DEFAULT_TARGET_MB);
+
+    let available_cap = available_memory_mb.saturating_mul(AUTO_MEMORY_AVAILABLE_PERCENT) / 100;
+    let mut cap_mb = available_cap.clamp(AUTO_MEMORY_MIN_MB, AUTO_MEMORY_MAX_MB);
+    // 32 位进程的地址空间是硬限制，无法满足 2GB 下限
+    if is_32bit {
+        cap_mb = cap_mb.min(AUTO_MEMORY_32BIT_LIMIT_MB);
+    }
+
+    let clamped = target_mb > cap_mb;
+    let floor_mb = if is_32bit {
+        AUTO_MEMORY_32BIT_LIMIT_MB
+    } else {
+        AUTO_MEMORY_MIN_MB
+    };
+    let memory_mb = target_mb.min(cap_mb).max(floor_mb) / AUTO_MEMORY_STEP_MB * AUTO_MEMORY_STEP_MB;
+
+    AutoMemoryPlan {
+        memory_mb,
+        need_mb,
+        target_mb,
+        cap_mb,
+        base_mb,
+        loader_mb,
+        mods_mb,
+        mod_count,
+        available_memory_mb,
+        is_32bit,
+        clamped,
+    }
+}
+
+fn version_base_mb(version: &str) -> u32 {
+    if crate::utils::minecraft::is_new_version(version) {
         2048
     } else if crate::utils::minecraft::is_mid_version(version) {
         1536
-    } else {
+    } else if crate::utils::minecraft::parse_mc_version(version).is_some() {
         1024
-    };
-
-    let mod_adjustment = if modded { 1024 } else { 0 };
-
-    let base_need = base_memory + mod_adjustment;
-
-    let min_memory = base_need.max(512);
-    let recommended = calculate_recommended_memory(total_memory_mb, base_need);
-    // max_memory 必须 >= recommended，否则推荐值没有意义
-    let max_memory = calculate_max_memory(total_memory_mb, base_need).max(recommended);
-
-    let reason = format!(
-        "系统总内存: {}MB, 游戏版本: {}, {}",
-        total_memory_mb,
-        version,
-        if modded { "模组版" } else { "原版" }
-    );
-
-    MemoryRecommendation {
-        min_memory_mb: min_memory,
-        recommended_memory_mb: recommended,
-        max_memory_mb: max_memory,
-        reason,
-    }
-}
-
-/// 只依据系统内存推荐，不考虑游戏版本与模组
-pub fn recommend_memory_by_system(config: &AutoMemoryConfig) -> MemoryRecommendation {
-    let memory_stats = get_system_memory();
-    let total_memory_mb = memory_stats.total_memory_mb as u32;
-    let available_memory_mb = memory_stats.available_memory_mb as u32;
-
-    let recommended = calculate_smart_memory(total_memory_mb, available_memory_mb, config);
-
-    let recommended = recommended.min(config.max_limit_mb);
-
-    let min_memory = 512;
-
-    let max_memory = (total_memory_mb as f32 * 0.7) as u32;
-
-    let reason = format!(
-        "智能推荐：系统总内存{}MB，可用内存{}MB，推荐设置{}MB{}",
-        total_memory_mb,
-        available_memory_mb,
-        recommended,
-        if recommended >= config.max_limit_mb {
-            format!("（已达到最大限制{}MB）", config.max_limit_mb)
-        } else {
-            String::new()
-        }
-    );
-
-    MemoryRecommendation {
-        min_memory_mb: min_memory,
-        recommended_memory_mb: recommended,
-        max_memory_mb: max_memory,
-        reason,
-    }
-}
-
-fn calculate_smart_memory(
-    total_memory: u32,
-    available_memory: u32,
-    config: &AutoMemoryConfig,
-) -> u32 {
-    let safe_available =
-        (available_memory as f32 * (1.0 - config.safety_margin_percent / 100.0)) as u32;
-
-    match total_memory {
-        t if t <= 4096 => (safe_available as f32 * 0.6) as u32,
-
-        t if t <= 8192 => (safe_available as f32 * 0.5) as u32,
-
-        t if t <= 16384 => (safe_available as f32 * 0.4) as u32,
-
-        _ => (safe_available as f32 * 0.35) as u32,
-    }
-    .max(1024)
-    .min(total_memory)
-}
-
-fn calculate_recommended_memory(total_memory: u32, base_need: u32) -> u32 {
-    if total_memory <= 4096 {
-        (total_memory as f32 * 0.4) as u32
-    } else if total_memory <= 8192 {
-        base_need.max(2048).min(3072)
-    } else if total_memory <= 16384 {
-        base_need.max(3072).min(6144)
     } else {
-        base_need.max(4096).min(8192)
+        // 版本号认不出时宁可多给，不要一启动就 OOM
+        2048
     }
 }
 
-fn calculate_max_memory(total_memory: u32, base_need: u32) -> u32 {
-    let max_safe = (total_memory as f32 * 0.7) as u32;
-    base_need.max(1024).min(max_safe)
+fn mods_extra_mb(count: usize) -> u32 {
+    match count {
+        0 => 0,
+        1..=30 => 512,
+        31..=80 => 1024,
+        81..=150 => 2048,
+        151..=250 => 3072,
+        _ => 4096,
+    }
 }
 
 /// 默认仅追加 G1GC 调优，其余维持官方启动器的最小参数集
@@ -317,47 +330,6 @@ pub fn is_memory_setting_safe(requested_memory_mb: u32) -> Result<bool, Launcher
     Ok(true)
 }
 
-pub fn get_default_auto_memory_config() -> AutoMemoryConfig {
-    AutoMemoryConfig {
-        enabled: false,
-        max_limit_mb: DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB,
-        safety_margin_percent: DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
-    }
-}
-
-pub fn should_use_auto_memory(config: &AutoMemoryConfig) -> bool {
-    config.enabled
-}
-
-pub fn auto_set_memory_if_enabled(config: &AutoMemoryConfig) -> Option<u32> {
-    if !config.enabled {
-        return None;
-    }
-
-    let recommendation = recommend_memory_by_system(config);
-    Some(recommendation.recommended_memory_mb)
-}
-
-pub fn analyze_memory_efficiency(requested_memory: u32) -> String {
-    let memory_stats = get_system_memory();
-    let total_memory_mb = memory_stats.total_memory_mb;
-    let usage_percent = (requested_memory as f64 / total_memory_mb as f64) * 100.0;
-
-    match usage_percent {
-        p if p < 25.0 => "内存使用效率较低，可以考虑增加内存设置".to_string(),
-        p if p < 50.0 => "内存使用效率良好".to_string(),
-        p if p < 75.0 => "内存使用效率较高".to_string(),
-        _ => "内存使用接近系统极限，建议适当降低设置".to_string(),
-    }
-}
-
-pub fn is_memory_over_90_percent(requested_memory_mb: u32) -> bool {
-    let memory_stats = get_system_memory();
-    let warning_limit = (memory_stats.total_memory_mb as f32 * 0.9) as u32;
-
-    requested_memory_mb > warning_limit
-}
-
 pub fn get_memory_warning_message(requested_memory_mb: u32) -> Option<String> {
     let memory_stats = get_system_memory();
     let warning_limit = (memory_stats.total_memory_mb as f32 * 0.9) as u32;
@@ -372,47 +344,83 @@ pub fn get_memory_warning_message(requested_memory_mb: u32) -> Option<String> {
     }
 }
 
-pub fn monitor_memory_usage() -> MemoryStats {
-    get_system_memory()
-}
-
-/// 连续采样间的内存趋势，用于检测内存泄漏
-pub fn get_memory_trend(samples: &[MemoryStats]) -> MemoryTrend {
-    if samples.len() < 2 {
-        return MemoryTrend::Stable;
-    }
-
-    let first = samples.first().unwrap();
-    let last = samples.last().unwrap();
-    let usage_increase = last.used_memory_mb as i64 - first.used_memory_mb as i64;
-    let time_span = samples.len() as u64; // 每个样本间隔 1 分钟
-
-    if usage_increase > 200 && time_span > 10 {
-        // 持续增长视为疑似泄漏
-        MemoryTrend::Increasing
-    } else if usage_increase < -100 {
-        MemoryTrend::Decreasing
-    } else {
-        MemoryTrend::Stable
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum MemoryTrend {
-    Increasing,
-    Decreasing,
-    Stable,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_memory_recommendation() {
-        let recommendation = recommend_memory_for_game("1.20.1", false);
-        assert!(recommendation.recommended_memory_mb >= 1024);
-        assert!(recommendation.max_memory_mb >= recommendation.recommended_memory_mb);
+    fn test_auto_memory_need_and_default_target() {
+        let vanilla_new = compute_auto_memory("1.20.1", false, 0, 32768, false);
+        assert_eq!(vanilla_new.need_mb, 2048);
+        assert_eq!(vanilla_new.target_mb, 4096);
+        assert_eq!(vanilla_new.memory_mb, 4096);
+
+        let modded_mid = compute_auto_memory("1.16.5", true, 0, 32768, false);
+        assert_eq!(modded_mid.need_mb, 2048);
+
+        let old = compute_auto_memory("1.7.10", false, 0, 32768, false);
+        assert_eq!(old.need_mb, 1024);
+        assert_eq!(old.memory_mb, 4096);
+
+        let small_pack = compute_auto_memory("1.20.1-Forge", true, 30, 32768, false);
+        assert_eq!(small_pack.need_mb, 3072);
+        assert_eq!(small_pack.memory_mb, 4096);
+
+        let large_pack = compute_auto_memory("1.20.1-Forge", true, 300, 32768, false);
+        assert_eq!(large_pack.need_mb, 6656);
+        assert_eq!(large_pack.memory_mb, 6656);
+    }
+
+    #[test]
+    fn test_auto_memory_cap_is_75_percent_of_available() {
+        // 可用 8GB → 上限 6GB；大包需要 6.5GB，只能给 6GB
+        let plan = compute_auto_memory("1.20.1-Forge", true, 300, 8192, false);
+        assert_eq!(plan.cap_mb, 6144);
+        assert_eq!(plan.memory_mb, 6144);
+        assert!(plan.clamped);
+
+        // 可用 4GB → 上限 3GB，低于默认目标 4GB
+        let plan = compute_auto_memory("1.20.1", false, 0, 4096, false);
+        assert_eq!(plan.cap_mb, 3072);
+        assert_eq!(plan.memory_mb, 3072);
+        assert!(plan.clamped);
+
+        // 普通实例在内存充足时不会吃满 75%，仍按 4GB 目标
+        let plan = compute_auto_memory("1.20.1", false, 0, 16384, false);
+        assert_eq!(plan.cap_mb, 12288);
+        assert_eq!(plan.memory_mb, 4096);
+        assert!(!plan.clamped);
+    }
+
+    #[test]
+    fn test_auto_memory_floor_and_ceiling() {
+        // 可用内存很低也要满足 2GB 下限
+        let plan = compute_auto_memory("1.20.1", false, 0, 1000, false);
+        assert_eq!(plan.cap_mb, AUTO_MEMORY_MIN_MB);
+        assert_eq!(plan.memory_mb, AUTO_MEMORY_MIN_MB);
+        assert!(plan.clamped);
+
+        // 再大的可用内存也只到 16GB
+        let plan = compute_auto_memory("1.20.1-Forge", true, 300, 65536, false);
+        assert_eq!(plan.cap_mb, AUTO_MEMORY_MAX_MB);
+        assert_eq!(plan.memory_mb, 6656);
+    }
+
+    #[test]
+    fn test_auto_memory_caps_32bit_java() {
+        let plan = compute_auto_memory("1.20.1-Forge", true, 300, 32768, true);
+        assert_eq!(plan.cap_mb, 1536);
+        assert_eq!(plan.memory_mb, 1536);
+        assert!(plan.clamped);
+    }
+
+    #[test]
+    fn test_auto_memory_rounds_down_to_step() {
+        // 可用 8800 → 75% = 6600，向下取整到 6400
+        let plan = compute_auto_memory("1.20.1-Forge", true, 300, 8800, false);
+        assert_eq!(plan.cap_mb, 6600);
+        assert_eq!(plan.memory_mb, 6400);
+        assert!(plan.clamped);
     }
 
     #[test]
@@ -420,28 +428,6 @@ mod tests {
         let args = optimize_jvm_memory_args(2048, Some(17), &JvmAdvancedOptions::default());
         assert!(args.iter().any(|arg| arg.contains("-Xmx2048M")));
         assert!(args.iter().any(|arg| arg.contains("-Xms2048M")));
-    }
-
-    #[test]
-    fn test_memory_recommendation_modded() {
-        let rec = recommend_memory_for_game("1.20.1", true);
-        let rec_vanilla = recommend_memory_for_game("1.20.1", false);
-        assert!(rec.min_memory_mb >= rec_vanilla.min_memory_mb);
-        assert!(rec.max_memory_mb >= rec.recommended_memory_mb);
-    }
-
-    #[test]
-    fn test_memory_recommendation_old_version() {
-        let rec = recommend_memory_for_game("1.7.10", false);
-        assert!(rec.recommended_memory_mb >= 512);
-        assert!(rec.max_memory_mb >= rec.recommended_memory_mb);
-    }
-
-    #[test]
-    fn test_memory_recommendation_mid_version() {
-        let rec = recommend_memory_for_game("1.16.5", false);
-        assert!(rec.recommended_memory_mb >= 1024);
-        assert!(rec.max_memory_mb >= rec.recommended_memory_mb);
     }
 
     #[test]
@@ -736,42 +722,5 @@ mod tests {
         assert!(is_memory_setting_safe(511).is_err());
         assert!(is_memory_setting_safe(512).is_ok());
         assert!(is_memory_setting_safe(4096).is_ok());
-    }
-
-    #[test]
-    fn test_analyze_memory_efficiency() {
-        let result = analyze_memory_efficiency(1024);
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_memory_trend_stable() {
-        let samples = vec![
-            MemoryStats {
-                total_memory_mb: 16000,
-                used_memory_mb: 8000,
-                available_memory_mb: 8000,
-                memory_usage_percent: 50.0,
-            },
-            MemoryStats {
-                total_memory_mb: 16000,
-                used_memory_mb: 8050,
-                available_memory_mb: 7950,
-                memory_usage_percent: 50.3,
-            },
-        ];
-        assert_eq!(get_memory_trend(&samples), MemoryTrend::Stable);
-    }
-
-    #[test]
-    fn test_memory_trend_insufficient_samples() {
-        let samples = vec![MemoryStats {
-            total_memory_mb: 16000,
-            used_memory_mb: 8000,
-            available_memory_mb: 8000,
-            memory_usage_percent: 50.0,
-        }];
-        assert_eq!(get_memory_trend(&samples), MemoryTrend::Stable);
-        assert_eq!(get_memory_trend(&[]), MemoryTrend::Stable);
     }
 }

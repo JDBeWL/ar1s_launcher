@@ -6,6 +6,8 @@ import { useRouter } from 'vue-router';
 import { useTheme, useDisplay } from 'vuetify';
 import { useLauncherStore } from './stores/launcherStore';
 import { useDownloadStore } from './stores/downloadStore';
+import { useAuthStore } from './stores/authStore';
+import { useSettingsStore } from './stores/settings';
 import { getThemePalette, getTheme, isValidThemePalette } from './utils/storage';
 import { configApi } from './services';
 import { logError } from './utils/logger';
@@ -52,6 +54,14 @@ const isDarkMode = ref(getTheme() === 'dark');
 const themePalette = ref(getThemePalette());
 
 const router = useRouter();
+const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
+
+// 多实例：切回窗口时把另一实例可能改过的登录态和全局设置重新读一遍
+function refreshCrossInstanceState() {
+  void authStore.loadAuthStatus();
+  void settingsStore.loadSettings();
+}
 
 function isTypingTarget(target: EventTarget | null) {
   if (!target || !(target instanceof HTMLElement)) return false;
@@ -155,6 +165,7 @@ onMounted(async () => {
 
   window.addEventListener('keydown', handleGlobalShortcut);
   window.addEventListener('theme-palette-changed', handlePaletteChange);
+  window.addEventListener('focus', refreshCrossInstanceState);
 
   // 最大化/还原（含拖动边框放大）都会触发 resized，用它同步按钮图标
   unlistenResized = await appWindow.onResized(() => {
@@ -168,6 +179,7 @@ onUnmounted(() => {
   downloadStore.cleanup();
   window.removeEventListener('keydown', handleGlobalShortcut);
   window.removeEventListener('theme-palette-changed', handlePaletteChange);
+  window.removeEventListener('focus', refreshCrossInstanceState);
   unlistenResized?.();
 });
 </script>

@@ -25,7 +25,7 @@ fn get_cancel_flag() -> Arc<AtomicBool> {
         .clone()
 }
 
-/// 重置取消标志（在开始新下载时调用）
+/// 只在新下载开始时重置；中途清标志会让取消失效
 pub fn reset_cancel_flag() {
     if let Some(flag) = CANCEL_FLAG.get() {
         flag.store(false, Ordering::Release);

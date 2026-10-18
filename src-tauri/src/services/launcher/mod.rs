@@ -18,7 +18,7 @@ use crate::services::config::{
     acquire_auth_lock, load_config, reload_config_from_disk, set_last_selected_version,
     update_config, update_instance_last_played,
 };
-use crate::services::memory::{is_memory_setting_safe, optimize_jvm_memory_args};
+use crate::services::memory::{is_memory_setting_safe, optimize_jvm_memory_args, plan_auto_memory};
 use crate::utils::file_utils;
 use log::{info, warn};
 use tauri::Emitter;
@@ -130,6 +130,17 @@ pub async fn launch_minecraft(
 
     let game_dir = java::resolve_game_dir(&config.game_dir);
     let version_dir = file_utils::version_dir(&game_dir.join("versions"), &options.version)?;
+
+    // 共享运行锁贯穿启动准备和游戏进程：同一实例可多开，但删除/重命名必须等全部退出
+    let run_lock = crate::services::instance::acquire_run_shared_lock(&game_dir, &options.version)
+        .await
+        .map_err(|e| match e {
+            LauncherError::Busy(_) => LauncherError::Custom(format!(
+                "实例 '{}' 正在被删除或重命名，请稍后再启动",
+                options.version
+            )),
+            other => other,
+        })?;
 
     // Quilt 老版本自带的 ASM 读不了新游戏的类，这种实例放它启动只会秒崩；
     // 能就地升级就升级，升级失败也不拦启动，交给崩溃诊断去解释
@@ -337,8 +348,35 @@ pub async fn launch_minecraft(
         );
     }
 
+    let java_is_32bit = crate::services::java::probe_java(&java_path)
+        .is_some_and(|probe| probe.arch == crate::services::java::JavaArch::Bits32);
+
     let lwjgl_lib_path = natives_dir.to_string_lossy().to_string();
-    let memory_mb = options.memory.unwrap_or(2048);
+    let memory_mb = if config.auto_memory_enabled {
+        let plan = plan_auto_memory(
+            &options.version,
+            profile.loader != java_requirement::LoaderKind::Vanilla,
+            profile.mods.len(),
+            java_is_32bit,
+        );
+        emit(
+            "log-info",
+            plan.describe(&options.version, profile.loader.label()),
+        );
+        // 只有实例需求都没满足才值得警告；低于 4GB 默认目标但够用时不打扰
+        if plan.need_mb > plan.memory_mb {
+            emit(
+                "log-warning",
+                format!(
+                    "按实例规模约需 {} MB，但当前可用内存最多分配 {} MB；若卡顿或内存不足，请关闭其他程序或在设置中改用手动内存",
+                    plan.need_mb, plan.memory_mb
+                ),
+            );
+        }
+        plan.memory_mb
+    } else {
+        options.memory.unwrap_or(2048)
+    };
 
     if let Err(e) = is_memory_setting_safe(memory_mb) {
         emit("log-warning", format!("内存设置警告: {}", e));
@@ -421,5 +459,12 @@ pub async fn launch_minecraft(
         runtime_secs: None,
     };
 
-    process::spawn_and_monitor_process(&java_path, final_args, &working_dir, launch_ctx, window)
+    process::spawn_and_monitor_process(
+        &java_path,
+        final_args,
+        &working_dir,
+        launch_ctx,
+        window,
+        run_lock,
+    )
 }

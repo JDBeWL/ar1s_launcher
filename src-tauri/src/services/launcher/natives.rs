@@ -20,7 +20,12 @@ pub fn extract_natives(
         format!("Natives目录: {}", natives_dir.display()),
     );
 
-    // natives 目录已存在且非空时直接复用缓存，跳过解压
+    // 同一实例多开时只能有一个进程在解压；否则第二个进程会读到写了一半的文件
+    let _natives_lock = crate::utils::file_lock::acquire(
+        &version_dir.join(".natives.lock"),
+        std::time::Duration::from_secs(30),
+    )?;
+
     if natives_dir.exists() {
         if fs::read_dir(&natives_dir)
             .map(|mut d| d.next().is_some())

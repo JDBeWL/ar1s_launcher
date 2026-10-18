@@ -119,6 +119,10 @@ const chipLabel = computed(() => {
           <v-icon size="14" class="mr-1.5" color="on-surface-variant">mdi-puzzle-outline</v-icon>
           {{ instance.modCount }} Mods
         </div>
+        <div v-if="instance.autoMemoryMb" class="d-flex align-center">
+          <v-icon size="14" class="mr-1.5" color="on-surface-variant">mdi-memory</v-icon>
+          自动 ≈ {{ (instance.autoMemoryMb / 1024).toFixed(1) }} GB
+        </div>
       </div>
 
       <v-btn
@@ -166,6 +170,8 @@ const chipLabel = computed(() => {
 
 .info-row {
   border-top: 1px dashed rgba(var(--v-theme-on-surface), 0.1);
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 
 .min-width-0 {

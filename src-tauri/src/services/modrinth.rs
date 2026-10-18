@@ -139,7 +139,7 @@ impl ModrinthService {
                     Some("modpack") => {}
                     _ => return None,
                 }
-                // 搜索结果字段名不同于项目接口：游戏版本在 `versions`，无独立 loaders（混在 `categories`），分类字段是 `categories`
+                // 搜索结果的字段名与项目接口不同：游戏版本在 `versions`，loaders 混在 `categories`
                 Some(ModrinthModpack {
                     slug: hit["slug"].as_str()?.to_string(),
                     title: hit["title"].as_str()?.to_string(),

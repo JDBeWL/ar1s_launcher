@@ -104,7 +104,7 @@ pub fn get_auth_status() -> Result<AuthStatus, LauncherError> {
         logged_in,
         username: config.username.clone(),
         uuid: config.uuid.clone(),
-        // 切回离线模式后皮肤就不该再显示了，这里按当前认证类型过一道闸
+        // 切回离线模式后皮肤不该再显示
         skin_url: matches!(config.auth_type, AuthType::Microsoft)
             .then(|| config.skin_url.clone())
             .flatten(),

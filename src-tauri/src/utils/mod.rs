@@ -4,5 +4,6 @@
 
 pub mod file_lock;
 pub mod file_utils;
+pub mod library;
 pub mod logger;
 pub mod minecraft;

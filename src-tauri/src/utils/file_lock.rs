@@ -46,20 +46,24 @@ fn busy_error(path: &Path, timeout: Duration) -> LauncherError {
     ))
 }
 
-fn try_lock(file: &File, path: &Path) -> Result<bool, LauncherError> {
-    match file.try_lock() {
+fn try_lock(file: &File, path: &Path, shared: bool) -> Result<bool, LauncherError> {
+    let result = if shared {
+        file.try_lock_shared()
+    } else {
+        file.try_lock()
+    };
+    match result {
         Ok(()) => Ok(true),
         Err(TryLockError::WouldBlock) => Ok(false),
         Err(e) => Err(lock_error(path, e)),
     }
 }
 
-/// 同步获取排他锁；配置写入这类短临界区用它
-pub fn acquire(path: &Path, timeout: Duration) -> Result<FileLock, LauncherError> {
+fn acquire_with(path: &Path, timeout: Duration, shared: bool) -> Result<FileLock, LauncherError> {
     let file = open_lock_file(path)?;
     let deadline = Instant::now() + timeout;
     loop {
-        if try_lock(&file, path)? {
+        if try_lock(&file, path, shared)? {
             return Ok(FileLock { file });
         }
         if Instant::now() >= deadline {
@@ -69,12 +73,15 @@ pub fn acquire(path: &Path, timeout: Duration) -> Result<FileLock, LauncherError
     }
 }
 
-/// 异步获取排他锁；下载、token 刷新这类可能等较久的场景用它，避免阻塞 worker
-pub async fn acquire_async(path: &Path, timeout: Duration) -> Result<FileLock, LauncherError> {
+async fn acquire_async_with(
+    path: &Path,
+    timeout: Duration,
+    shared: bool,
+) -> Result<FileLock, LauncherError> {
     let file = open_lock_file(path)?;
     let deadline = Instant::now() + timeout;
     loop {
-        if try_lock(&file, path)? {
+        if try_lock(&file, path, shared)? {
             return Ok(FileLock { file });
         }
         if Instant::now() >= deadline {
@@ -84,10 +91,61 @@ pub async fn acquire_async(path: &Path, timeout: Duration) -> Result<FileLock, L
     }
 }
 
+/// 同步获取排他锁；配置写入这类短临界区用它
+pub fn acquire(path: &Path, timeout: Duration) -> Result<FileLock, LauncherError> {
+    acquire_with(path, timeout, false)
+}
+
+/// 异步获取排他锁；下载、token 刷新这类可能等较久的场景用它，避免阻塞 worker
+pub async fn acquire_async(path: &Path, timeout: Duration) -> Result<FileLock, LauncherError> {
+    acquire_async_with(path, timeout, false).await
+}
+
+/// 共享锁：多个持有者可以同时存在，排他锁必须等它们全部释放
+pub async fn acquire_shared_async(
+    path: &Path,
+    timeout: Duration,
+) -> Result<FileLock, LauncherError> {
+    acquire_async_with(path, timeout, true).await
+}
+
+/// 同步共享锁；测试和需要短等待的场景用它
+pub fn acquire_shared(path: &Path, timeout: Duration) -> Result<FileLock, LauncherError> {
+    acquire_with(path, timeout, true)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{acquire, acquire_async};
+    use super::{acquire, acquire_async, acquire_shared};
     use std::time::Duration;
+
+    #[test]
+    fn test_multiple_shared_locks_can_coexist() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("run.lock");
+
+        let first = acquire_shared(&path, Duration::from_millis(50)).unwrap();
+        let second = acquire_shared(&path, Duration::from_millis(50)).unwrap();
+
+        // 运行中的实例不能删除/重命名
+        assert!(acquire(&path, Duration::from_millis(50)).is_err());
+
+        drop(first);
+        drop(second);
+        assert!(acquire(&path, Duration::from_millis(50)).is_ok());
+    }
+
+    #[test]
+    fn test_shared_lock_cannot_bypass_exclusive_holder() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("run.lock");
+
+        let exclusive = acquire(&path, Duration::from_millis(50)).unwrap();
+        assert!(acquire_shared(&path, Duration::from_millis(50)).is_err());
+
+        drop(exclusive);
+        assert!(acquire_shared(&path, Duration::from_millis(50)).is_ok());
+    }
 
     #[test]
     fn test_exclusive_lock_released_on_drop() {

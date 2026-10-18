@@ -401,6 +401,10 @@ onMounted(async () => {
 
         <v-expand-transition>
           <div v-if="showPreview">
+            <p v-if="settingsStore.autoMemoryEnabled" class="text-body-small text-on-surface-variant mb-2">
+              已开启自动内存：这里的 -Xmx/-Xms 按手动值 {{ settingsStore.maxMemory }} MB
+              预览，实际启动时按实例动态计算。
+            </p>
             <pre v-if="effectiveArgs.length" class="jvm-code jvm-code-block">{{ effectiveArgs.join('\n') }}</pre>
             <p v-else class="text-body-medium text-on-surface-variant mb-0">暂无预览数据</p>
           </div>

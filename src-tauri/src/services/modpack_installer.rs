@@ -149,12 +149,9 @@ impl ModpackInstaller {
         let temp_dir = game_dir.join("temp");
         let extract_dir = temp_dir.join(format!("{}_extract", &options.instance_name));
 
-        // 同实例的整合包安装跨进程串行；失败清理会删实例目录，不能和另一实例互相踩
+        // 与实例创建/删除/重命名共用一把锁；失败清理会删实例目录，不能和另一实例互相踩
         let _install_lock = crate::utils::file_lock::acquire_async(
-            &game_dir.join(format!(
-                ".download_state/modpack-{}.lock",
-                options.instance_name
-            )),
+            &game_dir.join(".download_state/instances.lock"),
             std::time::Duration::from_secs(2),
         )
         .await?;
@@ -421,7 +418,6 @@ impl ModpackInstaller {
         send_progress(100, "整合包安装完成！", false);
         info!("整合包 {} 安装完成", options.instance_name);
 
-        // 通知前端刷新版本列表
         if let Ok(game_dir_str) = config::get_game_dir() {
             let _ = window.emit("game-dir-changed", &game_dir_str);
         }

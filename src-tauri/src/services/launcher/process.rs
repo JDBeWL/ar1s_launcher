@@ -111,6 +111,7 @@ pub fn spawn_and_monitor_process(
     working_dir: &Path,
     launch_ctx: LaunchContext,
     window: tauri::Window,
+    run_lock: crate::utils::file_lock::FileLock,
 ) -> Result<(), LauncherError> {
     let mut command = Command::new(java_path);
     command.args(&final_args);
@@ -134,9 +135,17 @@ pub fn spawn_and_monitor_process(
     let pid = child.id();
     let _ = window.emit("log-debug", format!("游戏已启动，PID: {}", pid));
 
-    window.emit("minecraft-launched", format!("游戏已启动，PID: {}", pid))?;
+    // 进程已经起来了，事件发不出去也必须继续监控并持有运行锁
+    let _ = window.emit("minecraft-launched", format!("游戏已启动，PID: {}", pid));
 
-    spawn_monitor_thread(child, window, pid, working_dir.to_path_buf(), launch_ctx);
+    spawn_monitor_thread(
+        child,
+        window,
+        pid,
+        working_dir.to_path_buf(),
+        launch_ctx,
+        run_lock,
+    );
 
     Ok(())
 }
@@ -147,6 +156,7 @@ fn spawn_monitor_thread(
     pid: u32,
     working_dir: std::path::PathBuf,
     launch_ctx: crash_diagnosis::LaunchContext,
+    run_lock: crate::utils::file_lock::FileLock,
 ) {
     let stdout = child.stdout.take().expect("Failed to open stdout");
     let stderr = child.stderr.take().expect("Failed to open stderr");
@@ -223,7 +233,7 @@ fn spawn_monitor_thread(
             }
         });
 
-        match wait_for_process_with_timeout(&mut child, MAX_GAME_RUNTIME) {
+        match wait_for_process_holding_lock(&mut child, MAX_GAME_RUNTIME, run_lock) {
             Ok(Some(status)) => {
                 is_running_main.store(false, Ordering::SeqCst);
                 wait_log_flushed(&forwarder_done);
@@ -349,6 +359,17 @@ fn wait_for_process_with_timeout(
     }
 }
 
+/// 运行锁只覆盖游戏进程本身。日志转发、崩溃诊断和 timeout 线程清理可能还要
+/// 几十秒，不能把锁带进这些收尾流程，否则玩家关掉游戏后短时间内无法重开
+fn wait_for_process_holding_lock(
+    child: &mut Child,
+    timeout: Duration,
+    run_lock: crate::utils::file_lock::FileLock,
+) -> Result<Option<ExitStatus>, std::io::Error> {
+    let _run_lock = run_lock;
+    wait_for_process_with_timeout(child, timeout)
+}
+
 /// 只认本次运行之后写下的 hs_err，上次崩溃留下的那份不能当本次证据
 fn find_hs_err_log(working_dir: &Path, launched_after: SystemTime) -> Option<String> {
     if let Ok(entries) = fs::read_dir(working_dir) {
@@ -458,9 +479,10 @@ fn attach_suggested_java(diagnosis: &mut crash_diagnosis::CrashDiagnosis, ctx: &
 
 #[cfg(test)]
 mod tests {
-    use super::{OutputCapture, find_hs_err_log, redacted_args};
+    use super::{OutputCapture, find_hs_err_log, redacted_args, wait_for_process_holding_lock};
     use std::fs;
     use std::path::Path;
+    use std::process::{Command, Stdio};
     use std::time::{Duration, SystemTime};
 
     fn args(items: &[&str]) -> Vec<String> {
@@ -472,6 +494,39 @@ mod tests {
         fs::write(&path, body)?;
         let file = fs::OpenOptions::new().append(true).open(&path)?;
         file.set_modified(SystemTime::now() - age)
+    }
+
+    #[test]
+    fn test_run_lock_released_when_game_process_exits() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let lock_path = dir.path().join("run.lock");
+        let lock =
+            crate::utils::file_lock::acquire_shared(&lock_path, Duration::from_millis(50)).unwrap();
+
+        #[cfg(windows)]
+        let mut child = Command::new("ping")
+            .args(["-n", "2", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let mut child = Command::new("sleep")
+            .arg("0.2")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        let status =
+            wait_for_process_holding_lock(&mut child, Duration::from_secs(10), lock).unwrap();
+        assert!(status.is_some());
+
+        // 运行锁要在 flush 日志、join 超时线程之前释放，否则关掉游戏后短时间内无法重开
+        assert!(
+            crate::utils::file_lock::acquire(&lock_path, Duration::from_millis(100)).is_ok(),
+            "游戏进程已退出，运行锁仍被监控线程持有"
+        );
     }
 
     #[test]

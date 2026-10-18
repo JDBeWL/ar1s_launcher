@@ -7,6 +7,7 @@ use crate::models::{DownloadJob, InstanceInfo, LaunchOptions};
 use crate::services::{
     config, download, launcher,
     loaders::{self, LoaderType},
+    memory::{compute_auto_memory, get_system_memory},
 };
 use crate::utils::file_utils::{
     self, InstanceNameValidation, validate_instance_name, validate_instance_name_or_error,
@@ -17,7 +18,10 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tauri::{Emitter, Window};
+
+const INSTANCE_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Serialize)]
 struct InstallProgress {
@@ -31,6 +35,41 @@ fn get_dirs() -> Result<(PathBuf, PathBuf), LauncherError> {
     let game_dir = PathBuf::from(&config.game_dir);
     let versions_dir = game_dir.join("versions");
     Ok((game_dir, versions_dir))
+}
+
+/// 实例目录的创建/删除/重命名/整合包安装跨进程串行；嵌套下载另用 download.lock
+async fn acquire_instance_lock(
+    game_dir: &Path,
+) -> Result<crate::utils::file_lock::FileLock, LauncherError> {
+    crate::utils::file_lock::acquire_async(
+        &game_dir.join(".download_state/instances.lock"),
+        INSTANCE_LOCK_TIMEOUT,
+    )
+    .await
+}
+
+/// 游戏进程运行期间由监控线程持有；共享锁允许同一实例同时启动多次
+pub(crate) async fn acquire_run_shared_lock(
+    game_dir: &Path,
+    instance_name: &str,
+) -> Result<crate::utils::file_lock::FileLock, LauncherError> {
+    crate::utils::file_lock::acquire_shared_async(
+        &game_dir.join(format!(".download_state/run-{}.lock", instance_name)),
+        INSTANCE_LOCK_TIMEOUT,
+    )
+    .await
+}
+
+/// 删除/重命名独占运行锁，确认没有游戏进程还在跑
+pub(crate) async fn acquire_run_lock(
+    game_dir: &Path,
+    instance_name: &str,
+) -> Result<crate::utils::file_lock::FileLock, LauncherError> {
+    crate::utils::file_lock::acquire_async(
+        &game_dir.join(format!(".download_state/run-{}.lock", instance_name)),
+        INSTANCE_LOCK_TIMEOUT,
+    )
+    .await
 }
 
 pub fn check_instance_name_available(name: &str) -> InstanceNameValidation {
@@ -64,6 +103,7 @@ pub async fn create_instance(
     validate_instance_name_or_error(&new_instance_name)?;
 
     let (game_dir, versions_dir) = get_dirs()?;
+    let _instance_lock = acquire_instance_lock(&game_dir).await?;
     let source_dir = file_utils::version_dir(&versions_dir, &base_version_id)?;
     let dest_dir = file_utils::instance_dir(&versions_dir, &new_instance_name)?;
 
@@ -500,6 +540,12 @@ fn get_instances_sync(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| versions_dir.to_path_buf());
 
+    // 自动内存开启时给每张实例卡片一个启动时的预计值；可用内存只采样一次
+    let auto_memory_available_mb = config::load_config()
+        .ok()
+        .filter(|cfg| cfg.auto_memory_enabled)
+        .map(|_| get_system_memory().available_memory_mb as u32);
+
     if let Ok(entries) = fs::read_dir(versions_dir) {
         for entry in entries.flatten() {
             if let Ok(file_type) = entry.file_type() {
@@ -639,6 +685,17 @@ fn get_instances_sync(
                             }
                         }
 
+                        let auto_memory_mb = auto_memory_available_mb.map(|available| {
+                            compute_auto_memory(
+                                game_version.as_deref().unwrap_or(&version_id),
+                                loader_type.as_deref().is_some_and(|lt| lt != "None"),
+                                mod_count.unwrap_or(0) as usize,
+                                available,
+                                false,
+                            )
+                            .memory_mb
+                        });
+
                         let created = entry
                             .metadata()
                             .and_then(|m| m.created())
@@ -668,6 +725,7 @@ fn get_instances_sync(
                             last_played,
                             mod_count,
                             icon_url,
+                            auto_memory_mb,
                         });
                     }
                 }
@@ -870,12 +928,14 @@ pub fn get_instance_mods(instance_name: String) -> Result<Vec<ModInfo>, Launcher
 }
 
 /// 启用/禁用模组：改名 *.jar <-> *.jar.disabled，这是各加载器的通用约定
-pub fn set_mod_enabled(
+pub async fn set_mod_enabled(
     instance_name: String,
     file_name: String,
     enabled: bool,
 ) -> Result<(), LauncherError> {
     validate_instance_name_or_error(&instance_name)?;
+    let (game_dir, _) = get_dirs()?;
+    let _instance_lock = acquire_instance_lock(&game_dir).await?;
     let (mods_dir, path) = resolve_mod_path(&instance_name, &file_name)?;
 
     let target_name = if enabled {
@@ -902,8 +962,13 @@ pub fn set_mod_enabled(
     Ok(())
 }
 
-pub fn delete_instance_mod(instance_name: String, file_name: String) -> Result<(), LauncherError> {
+pub async fn delete_instance_mod(
+    instance_name: String,
+    file_name: String,
+) -> Result<(), LauncherError> {
     validate_instance_name_or_error(&instance_name)?;
+    let (game_dir, _) = get_dirs()?;
+    let _instance_lock = acquire_instance_lock(&game_dir).await?;
     let (_, path) = resolve_mod_path(&instance_name, &file_name)?;
     fs::remove_file(&path)?;
     info!("已删除模组: {}", path.display());
@@ -911,7 +976,8 @@ pub fn delete_instance_mod(instance_name: String, file_name: String) -> Result<(
 }
 
 pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError> {
-    let (_, versions_dir) = get_dirs()?;
+    let (game_dir, versions_dir) = get_dirs()?;
+    let _instance_lock = acquire_instance_lock(&game_dir).await?;
     let instance_dir = file_utils::instance_dir(&versions_dir, &instance_name)?;
 
     if !instance_dir.exists() {
@@ -920,6 +986,16 @@ pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError>
             instance_name
         )));
     }
+
+    let _run_lock = acquire_run_lock(&game_dir, &instance_name)
+        .await
+        .map_err(|e| match e {
+            LauncherError::Busy(_) => LauncherError::Custom(format!(
+                "实例 '{}' 正在运行或正在被修改，无法删除",
+                instance_name
+            )),
+            other => other,
+        })?;
 
     fs::remove_dir_all(&instance_dir)
         .map_err(|e| LauncherError::Custom(format!("删除实例失败: {}", e)))?;
@@ -933,7 +1009,8 @@ pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError>
 pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), LauncherError> {
     validate_instance_name_or_error(&new_name)?;
 
-    let (_, versions_dir) = get_dirs()?;
+    let (game_dir, versions_dir) = get_dirs()?;
+    let _instance_lock = acquire_instance_lock(&game_dir).await?;
     let old_dir = file_utils::instance_dir(&versions_dir, &old_name)?;
     let new_dir = file_utils::instance_dir(&versions_dir, &new_name)?;
 
@@ -949,6 +1026,16 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
             new_name
         )));
     }
+
+    let _run_lock = acquire_run_lock(&game_dir, &old_name)
+        .await
+        .map_err(|e| match e {
+            LauncherError::Busy(_) => LauncherError::Custom(format!(
+                "实例 '{}' 正在运行或正在被修改，无法重命名",
+                old_name
+            )),
+            other => other,
+        })?;
 
     // 原版实例没有 inheritsFrom，一旦下面的 id 被改写就再也取不回真实 MC 版本，
     // 所以先固化下来

@@ -42,6 +42,14 @@ export interface VersionSizeInfo {
   total_size: number;
 }
 
+// 对应后端 MemoryStats，snake_case
+export interface MemoryStats {
+  total_memory_mb: number;
+  used_memory_mb: number;
+  available_memory_mb: number;
+  memory_usage_percent: number;
+}
+
 // 对应后端 InstanceInfo，camelCase
 export interface GameInstance {
   id: string;
@@ -56,6 +64,8 @@ export interface GameInstance {
   modCount?: number;
   /** 整合包自带封面，没有时回退到加载器图标 */
   iconUrl?: string;
+  /** 自动内存开启时，该实例启动预计分配的堆大小（MB） */
+  autoMemoryMb?: number;
 }
 
 export interface ModInfo {
@@ -189,13 +199,6 @@ export interface JvmAdvancedOptions {
   metaspaceMaxSizeMb: number | null;
   heapDumpOnOom: boolean;
   extraArgs: string;
-}
-
-// 对应后端 AutoMemoryConfig，snake_case
-export interface AutoMemoryConfig {
-  enabled: boolean;
-  max_limit_mb: number;
-  safety_margin_percent: number;
 }
 
 export interface AuthStatus {

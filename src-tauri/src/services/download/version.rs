@@ -332,389 +332,213 @@ fn collect_libraries(
 ) -> Result<(), LauncherError> {
     fs::create_dir_all(libraries_base_dir)?;
 
-    let Some(libraries) = version_json["libraries"].as_array() else {
-        return Ok(());
-    };
+    for file in crate::utils::library::resolve_library_files(version_json) {
+        let target_path = libraries_base_dir.join(&file.relative_path);
 
-    for lib in libraries {
-        if !should_download_library(lib) {
+        // maven 回退路径才按“文件已在位”跳过；官方 artifact 的续传/校验交给下载状态
+        if file.from_maven && target_path.exists() {
             continue;
         }
 
-        if let Some(artifact) = lib.get("downloads").and_then(|d| d.get("artifact")) {
-            if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url)
-            {
-                downloads.push(job);
-            }
-        } else {
-            // 无 downloads.artifact（Forge 库常见），从 name 构建任务
-            if let Some(job) =
-                create_library_job_from_name(lib, libraries_base_dir, is_mirror, base_url)
-            {
-                downloads.push(job);
-            }
-        }
+        let Some((url, fallback_url)) = library_download_urls(&file, is_mirror, base_url) else {
+            continue;
+        };
 
-        collect_natives_library(lib, libraries_base_dir, is_mirror, base_url, downloads);
+        downloads.push(DownloadJob {
+            url,
+            fallback_url,
+            path: target_path,
+            size: file.size,
+            hash: file.sha1,
+        });
     }
 
     Ok(())
 }
 
-use crate::utils::minecraft::maven_name_to_path;
-
-fn create_library_job_from_name(
-    lib: &serde_json::Value,
-    libraries_base_dir: &PathBuf,
+fn library_download_urls(
+    file: &crate::utils::library::LibraryFile,
     is_mirror: bool,
     base_url: &str,
-) -> Option<DownloadJob> {
-    let name = lib["name"].as_str()?;
-
-    // 有 classifiers 却没有 artifact 的库（lwjgl-platform 的 *-nightly 就是）本身没有主 jar，
-    // 硬拼一个 .jar 在任何源上都是 404；这类库只需要下 natives，由 collect_natives_library 负责
-    let downloads = lib.get("downloads");
-    let classifiers_only = downloads.is_some()
-        && downloads.and_then(|d| d.get("artifact")).is_none()
-        && downloads.and_then(|d| d.get("classifiers")).is_some();
-    if classifiers_only {
-        return None;
-    }
-
-    let maven_path = maven_name_to_path(name, None, "jar")?;
-
-    let target_path = libraries_base_dir.join(&maven_path);
-
-    if target_path.exists() {
-        return None;
-    }
-
-    let lib_url = lib.get("url").and_then(|u| u.as_str());
-
-    let download_url = if is_mirror {
-        format!("{}/maven/{}", base_url, maven_path)
-    } else if let Some(url) = lib_url {
-        let base = if url.ends_with('/') {
-            url.to_string()
-        } else {
-            format!("{}/", url)
-        };
-        format!("{}{}", base, maven_path)
-    } else {
-        format!("https://repo1.maven.org/maven2/{}", maven_path)
-    };
-
-    let fallback_url = if is_mirror {
-        if let Some(url) = lib_url {
-            let base = if url.ends_with('/') {
-                url.to_string()
+) -> Option<(String, Option<String>)> {
+    if file.from_maven {
+        let official = file.url.clone()?;
+        if is_mirror {
+            let kind = if file.is_native { "libraries" } else { "maven" };
+            return Some((
+                format!("{}/{}/{}", base_url, kind, file.relative_path),
+                Some(official),
+            ));
+        }
+        return Some((
+            official,
+            if file.is_native {
+                None
             } else {
-                format!("{}/", url)
-            };
-            Some(format!("{}{}", base, maven_path))
-        } else {
-            Some(format!("https://repo1.maven.org/maven2/{}", maven_path))
-        }
-    } else {
-        Some(format!(
-            "https://bmclapi2.bangbang93.com/maven/{}",
-            maven_path
-        ))
-    };
-
-    Some(DownloadJob {
-        url: download_url,
-        fallback_url,
-        path: target_path,
-        size: 0,
-        hash: None,
-    })
-}
-
-fn should_download_library(lib: &serde_json::Value) -> bool {
-    crate::utils::minecraft::evaluate_rules(lib.get("rules"))
-}
-
-fn create_library_job(
-    artifact: &serde_json::Value,
-    libraries_base_dir: &PathBuf,
-    is_mirror: bool,
-    base_url: &str,
-) -> Option<DownloadJob> {
-    let url = artifact["url"].as_str()?;
-    let path = artifact["path"].as_str()?;
-    let size = artifact["size"].as_u64().unwrap_or(0);
-    let hash = artifact["sha1"].as_str().map(|h| h.to_string());
-
-    let download_url = if is_mirror {
-        url.replace(
-            "https://libraries.minecraft.net",
-            &format!("{}/libraries", base_url),
-        )
-        .replace(
-            "https://maven.minecraftforge.net",
-            &format!("{}/maven", base_url),
-        )
-        .replace(
-            "https://maven.neoforged.net/releases",
-            &format!("{}/maven", base_url),
-        )
-    } else {
-        url.to_string()
-    };
-
-    Some(DownloadJob {
-        url: download_url,
-        fallback_url: if is_mirror {
-            Some(url.to_string())
-        } else {
-            None
-        },
-        path: libraries_base_dir.join(path),
-        size,
-        hash,
-    })
-}
-
-fn collect_natives_library(
-    lib: &serde_json::Value,
-    libraries_base_dir: &PathBuf,
-    is_mirror: bool,
-    base_url: &str,
-    downloads: &mut Vec<DownloadJob>,
-) {
-    let Some(natives) = lib.get("natives") else {
-        return;
-    };
-
-    let current_os = std::env::consts::OS;
-    let os_key = if current_os == "macos" {
-        "osx"
-    } else {
-        current_os
-    };
-
-    let Some(natives_obj) = natives.as_object() else {
-        return;
-    };
-
-    for (os_name, classifier_value) in natives_obj {
-        let Some(os_classifier) = classifier_value.as_str() else {
-            continue;
-        };
-
-        if os_name != os_key {
-            continue;
-        }
-
-        if let Some(artifact) = lib
-            .get("downloads")
-            .and_then(|d| d.get("classifiers"))
-            .and_then(|c| c.get(os_classifier))
-        {
-            if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url)
-            {
-                downloads.push(job);
-                continue;
-            }
-        }
-
-        if let Some(artifact) = lib.get("classifiers").and_then(|c| c.get(os_classifier)) {
-            if let Some(job) = create_library_job(artifact, libraries_base_dir, is_mirror, base_url)
-            {
-                downloads.push(job);
-                continue;
-            }
-        }
-
-        if let Some(job) = create_natives_job_from_name(
-            lib,
-            os_classifier,
-            libraries_base_dir,
-            is_mirror,
-            base_url,
-        ) {
-            downloads.push(job);
-        }
-    }
-}
-
-fn create_natives_job_from_name(
-    lib: &serde_json::Value,
-    os_classifier: &str,
-    libraries_base_dir: &PathBuf,
-    is_mirror: bool,
-    base_url: &str,
-) -> Option<DownloadJob> {
-    let name = lib["name"].as_str()?;
-    let parts: Vec<&str> = name.split(':').collect();
-    if parts.len() < 3 {
-        return None;
+                Some(format!(
+                    "https://bmclapi2.bangbang93.com/maven/{}",
+                    file.relative_path
+                ))
+            },
+        ));
     }
 
-    let group_id = parts[0].replace('.', "/");
-    let artifact_id = parts[1];
-    let version = parts[2];
-    let classifier = os_classifier.replace(
-        "${arch}",
-        if cfg!(target_pointer_width = "64") {
-            "64"
-        } else {
-            "32"
-        },
-    );
-
-    let natives_path = if artifact_id == "lwjgl" {
-        format!(
-            "{}/{}-platform/{}/{}-platform-{}-{}.jar",
-            group_id, artifact_id, version, artifact_id, version, classifier
-        )
+    let official = file.url.clone()?;
+    if is_mirror {
+        let mirrored = official
+            .replace(
+                "https://libraries.minecraft.net",
+                &format!("{}/libraries", base_url),
+            )
+            .replace(
+                "https://maven.minecraftforge.net",
+                &format!("{}/maven", base_url),
+            )
+            .replace(
+                "https://maven.neoforged.net/releases",
+                &format!("{}/maven", base_url),
+            );
+        Some((mirrored, Some(official)))
     } else {
-        format!(
-            "{}/{}/{}/{}-{}-{}.jar",
-            group_id, artifact_id, version, artifact_id, version, classifier
-        )
-    };
-
-    let natives_url = format!("https://libraries.minecraft.net/{}", natives_path);
-    let download_url = if is_mirror {
-        format!("{}/libraries/{}", base_url, natives_path)
-    } else {
-        natives_url.clone()
-    };
-
-    Some(DownloadJob {
-        url: download_url,
-        fallback_url: if is_mirror { Some(natives_url) } else { None },
-        path: libraries_base_dir.join(&natives_path),
-        size: 0,
-        hash: None,
-    })
+        Some((official, None))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::collect_libraries;
+    use crate::utils::minecraft::get_mc_os_name;
+    use serde_json::json;
 
-    fn libraries_dir() -> PathBuf {
-        PathBuf::from("ar1s-test-libraries-not-created")
+    fn current_os() -> &'static str {
+        get_mc_os_name()
+    }
+
+    fn native_classifier() -> String {
+        format!("natives-{}", current_os())
+    }
+
+    fn run(
+        version: &serde_json::Value,
+        mirror: bool,
+    ) -> (Vec<crate::models::DownloadJob>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let libraries = dir.path().join("libraries");
+        let mut jobs = Vec::new();
+        collect_libraries(
+            version,
+            &libraries,
+            mirror,
+            "https://bmclapi2.bangbang93.com",
+            &mut jobs,
+        )
+        .unwrap();
+        (jobs, dir)
     }
 
     #[test]
-    fn test_classifiers_only_library_creates_no_main_jar_job() {
-        // 1.8.9 官方 JSON 里 lwjgl-platform 2.9.2-nightly 只有 classifiers，主 jar 在任何源上都不存在
-        let lib = serde_json::json!({
-            "downloads": {
-                "classifiers": {
-                    "natives-windows": {
-                        "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.2-nightly-20140822/lwjgl-platform-2.9.2-nightly-20140822-natives-windows.jar",
-                        "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.2-nightly-20140822/lwjgl-platform-2.9.2-nightly-20140822-natives-windows.jar"
+    fn test_collect_keeps_common_and_native_jars() {
+        let classifier = native_classifier();
+        let main = "com/example/native/1.0/native-1.0.jar";
+        let native = format!("com/example/native/1.0/native-1.0-{classifier}.jar");
+        let version = json!({
+            "libraries": [{
+                "name": "com.example:native:1.0",
+                "natives": { current_os(): classifier },
+                "downloads": {
+                    "artifact": { "path": main, "url": format!("https://libraries.minecraft.net/{main}") },
+                    "classifiers": {
+                        classifier: { "path": native, "url": format!("https://libraries.minecraft.net/{native}") }
                     }
                 }
-            },
-            "extract": { "exclude": ["META-INF/"] },
-            "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.2-nightly-20140822",
-            "natives": { "linux": "natives-linux", "osx": "natives-osx", "windows": "natives-windows" }
+            }]
         });
 
-        assert!(
-            create_library_job_from_name(&lib, &libraries_dir(), false, "").is_none(),
-            "只有 classifiers 的库被硬拼出主 jar 任务，下载必然 404"
-        );
+        let (jobs, _dir) = run(&version, false);
+
+        assert_eq!(jobs.len(), 2);
+        assert!(jobs.iter().any(|j| j.path.ends_with(main)));
+        assert!(jobs.iter().any(|j| j.path.ends_with(&native)));
     }
 
     #[test]
-    fn test_plain_library_still_creates_main_jar_job() {
-        let lib = serde_json::json!({
-            "name": "com.example:tool:1.0",
-            "url": "https://libraries.minecraft.net/"
-        });
-
-        let job = create_library_job_from_name(&lib, &libraries_dir(), false, "")
-            .expect("普通库应该照旧生成主 jar 任务");
-        assert!(
-            job.url.ends_with("com/example/tool/1.0/tool-1.0.jar"),
-            "{}",
-            job.url
-        );
-    }
-
-    /// 1.8.9 官方 JSON 里两条真实的 lwjgl-platform 条目：
-    /// 2.9.4 带 artifact（22 字节的桩 jar），2.9.2 只有 classifiers
-    fn version_json() -> serde_json::Value {
-        serde_json::json!({
-            "libraries": [
-                {
-                    "downloads": {
-                        "artifact": {
-                            "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209.jar",
-                            "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209.jar"
-                        },
-                        "classifiers": {
-                            "natives-windows": {
-                                "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar",
-                                "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar"
-                            }
-                        }
-                    },
-                    "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.4-nightly-20150209",
-                    "natives": { "windows": "natives-windows" },
-                    "rules": [ { "action": "allow" }, { "action": "disallow", "os": { "name": "osx" } } ]
-                },
-                {
-                    "downloads": {
-                        "classifiers": {
-                            "natives-windows": {
-                                "path": "org/lwjgl/lwjgl/lwjgl-platform/2.9.2-nightly-20140822/lwjgl-platform-2.9.2-nightly-20140822-natives-windows.jar",
-                                "url": "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.2-nightly-20140822/lwjgl-platform-2.9.2-nightly-20140822-natives-windows.jar"
-                            }
-                        }
-                    },
-                    "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.2-nightly-20140822",
-                    "natives": { "windows": "natives-windows" },
-                    "rules": [ { "action": "allow", "os": { "name": "osx" } } ]
+    fn test_classifiers_only_library_has_no_main_job() {
+        let classifier = native_classifier();
+        let native =
+            format!("org/lwjgl/lwjgl/lwjgl-platform/2.9.2/lwjgl-platform-2.9.2-{classifier}.jar");
+        let version = json!({
+            "libraries": [{
+                "name": "org.lwjgl.lwjgl:lwjgl-platform:2.9.2",
+                "natives": { current_os(): classifier },
+                "downloads": {
+                    "classifiers": {
+                        classifier: { "path": native, "url": format!("https://libraries.minecraft.net/{native}") }
+                    }
                 }
-            ]
-        })
+            }]
+        });
+
+        let (jobs, _dir) = run(&version, false);
+
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].url.ends_with(&native));
+        assert!(
+            !jobs[0].url.ends_with("lwjgl-platform-2.9.2.jar"),
+            "只有 classifiers 的库不该被拼出主 jar：{}",
+            jobs[0].url
+        );
     }
 
     #[test]
-    fn test_no_fabricated_main_jar_but_natives_still_downloaded() {
-        let tmp = tempfile::tempdir().unwrap();
-        let libs: PathBuf = tmp.path().join("libraries");
-        let mut jobs: Vec<DownloadJob> = Vec::new();
+    fn test_declared_url_uses_mirror_with_official_fallback() {
+        let path = "com/example/tool/1.0/tool-1.0.jar";
+        let official = format!("https://libraries.minecraft.net/{path}");
+        let version = json!({
+            "libraries": [{
+                "name": "com.example:tool:1.0",
+                "downloads": { "artifact": { "path": path, "url": official } }
+            }]
+        });
 
-        collect_libraries(&version_json(), &libs, false, "", &mut jobs).unwrap();
-        let urls: Vec<&str> = jobs.iter().map(|j| j.url.as_str()).collect();
+        let (jobs, _dir) = run(&version, true);
 
-        assert!(
-            !urls
-                .iter()
-                .any(|u| u.ends_with("lwjgl-platform-2.9.2-nightly-20140822.jar")),
-            "只有 classifiers 的 2.9.2 条目不该再被拼出主 jar：{:?}",
-            urls
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(
+            jobs[0].url,
+            "https://bmclapi2.bangbang93.com/libraries/com/example/tool/1.0/tool-1.0.jar"
         );
-        assert!(
-            urls.iter()
-                .any(|u| u.ends_with("lwjgl-platform-2.9.4-nightly-20150209.jar")),
-            "带 artifact 的条目应该照旧：{:?}",
-            urls
+        assert_eq!(jobs[0].fallback_url.as_deref(), Some(official.as_str()));
+    }
+
+    #[test]
+    fn test_maven_fallback_uses_bmcl_maven() {
+        let version = json!({
+            "libraries": [{
+                "name": "com.example:tool:1.0",
+                "url": "https://libraries.minecraft.net/"
+            }]
+        });
+
+        let (jobs, _dir) = run(&version, true);
+
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(
+            jobs[0].url,
+            "https://bmclapi2.bangbang93.com/maven/com/example/tool/1.0/tool-1.0.jar"
         );
-        assert!(
-            urls.iter()
-                .any(|u| u.ends_with("lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar")),
-            "Windows 的 natives 不能因为跳过主 jar 而丢：{:?}",
-            urls
+        assert_eq!(
+            jobs[0].fallback_url.as_deref(),
+            Some("https://libraries.minecraft.net/com/example/tool/1.0/tool-1.0.jar")
         );
-        assert!(
-            !urls.iter().any(|u| u.contains("2.9.2-nightly")),
-            "rules 只允许 osx 的条目不该在 Windows 上被抓进来：{:?}",
-            urls
+
+        let (jobs, _dir) = run(&version, false);
+        assert_eq!(
+            jobs[0].url,
+            "https://libraries.minecraft.net/com/example/tool/1.0/tool-1.0.jar"
         );
-        assert!(
-            !urls.iter().any(|u| u.contains("repo1.maven.org")),
-            "这套官方条目里不该出现 Maven Central：{:?}",
-            urls
+        assert_eq!(
+            jobs[0].fallback_url.as_deref(),
+            Some("https://bmclapi2.bangbang93.com/maven/com/example/tool/1.0/tool-1.0.jar")
         );
     }
 }

@@ -52,10 +52,13 @@ export function useVersionManager() {
 
   async function initListeners() {
     await eventSub.subscribe();
+    // 另一个实例可能刚创建/删除了版本；切回窗口时重新扫一遍目录
+    window.addEventListener('focus', loadGameDir);
   }
 
   function cleanup() {
     eventSub.unsubscribe();
+    window.removeEventListener('focus', loadGameDir);
   }
 
   return {

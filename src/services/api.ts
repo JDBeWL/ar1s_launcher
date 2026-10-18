@@ -17,13 +17,13 @@ import type {
   ModrinthSearchResult,
   WindowSettings,
   JvmAdvancedOptions,
-  AutoMemoryConfig,
   AuthStatus,
   DeviceCodeDisplay,
   MicrosoftLoginResult,
   VersionSizeInfo,
   JavaCompatibilityResult,
   GameConfig,
+  MemoryStats,
 } from '../types/events';
 
 const pendingRequests = new Map<string, Promise<unknown>>();
@@ -65,7 +65,6 @@ async function dedupedInvoke<T>(
 }
 
 export const versionApi = {
-  /** 默认 5 分钟缓存 */
   async getVersions(): Promise<VersionManifest> {
     return withCache(CacheKeys.VERSIONS, () => dedupedInvoke<VersionManifest>('get_versions'));
   },
@@ -141,35 +140,30 @@ export const instanceApi = {
 };
 
 export const loaderApi = {
-  /** 默认 5 分钟缓存 */
   async getAvailableLoaders(minecraftVersion: string): Promise<AvailableLoaders> {
     return withCache(`${CacheKeys.LOADERS}:${minecraftVersion}`, () =>
       dedupedInvoke<AvailableLoaders>('get_available_loaders', { minecraftVersion }),
     );
   },
 
-  /** 默认 5 分钟缓存 */
   async getForgeVersions(minecraftVersion: string): Promise<ForgeVersion[]> {
     return withCache(`${CacheKeys.LOADERS}:forge:${minecraftVersion}`, () =>
       dedupedInvoke<ForgeVersion[]>('get_forge_versions', { minecraftVersion }),
     );
   },
 
-  /** 默认 5 分钟缓存 */
   async getFabricVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
     return withCache(`${CacheKeys.LOADERS}:fabric:${minecraftVersion}`, () =>
       dedupedInvoke<LoaderVersionInfo[]>('get_fabric_versions', { minecraftVersion }),
     );
   },
 
-  /** 默认 5 分钟缓存 */
   async getQuiltVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
     return withCache(`${CacheKeys.LOADERS}:quilt:${minecraftVersion}`, () =>
       dedupedInvoke<LoaderVersionInfo[]>('get_quilt_versions', { minecraftVersion }),
     );
   },
 
-  /** 默认 5 分钟缓存 */
   async getNeoForgeVersions(minecraftVersion: string): Promise<LoaderVersionInfo[]> {
     return withCache(`${CacheKeys.LOADERS}:neoforge:${minecraftVersion}`, () =>
       dedupedInvoke<LoaderVersionInfo[]>('get_neoforge_versions', { minecraftVersion }),
@@ -264,18 +258,13 @@ export const configApi = {
     return invoke('set_last_selected_version', { version });
   },
 
-  async getTotalMemory(): Promise<number> {
-    const key = `${CacheKeys.CONFIG}:total_memory`;
-    const read = () => dedupedInvoke<number>('get_total_memory');
-
-    let mb = await withCache<number>(key, read, 10 * 60 * 1000);
-    if (!mb) {
-      // sysinfo 冷启动首次刷新可能返回 0，缓存住会让之后 10 分钟都读到 0
-      cache.delete(key);
-      mb = await read();
-      if (mb) cache.set(key, mb, 10 * 60 * 1000);
+  async getMemoryStats(): Promise<MemoryStats> {
+    // 占用要实时读，不能缓存；sysinfo 冷启动第一次可能返回 0，补一次
+    let stats = await invoke<MemoryStats>('get_memory_stats');
+    if (!stats.total_memory_mb) {
+      stats = await invoke<MemoryStats>('get_memory_stats');
     }
-    return mb;
+    return stats;
   },
 
   async getWindowSettings(): Promise<WindowSettings> {
@@ -300,27 +289,6 @@ export const configApi = {
 
   async checkMemoryWarning(memoryMb: number): Promise<string | null> {
     return dedupedInvoke<string | null>('check_memory_warning', { memoryMb });
-  },
-
-  async getAutoMemoryConfig(): Promise<AutoMemoryConfig> {
-    return withCache(
-      `${CacheKeys.CONFIG}:auto_memory`,
-      () => dedupedInvoke<AutoMemoryConfig>('get_auto_memory_config'),
-      10 * 60 * 1000,
-    );
-  },
-
-  async setAutoMemoryEnabled(enabled: boolean): Promise<void> {
-    await invoke('set_auto_memory_enabled', { enabled });
-    cache.deleteByPrefix(CacheKeys.CONFIG);
-  },
-
-  async autoSetMemory(): Promise<number | null> {
-    return invoke<number | null>('auto_set_memory');
-  },
-
-  async analyzeMemoryEfficiency(memoryMb: number): Promise<string> {
-    return dedupedInvoke<string>('analyze_memory_efficiency', { memoryMb });
   },
 };
 

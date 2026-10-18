@@ -46,8 +46,9 @@ const instanceSummary = computed(() => {
         ? `${i.loaderType} ${i.loaderVersion}`
         : i.loaderType
       : '';
+  const memory = i.autoMemoryMb ? `自动内存 ≈ ${(i.autoMemoryMb / 1024).toFixed(1)} GB` : '';
   // 实例名经常就是版本号本身，副标题再写一遍只会变成噪音
-  const parts = [i.gameVersion || i.version, loader, i.modCount ? `${i.modCount} 个模组` : '']
+  const parts = [i.gameVersion || i.version, loader, i.modCount ? `${i.modCount} 个模组` : '', memory]
     .filter(Boolean)
     .filter((p) => p !== i.name);
   if (parts.length === 0 && i.lastPlayed != null) parts.push(`上次游玩 ${formatLastPlayed(i.lastPlayed)}`);
