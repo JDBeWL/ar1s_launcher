@@ -9,7 +9,6 @@ use crate::services::launcher::isolation;
 use crate::services::{config, download, http_client, loaders, modrinth};
 use crate::utils::file_utils::{self, validate_instance_name_or_error};
 use log::{error, info, warn};
-use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
 use std::io::{Read, Write};
@@ -108,7 +107,6 @@ struct ModrinthDependencies {
 
 pub struct ModpackInstaller {
     modrinth_service: modrinth::ModrinthService,
-    http_client: &'static Client,
 }
 
 static INSTALLER: std::sync::LazyLock<ModpackInstaller> =
@@ -122,7 +120,6 @@ impl ModpackInstaller {
     fn new() -> Self {
         Self {
             modrinth_service: modrinth::ModrinthService::new(),
-            http_client: http_client::get_client(),
         }
     }
 
@@ -451,11 +448,14 @@ impl ModpackInstaller {
         }
 
         let dl_config = config::load_config()?;
-        let max_concurrent = (dl_config.download_threads as usize).max(1);
+        let max_concurrent = (dl_config.download_threads as usize).clamp(
+            config::MIN_DOWNLOAD_THREADS as usize,
+            config::MAX_DOWNLOAD_THREADS as usize,
+        );
         let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
         let completed_count = Arc::new(AtomicUsize::new(0));
         let failed_files = Arc::new(Mutex::new(Vec::<String>::new()));
-        let client = self.http_client;
+        let client = http_client::get_client();
 
         // download_file 靠这两个标志在流式读取中途响应取消
         let running = Arc::new(AtomicBool::new(true));
@@ -479,6 +479,7 @@ impl ModpackInstaller {
             let cancelled = cancelled.clone();
             let bytes_downloaded = bytes_downloaded.clone();
             let bytes_since_last = bytes_since_last.clone();
+            let client = client.clone();
             // Modrinth 每个文件给多个镜像：第一个当主源、第二个当备源
             let job = DownloadJob {
                 url: file.downloads.first().cloned().unwrap_or_default(),
@@ -517,7 +518,7 @@ impl ModpackInstaller {
                         return;
                     }
                     match download::download_file(
-                        client,
+                        &client,
                         &job,
                         &job.url,
                         &running,

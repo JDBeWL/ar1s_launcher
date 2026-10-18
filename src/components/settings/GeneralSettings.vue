@@ -8,11 +8,13 @@ import { configApi } from '../../services';
 import { logError } from '../../utils/logger';
 import { getThemePalette } from '../../utils/storage';
 import ThemePalettePicker from './ThemePalettePicker.vue';
+import NetworkProxySettings from './NetworkProxySettings.vue';
 
 const settingsStore = useSettingsStore();
 const gameDir = ref('');
 const versionIsolation = ref(true);
-const downloadThreads = ref(32);
+const downloadThreads = ref(16);
+const downloadThreadsInput = ref('16');
 const isInitialized = ref(false);
 const appVersion = __APP_VERSION__;
 const themePalette = ref(getThemePalette());
@@ -61,10 +63,15 @@ async function selectGameDir() {
 
 async function loadDownloadThreads() {
   try {
-    downloadThreads.value = await configApi.getDownloadThreads();
+    downloadThreads.value = clampDownloadThreads(await configApi.getDownloadThreads());
+    downloadThreadsInput.value = String(downloadThreads.value);
   } catch (err) {
     logError('Failed to get download threads', err, 'GeneralSettings');
   }
+}
+
+function clampDownloadThreads(value: number): number {
+  return Math.min(256, Math.max(1, Math.round(value)));
 }
 
 async function saveDownloadThreads() {
@@ -73,6 +80,20 @@ async function saveDownloadThreads() {
   } catch (err) {
     logError('Failed to set download threads', err, 'GeneralSettings');
   }
+}
+
+function commitDownloadThreads() {
+  const raw = downloadThreadsInput.value.trim();
+  const parsed = raw === '' ? Number.NaN : Number(raw);
+  if (!Number.isFinite(parsed)) {
+    downloadThreadsInput.value = String(downloadThreads.value);
+    return;
+  }
+
+  const clamped = clampDownloadThreads(parsed);
+  downloadThreads.value = clamped;
+  downloadThreadsInput.value = String(clamped);
+  void saveDownloadThreads();
 }
 
 async function loadVersionIsolation() {
@@ -115,6 +136,10 @@ watch(
     await settingsStore.saveDownloadMirror();
   },
 );
+
+watch(downloadThreads, (value) => {
+  downloadThreadsInput.value = String(value);
+});
 
 watch(themePalette, (value) => {
   localStorage.setItem('themePalette', value);
@@ -202,14 +227,25 @@ onUnmounted(() => {
         </div>
 
         <div class="mb-5">
-          <div class="d-flex align-center mb-2">
+          <div class="d-flex align-center justify-space-between mb-2">
             <span class="text-body-medium">下载线程数</span>
-            <v-chip size="small" color="primary" variant="tonal" class="ml-2">{{ downloadThreads }}</v-chip>
+            <v-text-field
+              v-model="downloadThreadsInput"
+              type="number"
+              density="compact"
+              aria-label="下载线程数"
+              suffix="线程"
+              hide-details
+              hide-spin-buttons
+              class="download-threads-input"
+              @blur="commitDownloadThreads"
+              @keyup.enter="commitDownloadThreads"
+            />
           </div>
           <v-slider
             v-model="downloadThreads"
             :min="1"
-            :max="64"
+            :max="256"
             :step="1"
             hide-details
             thumb-label
@@ -220,13 +256,14 @@ onUnmounted(() => {
               <span class="text-body-small text-on-surface-variant">1</span>
             </template>
             <template #append>
-              <span class="text-body-small text-on-surface-variant">64</span>
+              <span class="text-body-small text-on-surface-variant">256</span>
             </template>
           </v-slider>
+          <p class="text-body-small text-on-surface-variant mt-2 mb-0">范围 1–256，过高可能触发下载源限速</p>
         </div>
 
         <div>
-          <div class="text-body-medium mb-3">下载源</div>
+          <div class="text-body-medium mb-3">优先下载源</div>
           <v-btn-toggle
             v-model="settingsStore.downloadMirror"
             mandatory
@@ -246,10 +283,14 @@ onUnmounted(() => {
               BMCL 镜像
             </v-btn>
           </v-btn-toggle>
-          <p class="text-body-small text-on-surface-variant mt-2 mb-0">BMCL 镜像通常在国内访问更快</p>
+          <p class="text-body-small text-on-surface-variant mt-2 mb-0">
+            优先使用所选源；BMCL 镜像不可用时自动回退官方源
+          </p>
         </div>
       </v-card-text>
     </v-card>
+
+    <NetworkProxySettings />
 
     <v-card variant="flat" color="surface-container" class="mb-4">
       <v-card-text class="pa-4">
@@ -301,4 +342,8 @@ onUnmounted(() => {
   </div>
 </template>
 
-<style scoped></style>
+<style scoped>
+.download-threads-input {
+  max-width: 140px;
+}
+</style>

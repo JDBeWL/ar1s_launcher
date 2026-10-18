@@ -24,6 +24,8 @@ import type {
   JavaCompatibilityResult,
   GameConfig,
   MemoryStats,
+  ProxySettings,
+  ProxyTestResult,
 } from '../types/events';
 
 const pendingRequests = new Map<string, Promise<unknown>>();
@@ -239,6 +241,22 @@ export const configApi = {
 
   async setDownloadThreads(threads: number): Promise<void> {
     return invoke('set_download_threads', { threads });
+  },
+
+  async getProxySettings(): Promise<ProxySettings> {
+    return dedupedInvoke<ProxySettings>('get_proxy_settings');
+  },
+
+  /** 后端会校验并规范化地址，保存后立即重建共享 HTTP 客户端 */
+  async setProxySettings(settings: ProxySettings): Promise<ProxySettings> {
+    const applied = await invoke<ProxySettings>('set_proxy_settings', { settings });
+    cache.deleteByPrefix(CacheKeys.CONFIG);
+    return applied;
+  },
+
+  /** 按传入设置临时建客户端测试，不保存配置 */
+  async testProxy(settings: ProxySettings): Promise<ProxyTestResult> {
+    return invoke<ProxyTestResult>('test_proxy', { settings });
   },
 
   async loadConfigKey(key: string): Promise<string | null> {

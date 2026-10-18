@@ -12,6 +12,7 @@ mod version;
 pub use batch::download_all_files;
 pub use file::download_file;
 pub use http::get_http_client;
+pub(crate) use http::reload as reload_http_client;
 pub use manifest::VersionSizeInfo;
 pub use manifest::get_version_size;
 pub use manifest::get_versions;

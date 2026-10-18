@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub fn default_download_threads() -> u8 {
-    8
+pub fn default_download_threads() -> u16 {
+    16
 }
 
 // 单位 MB
@@ -54,6 +54,31 @@ impl Default for GcStrategy {
     fn default() -> Self {
         GcStrategy::G1
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyMode {
+    #[default]
+    System,
+    Direct,
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxySettings {
+    #[serde(default)]
+    pub mode: ProxyMode,
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyTestResult {
+    pub latency_ms: u64,
+    pub status: u16,
 }
 
 // 默认只做 G1GC 优化，其余 JVM 参数与官方启动器保持一致；用户可在「设置 - 高级选项」逐项开启
@@ -115,7 +140,7 @@ pub struct GameConfig {
     #[serde(default = "default_true")]
     pub auto_match_java: bool,
     #[serde(default = "default_download_threads")]
-    pub download_threads: u8,
+    pub download_threads: u16,
     pub language: Option<String>,
     pub username: Option<String>,
     pub uuid: Option<String>,
@@ -124,6 +149,11 @@ pub struct GameConfig {
     #[serde(default = "default_max_memory")]
     pub max_memory: u32,
     pub download_mirror: Option<String>,
+    /// 启动器网络代理模式，默认跟随系统
+    #[serde(default)]
+    pub proxy_mode: ProxyMode,
+    #[serde(default)]
+    pub proxy_url: Option<String>,
     #[serde(default = "default_false")]
     pub auto_memory_enabled: bool,
     pub window_width: Option<u32>,
@@ -168,6 +198,8 @@ impl Default for GameConfig {
             skin_url: None,
             max_memory: default_max_memory(),
             download_mirror: None,
+            proxy_mode: ProxyMode::System,
+            proxy_url: None,
             auto_memory_enabled: false,
             window_width: None,
             window_height: None,
@@ -307,10 +339,22 @@ pub mod modpack;
 
 #[cfg(test)]
 mod tests {
-    use super::GameConfig;
+    use super::{GameConfig, ProxyMode};
 
     #[test]
     fn test_auto_match_java_is_enabled_by_default() {
         assert!(GameConfig::default().auto_match_java);
+    }
+
+    #[test]
+    fn test_proxy_follows_system_by_default() {
+        let config = GameConfig::default();
+        assert_eq!(config.proxy_mode, ProxyMode::System);
+        assert_eq!(config.proxy_url, None);
+    }
+
+    #[test]
+    fn test_download_threads_default_to_16() {
+        assert_eq!(GameConfig::default().download_threads, 16);
     }
 }

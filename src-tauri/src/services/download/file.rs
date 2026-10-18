@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 pub async fn download_file(
-    http: &'static reqwest::Client,
+    http: &reqwest::Client,
     job: &DownloadJob,
     url: &str,
     state: &Arc<AtomicBool>,
@@ -24,7 +24,7 @@ pub async fn download_file(
     }
 
     if job.path.exists() {
-        match file_utils::verify_and_repair_file(job, &http).await {
+        match file_utils::verify_and_repair_file(job, http).await {
             Ok(true) => {
                 debug!(
                     "File already exists and is valid, skipping: {}",
@@ -104,7 +104,7 @@ fn should_try_fallback(e: &LauncherError) -> bool {
 }
 
 async fn download_with_resume(
-    client: &'static reqwest::Client,
+    client: &reqwest::Client,
     url: &str,
     job: &DownloadJob,
     state: &Arc<AtomicBool>,
@@ -161,7 +161,7 @@ async fn get_existing_file_size(path: &std::path::Path) -> u64 {
 }
 
 async fn download_chunk_with_resume(
-    client: &'static reqwest::Client,
+    client: &reqwest::Client,
     url: &str,
     job: &DownloadJob,
     state: &Arc<AtomicBool>,

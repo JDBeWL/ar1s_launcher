@@ -51,13 +51,28 @@ pub fn set_game_dir(path: String, window: tauri::Window) -> Result<(), LauncherE
 }
 
 #[tauri::command]
-pub fn get_download_threads() -> Result<u8, LauncherError> {
+pub fn get_download_threads() -> Result<u16, LauncherError> {
     config::get_download_threads()
 }
 
 #[tauri::command]
-pub fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
+pub fn set_download_threads(threads: u16) -> Result<(), LauncherError> {
     config::set_download_threads(threads)
+}
+
+#[tauri::command]
+pub fn get_proxy_settings() -> Result<ProxySettings, LauncherError> {
+    Ok(crate::services::proxy::current_settings())
+}
+
+#[tauri::command]
+pub async fn set_proxy_settings(settings: ProxySettings) -> Result<ProxySettings, LauncherError> {
+    run_blocking(move || crate::services::proxy::save_settings(settings)).await
+}
+
+#[tauri::command]
+pub async fn test_proxy(settings: ProxySettings) -> Result<ProxyTestResult, LauncherError> {
+    crate::services::proxy::test_connection(settings).await
 }
 
 #[tauri::command]

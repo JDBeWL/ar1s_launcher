@@ -24,6 +24,9 @@ static CONFIG_MUTATION_LOCK: Mutex<()> = Mutex::new(());
 const CONFIG_LOCK_TIMEOUT: Duration = Duration::from_secs(3);
 const AUTH_LOCK_TIMEOUT: Duration = Duration::from_secs(90);
 
+pub const MIN_DOWNLOAD_THREADS: u16 = 1;
+pub const MAX_DOWNLOAD_THREADS: u16 = 256;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileStamp {
     modified: Option<SystemTime>,
@@ -277,13 +280,15 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         java_path: None,
         custom_java_paths: Vec::new(),
         auto_match_java: true,
-        download_threads: 8,
+        download_threads: 16,
         language: Some("zh_cn".to_string()),
         username: None,
         uuid: None,
         skin_url: None,
         max_memory: crate::models::default_max_memory(),
         download_mirror: Some("bmcl".to_string()),
+        proxy_mode: crate::models::ProxyMode::System,
+        proxy_url: None,
         auto_memory_enabled: false,
         window_width: None,
         window_height: None,
@@ -535,7 +540,7 @@ impl ConfigKey {
                     .map_err(|_| LauncherError::Custom("版本隔离设置值无效".to_string()))?
             }
             Self::DownloadThreads => {
-                let threads: u8 = value
+                let threads: u16 = value
                     .parse()
                     .map_err(|_| LauncherError::Custom("下载线程数设置值无效".to_string()))?;
                 validate_download_threads(threads)?;
@@ -684,23 +689,21 @@ pub fn set_game_dir(path: String, window: &tauri::Window) -> Result<(), Launcher
     Ok(())
 }
 
-pub fn get_download_threads() -> Result<u8, LauncherError> {
+pub fn get_download_threads() -> Result<u16, LauncherError> {
     get_config_value(|config| config.download_threads)
 }
 
-fn validate_download_threads(threads: u8) -> Result<(), LauncherError> {
-    const MIN_THREADS: u8 = 1;
-    const MAX_THREADS: u8 = 64;
-    if !(MIN_THREADS..=MAX_THREADS).contains(&threads) {
+fn validate_download_threads(threads: u16) -> Result<(), LauncherError> {
+    if !(MIN_DOWNLOAD_THREADS..=MAX_DOWNLOAD_THREADS).contains(&threads) {
         return Err(LauncherError::Custom(format!(
             "下载线程数必须在 {} 到 {} 之间",
-            MIN_THREADS, MAX_THREADS
+            MIN_DOWNLOAD_THREADS, MAX_DOWNLOAD_THREADS
         )));
     }
     Ok(())
 }
 
-pub fn set_download_threads(threads: u8) -> Result<(), LauncherError> {
+pub fn set_download_threads(threads: u16) -> Result<(), LauncherError> {
     validate_download_threads(threads)?;
     set_config_value(|config| config.download_threads = threads)
 }
@@ -796,9 +799,9 @@ mod tests {
     #[test]
     fn test_download_threads_must_stay_in_range() {
         assert!(validate_download_threads(1).is_ok());
-        assert!(validate_download_threads(64).is_ok());
+        assert!(validate_download_threads(256).is_ok());
         assert!(validate_download_threads(0).is_err());
-        assert!(validate_download_threads(65).is_err());
+        assert!(validate_download_threads(257).is_err());
     }
 
     #[test]

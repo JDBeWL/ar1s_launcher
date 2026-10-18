@@ -241,6 +241,18 @@ export interface JavaCompatibilityResult {
   autoMatchEnabled: boolean;
 }
 
+export type ProxyMode = 'system' | 'direct' | 'custom';
+
+export interface ProxySettings {
+  mode: ProxyMode;
+  url: string | null;
+}
+
+export interface ProxyTestResult {
+  latencyMs: number;
+  status: number;
+}
+
 export interface GameConfig {
   game_dir: string;
   version_isolation: boolean;
@@ -254,6 +266,8 @@ export interface GameConfig {
   skin_url: string | null;
   max_memory: number;
   download_mirror: string | null;
+  proxy_mode: ProxyMode;
+  proxy_url: string | null;
   auto_memory_enabled: boolean;
   window_width: number | null;
   window_height: number | null;

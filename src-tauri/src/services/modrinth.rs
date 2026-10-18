@@ -17,24 +17,21 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 const MODRINTH_API_BASE: &str = "https://api.modrinth.com/v2";
 const MAX_API_RETRIES: u32 = 3;
 
-pub struct ModrinthService {
-    client: &'static Client,
-}
+pub struct ModrinthService;
 
 impl ModrinthService {
     pub fn new() -> Self {
-        Self {
-            client: http_client::get_client(),
-        }
+        Self
     }
 
     async fn retry_request(
         &self,
         request_fn: impl Fn(&Client) -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response, LauncherError> {
+        let client = http_client::get_client();
         let mut last_err = None;
         for attempt in 0..=MAX_API_RETRIES {
-            let builder = request_fn(self.client);
+            let builder = request_fn(&client);
             match builder.send().await {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
@@ -410,6 +407,7 @@ impl ModrinthService {
         let state = Arc::new(AtomicBool::new(true));
         let bytes_downloaded = Arc::new(AtomicU64::new(0));
         let bytes_since_last = Arc::new(AtomicU64::new(0));
+        let http = download::get_http_client();
 
         let mut last_error = None;
         for attempt in 0..3 {
@@ -418,7 +416,7 @@ impl ModrinthService {
             }
 
             match download::download_file(
-                download::get_http_client(),
+                &http,
                 &job,
                 file_url,
                 &state,

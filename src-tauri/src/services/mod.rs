@@ -15,3 +15,4 @@ pub mod memory;
 pub mod microsoft_auth;
 pub mod modpack_installer;
 pub mod modrinth;
+pub mod proxy;

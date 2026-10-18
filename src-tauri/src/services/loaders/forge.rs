@@ -357,10 +357,10 @@ async fn download_forge_installer(
 
     for url in &sources {
         info!("Forge: 尝试下载: {}", url);
-        if let Ok(resp) = download_with_retry(url, client, 3).await {
+        if let Ok(resp) = download_with_retry(url, &client, 3).await {
             if let Ok(bytes) = resp.bytes().await {
                 if bytes.len() > 1024 && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
-                    match download_sha1(client, url).await {
+                    match download_sha1(&client, url).await {
                         Some(expected) if !file_utils::verify_sha1(&bytes, &expected) => {
                             warn!("Forge: 安装器 sha1 不匹配，跳过该源: {}", url);
                             continue;
@@ -781,7 +781,7 @@ pub(crate) async fn download_library_from_profile(
         ];
 
         for url in &sources {
-            if let Ok(resp) = download_with_retry(url, http_client::get_client(), 2).await {
+            if let Ok(resp) = download_with_retry(url, &http_client::get_client(), 2).await {
                 if let Ok(bytes) = resp.bytes().await {
                     if bytes.len() > 100 && payload_valid(&target_path, &bytes, expected_sha1) {
                         fs::write(&target_path, &bytes).map_err(|e| {

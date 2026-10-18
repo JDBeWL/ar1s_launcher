@@ -41,8 +41,11 @@ pub async fn download_all_files(
     window: &Window,
 ) -> Result<(), LauncherError> {
     let config = load_config()?;
-    // 旧配置或手改配置可能是 0；Semaphore::new(0) 会让所有任务永久等许可
-    let threads = (config.download_threads as usize).max(1);
+    // 旧配置或手改配置可能是 0 或超过上限；Semaphore::new(0) 会让所有任务永久等许可
+    let threads = (config.download_threads as usize).clamp(
+        crate::services::config::MIN_DOWNLOAD_THREADS as usize,
+        crate::services::config::MAX_DOWNLOAD_THREADS as usize,
+    );
 
     let http = get_http_client();
 
@@ -71,7 +74,7 @@ pub async fn download_all_files(
         DownloadState::load_from_file(&state_file).unwrap_or_else(DownloadState::new),
     ));
 
-    let filtered_jobs: Vec<DownloadJob> = {
+    let mut filtered_jobs: Vec<DownloadJob> = {
         let mut state = download_state.lock().await;
         jobs.iter()
             .filter(|job| {
@@ -94,6 +97,7 @@ pub async fn download_all_files(
             .cloned()
             .collect()
     };
+    order_jobs_for_dispatch(&mut filtered_jobs);
 
     // 必须在过滤之后统计，才能反映真实状态
     let (completed_count, resumed_bytes) = {
@@ -175,7 +179,7 @@ pub async fn download_all_files(
         let global_cancel_clone = global_cancel.clone();
         let handle = spawn_download_task(
             job,
-            http,
+            http.clone(),
             state.clone(),
             global_cancel_clone,
             files_downloaded.clone(),
@@ -271,6 +275,11 @@ pub async fn download_all_files(
     Ok(())
 }
 
+/// 大文件先派发，尾部由大量小文件收尾，避免最后几个大文件把并发槽拖住
+fn order_jobs_for_dispatch(jobs: &mut [DownloadJob]) {
+    jobs.sort_by_key(|job| std::cmp::Reverse(job.size));
+}
+
 fn spawn_progress_reporter(
     bytes_downloaded: Arc<AtomicU64>,
     bytes_since_last: Arc<AtomicU64>,
@@ -342,7 +351,7 @@ fn spawn_state_saver(
 
 fn spawn_download_task(
     job: DownloadJob,
-    http: &'static reqwest::Client,
+    http: reqwest::Client,
     state: Arc<AtomicBool>,
     global_cancel: Arc<AtomicBool>,
     files_downloaded: Arc<AtomicU64>,
@@ -387,7 +396,7 @@ fn spawn_download_task(
             debug!("Downloading file: {} ({})", current_url, attempt_str);
 
             match download_file(
-                http,
+                &http,
                 &job,
                 current_url,
                 &state,
@@ -491,4 +500,29 @@ fn emit_completed_progress(window: &Window, bytes: u64, total: u64) {
             error: None,
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::order_jobs_for_dispatch;
+    use crate::models::DownloadJob;
+    use std::path::PathBuf;
+
+    fn job(size: u64) -> DownloadJob {
+        DownloadJob {
+            url: format!("https://example.com/{size}"),
+            fallback_url: None,
+            path: PathBuf::from(format!("{size}.jar")),
+            size,
+            hash: None,
+        }
+    }
+
+    #[test]
+    fn test_order_jobs_dispatches_largest_first() {
+        let mut jobs = vec![job(10), job(500), job(0), job(100)];
+        order_jobs_for_dispatch(&mut jobs);
+        let sizes: Vec<u64> = jobs.iter().map(|job| job.size).collect();
+        assert_eq!(sizes, vec![500, 100, 10, 0]);
+    }
 }
