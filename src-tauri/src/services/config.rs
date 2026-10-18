@@ -1,13 +1,13 @@
 //! 配置文件读写模块
 //!
-//! exe 同目录可写时保持便携模式，否则改用 Tauri 应用目录；写入走临时文件 rename，
+//! 配置固定放在 exe 同级目录；写入走临时文件 rename，
 //! 解析失败时备份 .bak 再重建默认配置
 
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 use crate::errors::LauncherError;
 use crate::models::{GameConfig, GameDirInfo};
@@ -22,46 +22,6 @@ static CONFIG_CACHE: std::sync::LazyLock<RwLock<Option<Arc<GameConfig>>>> =
 
 static CONFIG_MUTATION_LOCK: Mutex<()> = Mutex::new(());
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StorageLayout {
-    pub config_dir: PathBuf,
-    pub data_dir: PathBuf,
-    pub log_dir: PathBuf,
-    pub portable: bool,
-}
-
-fn portable_layout(exe_dir: &Path) -> StorageLayout {
-    StorageLayout {
-        config_dir: exe_dir.to_path_buf(),
-        data_dir: exe_dir.to_path_buf(),
-        log_dir: exe_dir.join("logs"),
-        portable: true,
-    }
-}
-
-fn choose_storage_layout(
-    exe_dir: &Path,
-    app_config_dir: PathBuf,
-    app_data_dir: PathBuf,
-    app_log_dir: PathBuf,
-    exe_writable: bool,
-) -> StorageLayout {
-    if exe_writable {
-        portable_layout(exe_dir)
-    } else {
-        StorageLayout {
-            config_dir: app_config_dir,
-            data_dir: app_data_dir,
-            log_dir: app_log_dir,
-            portable: false,
-        }
-    }
-}
-
-fn default_game_dir(layout: &StorageLayout) -> PathBuf {
-    layout.data_dir.join(".minecraft")
-}
-
 fn exe_dir_or_dot() -> PathBuf {
     match EXE_DIR.as_ref() {
         Ok(dir) => dir.clone(),
@@ -69,80 +29,19 @@ fn exe_dir_or_dot() -> PathBuf {
     }
 }
 
-static STORAGE: OnceLock<StorageLayout> = OnceLock::new();
+static STORAGE: OnceLock<PathBuf> = OnceLock::new();
 
 /// 未初始化时退回 exe 目录，保证测试和早期调用仍有可用路径
-fn storage() -> &'static StorageLayout {
-    STORAGE.get_or_init(|| portable_layout(&exe_dir_or_dot()))
+fn storage() -> &'static Path {
+    STORAGE.get_or_init(exe_dir_or_dot).as_path()
 }
 
-pub fn init_storage(app: &tauri::AppHandle) -> &'static StorageLayout {
-    STORAGE.get_or_init(|| {
-        let exe_dir = exe_dir_or_dot();
-        // 便携模式只用于 Windows：macOS 的 .app 内部和 Linux AppImage 都不该放配置
-        let exe_writable = cfg!(windows) && is_dir_writable(&exe_dir);
-        let app_config_dir = app
-            .path()
-            .app_config_dir()
-            .unwrap_or_else(|_| exe_dir.join("config"));
-        let app_data_dir = app
-            .path()
-            .app_local_data_dir()
-            .unwrap_or_else(|_| exe_dir.clone());
-        let app_log_dir = app
-            .path()
-            .app_log_dir()
-            .unwrap_or_else(|_| exe_dir.join("logs"));
-
-        let layout = choose_storage_layout(
-            &exe_dir,
-            app_config_dir,
-            app_data_dir,
-            app_log_dir,
-            exe_writable,
-        );
-
-        for dir in [&layout.config_dir, &layout.data_dir, &layout.log_dir] {
-            if let Err(e) = fs::create_dir_all(dir) {
-                eprintln!("无法创建存储目录 {}: {}", dir.display(), e);
-            }
-        }
-
-        if !layout.portable {
-            let legacy = exe_dir.join("ar1s.json");
-            let target = layout.config_dir.join("ar1s.json");
-            match migrate_legacy_config(&legacy, &target) {
-                Ok(true) => eprintln!("已将旧配置迁移到 {}", target.display()),
-                Ok(false) => {}
-                Err(e) => eprintln!("迁移旧配置失败: {}", e),
-            }
-        }
-
-        layout
-    })
+pub fn init_storage() -> &'static Path {
+    storage()
 }
 
-fn is_dir_writable(dir: &Path) -> bool {
-    let probe = dir.join(format!(".ar1s-write-test-{}", std::process::id()));
-    match fs::File::create(&probe) {
-        Ok(file) => {
-            drop(file);
-            let _ = fs::remove_file(&probe);
-            true
-        }
-        Err(_) => false,
-    }
-}
-
-fn migrate_legacy_config(legacy: &Path, target: &Path) -> std::io::Result<bool> {
-    if target.exists() || !legacy.exists() {
-        return Ok(false);
-    }
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::copy(legacy, target)?;
-    Ok(true)
+fn default_game_dir(root: &Path) -> PathBuf {
+    root.join(".minecraft")
 }
 
 fn lock_config() -> Result<std::sync::MutexGuard<'static, ()>, LauncherError> {
@@ -433,11 +332,11 @@ static EXE_DIR: std::sync::LazyLock<Result<PathBuf, String>> = std::sync::LazyLo
 });
 
 fn get_config_path() -> Result<PathBuf, LauncherError> {
-    Ok(storage().config_dir.join("ar1s.json"))
+    Ok(storage().join("ar1s.json"))
 }
 
 pub(crate) fn credentials_path() -> PathBuf {
-    storage().config_dir.join("credentials.json")
+    storage().join("credentials.json")
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -796,52 +695,13 @@ pub fn remove_custom_java_path(path: &str) -> Result<(), LauncherError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_storage_layout, config_for_disk, default_game_dir, migrate_legacy_config};
-    use std::fs;
+    use super::{config_for_disk, default_game_dir};
     use std::path::PathBuf;
 
     #[test]
-    fn test_storage_layout_keeps_portable_exe_dir_when_writable() {
+    fn test_game_dir_is_next_to_exe() {
         let exe = PathBuf::from("C:/launcher");
-        let layout = choose_storage_layout(
-            &exe,
-            PathBuf::from("C:/users/me/AppData/Roaming/ar1s"),
-            PathBuf::from("C:/users/me/AppData/Local/ar1s"),
-            PathBuf::from("C:/users/me/AppData/Local/ar1s/logs"),
-            true,
-        );
-
-        assert!(layout.portable);
-        assert_eq!(layout.config_dir, exe);
-        assert_eq!(layout.data_dir, exe);
-        assert_eq!(layout.log_dir, exe.join("logs"));
-        assert_eq!(default_game_dir(&layout), exe.join(".minecraft"));
-    }
-
-    #[test]
-    fn test_storage_layout_uses_app_dirs_when_exe_is_read_only() {
-        let exe = PathBuf::from("C:/Program Files/Ar1s Launcher");
-        let layout = choose_storage_layout(
-            &exe,
-            PathBuf::from("C:/users/me/AppData/Roaming/ar1s"),
-            PathBuf::from("C:/users/me/AppData/Local/ar1s"),
-            PathBuf::from("C:/users/me/AppData/Local/ar1s/logs"),
-            false,
-        );
-
-        assert!(!layout.portable);
-        assert_eq!(
-            layout.config_dir,
-            PathBuf::from("C:/users/me/AppData/Roaming/ar1s")
-        );
-        assert_eq!(
-            layout.data_dir,
-            PathBuf::from("C:/users/me/AppData/Local/ar1s")
-        );
-        assert_eq!(
-            default_game_dir(&layout),
-            PathBuf::from("C:/users/me/AppData/Local/ar1s/.minecraft")
-        );
+        assert_eq!(default_game_dir(&exe), exe.join(".minecraft"));
     }
 
     #[test]
@@ -861,22 +721,5 @@ mod tests {
         assert!(stripped.ms_access_token.is_none());
         assert!(stripped.ms_refresh_token.is_none());
         assert_eq!(stripped.ms_expires_at, Some(123));
-    }
-
-    #[test]
-    fn test_migrate_legacy_config_only_when_target_is_missing() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let legacy = dir.path().join("ar1s.json");
-        let target = dir.path().join("config/ar1s.json");
-
-        assert!(!migrate_legacy_config(&legacy, &target).unwrap());
-
-        fs::write(&legacy, b"legacy").unwrap();
-        assert!(migrate_legacy_config(&legacy, &target).unwrap());
-        assert_eq!(fs::read(&target).unwrap(), b"legacy");
-
-        fs::write(&legacy, b"changed").unwrap();
-        assert!(!migrate_legacy_config(&legacy, &target).unwrap());
-        assert_eq!(fs::read(&target).unwrap(), b"legacy");
     }
 }

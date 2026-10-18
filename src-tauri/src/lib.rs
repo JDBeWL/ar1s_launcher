@@ -88,22 +88,18 @@ pub fn run() {
             controllers::modpack_controller::install_modrinth_modpack,
             controllers::modpack_controller::cancel_modpack_install
         ])
-        .setup(|app| {
-            let layout = services::config::init_storage(app.handle());
-            if let Err(e) = setup_logger(&layout.log_dir) {
+        .setup(|_app| {
+            let storage_dir = services::config::init_storage();
+            let log_dir = storage_dir.join("logs");
+            if let Err(e) = setup_logger(&log_dir) {
                 eprintln!("Error setting up logger: {}", e);
             }
 
             log::info!("[DEBUG] 程序启动");
             log::info!(
-                "[DEBUG] Tauri应用初始化完成（{}模式，配置目录: {}，日志目录: {}）",
-                if layout.portable {
-                    "便携"
-                } else {
-                    "用户目录"
-                },
-                layout.config_dir.display(),
-                layout.log_dir.display()
+                "[DEBUG] Tauri应用初始化完成（存储目录: {}，日志目录: {}）",
+                storage_dir.display(),
+                log_dir.display()
             );
 
             if let Err(e) = services::config::preload_config() {
