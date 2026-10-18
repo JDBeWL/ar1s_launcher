@@ -52,6 +52,7 @@ pub fn remove_custom_java_path(path: String) -> Result<(), LauncherError> {
 pub fn check_java_compatibility(
     mc_version: String,
 ) -> Result<JavaCompatibilityResult, LauncherError> {
+    crate::utils::file_utils::validate_version_id_or_error(&mc_version)?;
     let config = load_config()?;
 
     // 传进来的可能是实例 ID，判据自己会沿 inheritsFrom 找到声明

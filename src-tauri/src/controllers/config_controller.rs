@@ -93,9 +93,10 @@ pub fn get_jvm_advanced_options() -> Result<JvmAdvancedOptions, LauncherError> {
 
 #[tauri::command]
 pub fn set_jvm_advanced_options(options: JvmAdvancedOptions) -> Result<(), LauncherError> {
-    let mut cfg = (*config::load_config()?).clone();
-    cfg.jvm_advanced = options;
-    config::save_config(&cfg)
+    config::update_config(|cfg| {
+        cfg.jvm_advanced = options;
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -138,12 +139,12 @@ pub fn set_window_settings(
     height: Option<u32>,
     fullscreen: bool,
 ) -> Result<(), LauncherError> {
-    let mut config = (*config::load_config()?).clone();
-    config.window_width = width;
-    config.window_height = height;
-    config.fullscreen = fullscreen;
-    config::save_config(&config)?;
-    Ok(())
+    config::update_config(|config| {
+        config.window_width = width;
+        config.window_height = height;
+        config.fullscreen = fullscreen;
+        Ok(())
+    })
 }
 
 #[tauri::command]

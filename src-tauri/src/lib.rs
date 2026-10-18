@@ -9,18 +9,12 @@ pub mod services;
 pub mod utils;
 pub use errors::LauncherError;
 pub use models::*;
-pub use services::config::{load_config, save_config};
+pub use services::config::{load_config, save_config, update_config};
 pub use services::launcher::launch_minecraft;
 use utils::logger::setup_logger;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    if let Err(e) = setup_logger() {
-        eprintln!("Error setting up logger: {}", e);
-    }
-
-    log::info!("[DEBUG] 程序启动");
-
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -94,8 +88,23 @@ pub fn run() {
             controllers::modpack_controller::install_modrinth_modpack,
             controllers::modpack_controller::cancel_modpack_install
         ])
-        .setup(|_| {
-            log::info!("[DEBUG] Tauri应用初始化完成");
+        .setup(|app| {
+            let layout = services::config::init_storage(app.handle());
+            if let Err(e) = setup_logger(&layout.log_dir) {
+                eprintln!("Error setting up logger: {}", e);
+            }
+
+            log::info!("[DEBUG] 程序启动");
+            log::info!(
+                "[DEBUG] Tauri应用初始化完成（{}模式，配置目录: {}，日志目录: {}）",
+                if layout.portable {
+                    "便携"
+                } else {
+                    "用户目录"
+                },
+                layout.config_dir.display(),
+                layout.log_dir.display()
+            );
 
             if let Err(e) = services::config::preload_config() {
                 log::error!("配置预加载失败: {}", e);

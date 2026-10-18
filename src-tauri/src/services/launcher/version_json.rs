@@ -3,6 +3,7 @@
 //! 沿 inheritsFrom 逐级合并父版本，libraries 与 arguments 去重、子版本优先
 
 use crate::errors::LauncherError;
+use crate::utils::file_utils;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -12,7 +13,8 @@ pub fn load_and_merge_version_json(
     game_dir: &Path,
     version: &str,
 ) -> Result<serde_json::Value, LauncherError> {
-    let version_dir = game_dir.join("versions").join(version);
+    file_utils::validate_version_id_or_error(version)?;
+    let version_dir = file_utils::version_dir(&game_dir.join("versions"), version)?;
     let version_json_path = version_dir.join(format!("{}.json", version));
 
     if !version_json_path.exists() {
@@ -32,8 +34,8 @@ pub fn load_and_merge_version_json(
     {
         let versions_base = game_dir.join("versions");
         while !parent_id.is_empty() {
-            let parent_json_path = versions_base
-                .join(&parent_id)
+            file_utils::validate_version_id_or_error(&parent_id)?;
+            let parent_json_path = file_utils::version_dir(&versions_base, &parent_id)?
                 .join(format!("{}.json", &parent_id));
             if !parent_json_path.exists() {
                 break;

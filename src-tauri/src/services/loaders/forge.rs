@@ -6,6 +6,7 @@ use crate::errors::LauncherError;
 use crate::services::config;
 use crate::services::http_client;
 use crate::services::launcher::java::JavaCandidate;
+use crate::utils::file_utils;
 use log::{debug, info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -343,6 +344,15 @@ async fn download_forge_installer(
         if let Ok(resp) = download_with_retry(url, client, 3).await {
             if let Ok(bytes) = resp.bytes().await {
                 if bytes.len() > 1024 && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
+                    match download_sha1(client, url).await {
+                        Some(expected) if !file_utils::verify_sha1(&bytes, &expected) => {
+                            warn!("Forge: 安装器 sha1 不匹配，跳过该源: {}", url);
+                            continue;
+                        }
+                        Some(_) => {}
+                        None => warn!("Forge: 未取到安装器 sha1，仅校验 ZIP 头: {}", url),
+                    }
+
                     let mut tmp = tempfile::Builder::new()
                         .prefix(&installer_filename)
                         .suffix(".jar")
@@ -455,6 +465,34 @@ async fn run_official_installer(
     }
 
     Ok(())
+}
+
+pub(crate) async fn download_sha1(client: &Client, url: &str) -> Option<String> {
+    let response = download_with_retry(&format!("{url}.sha1"), client, 0)
+        .await
+        .ok()?;
+    let text = response.text().await.ok()?;
+    file_utils::parse_sha1(&text)
+}
+
+fn payload_valid(path: &Path, bytes: &[u8], expected_sha1: Option<&str>) -> bool {
+    if let Some(expected) = expected_sha1 {
+        if !file_utils::verify_sha1(bytes, expected) {
+            warn!("Forge: sha1 校验失败: {}", path.display());
+            return false;
+        }
+    }
+
+    let expects_zip = path.extension().is_some_and(|ext| {
+        let ext = ext.to_string_lossy();
+        ext.eq_ignore_ascii_case("jar") || ext.eq_ignore_ascii_case("zip")
+    });
+    if expects_zip && !bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
+        warn!("Forge: 下载内容不是 ZIP: {}", path.display());
+        return false;
+    }
+
+    true
 }
 
 async fn download_with_retry(
@@ -607,6 +645,23 @@ pub(crate) async fn download_library_from_profile(
         return Ok(());
     }
 
+    let artifact_sha1 = library
+        .get("downloads")
+        .and_then(|d| d.get("artifact"))
+        .and_then(|a| a.get("sha1"))
+        .and_then(|v| v.as_str())
+        .filter(|value| !value.trim().is_empty());
+    let checksum_sha1 = library
+        .get("checksums")
+        .and_then(|v| v.as_array())
+        .and_then(|checksums| {
+            checksums
+                .iter()
+                .filter_map(|value| value.as_str())
+                .find(|value| file_utils::parse_sha1(value).is_some())
+        });
+    let expected_sha1 = artifact_sha1.or(checksum_sha1);
+
     if let Some(artifact) = library.get("downloads").and_then(|d| d.get("artifact")) {
         if let Some(path) = artifact.get("path").and_then(|p| p.as_str()) {
             let target_path = libraries_dir.join(path);
@@ -632,7 +687,7 @@ pub(crate) async fn download_library_from_profile(
             for url in &sources {
                 if let Ok(resp) = download_with_retry(url, client, 2).await {
                     if let Ok(bytes) = resp.bytes().await {
-                        if bytes.len() > 100 {
+                        if bytes.len() > 100 && payload_valid(&target_path, &bytes, expected_sha1) {
                             fs::write(&target_path, &bytes).map_err(|e| {
                                 LauncherError::Custom(format!(
                                     "写入 {} 失败: {}",
@@ -667,7 +722,7 @@ pub(crate) async fn download_library_from_profile(
         for url in &sources {
             if let Ok(resp) = download_with_retry(url, http_client::get_client(), 2).await {
                 if let Ok(bytes) = resp.bytes().await {
-                    if bytes.len() > 100 {
+                    if bytes.len() > 100 && payload_valid(&target_path, &bytes, expected_sha1) {
                         fs::write(&target_path, &bytes).map_err(|e| {
                             LauncherError::Custom(format!(
                                 "写入 {} 失败: {}",

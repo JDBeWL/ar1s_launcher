@@ -13,6 +13,7 @@ pub use neoforge::*;
 pub use quilt::*;
 
 use crate::errors::LauncherError;
+use crate::utils::file_utils;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -71,6 +72,10 @@ pub async fn install_loader(
     instance_name: &str,
     game_dir: &Path,
 ) -> Result<(), LauncherError> {
+    file_utils::validate_instance_name_or_error(instance_name)?;
+    file_utils::validate_version_id_or_error(loader.mc_version())?;
+    file_utils::validate_version_id_or_error(loader.loader_version())?;
+
     match loader {
         LoaderType::Forge {
             mc_version,

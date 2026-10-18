@@ -3,7 +3,7 @@
 //! 扫描各发行版安装目录、PATH 与 JAVA_HOME；探测结果（大版本 + 进程位数）按可执行文件缓存，
 //! 路径列表缓存 1 小时，避免每次启动都把本机每个 JVM 重启一遍问版本
 
-use crate::{LauncherError, load_config, save_config};
+use crate::{LauncherError, update_config};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -820,11 +820,10 @@ pub async fn set_java_path_command(path: String) -> Result<(), LauncherError> {
         )));
     }
 
-    let mut config = (*load_config()?).clone();
-    config.java_path = Some(normalized_path);
-    save_config(&config)?;
-
-    Ok(())
+    update_config(|config| {
+        config.java_path = Some(normalized_path);
+        Ok(())
+    })
 }
 
 /// 验证 Java 路径，支持相对路径、安装目录（含 bin/）与 PATH 上的 java

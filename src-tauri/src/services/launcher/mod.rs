@@ -15,9 +15,10 @@ mod version_json;
 use crate::errors::LauncherError;
 use crate::models::LaunchOptions;
 use crate::services::config::{
-    load_config, save_config, set_last_selected_version, update_instance_last_played,
+    load_config, set_last_selected_version, update_config, update_instance_last_played,
 };
 use crate::services::memory::{is_memory_setting_safe, optimize_jvm_memory_args};
+use crate::utils::file_utils;
 use log::{info, warn};
 use tauri::Emitter;
 
@@ -32,6 +33,7 @@ pub async fn launch_minecraft(
     };
 
     let mut options = options;
+    file_utils::validate_version_id_or_error(&options.version)?;
 
     if options.auth_type.as_deref() == Some("microsoft") && options.access_token.is_none() {
         let cfg = load_config()?;
@@ -48,14 +50,15 @@ pub async fn launch_minecraft(
                         .await
                     {
                         Ok(auth_result) => {
-                            let mut save_cfg = (*load_config()?).clone();
-                            save_cfg.ms_access_token = Some(auth_result.access_token.clone());
-                            save_cfg.ms_refresh_token = Some(auth_result.refresh_token.clone());
-                            save_cfg.ms_expires_at = Some(auth_result.expires_at);
-                            save_cfg.username = Some(auth_result.username.clone());
-                            save_cfg.uuid = Some(auth_result.uuid.clone());
-                            save_cfg.skin_url = auth_result.skin_url.clone();
-                            save_config(&save_cfg)?;
+                            update_config(|save_cfg| {
+                                save_cfg.ms_access_token = Some(auth_result.access_token.clone());
+                                save_cfg.ms_refresh_token = Some(auth_result.refresh_token.clone());
+                                save_cfg.ms_expires_at = Some(auth_result.expires_at);
+                                save_cfg.username = Some(auth_result.username.clone());
+                                save_cfg.uuid = Some(auth_result.uuid.clone());
+                                save_cfg.skin_url = auth_result.skin_url.clone();
+                                Ok(())
+                            })?;
 
                             options.access_token = Some(auth_result.access_token);
                             if options.uuid.is_none() {
@@ -90,16 +93,18 @@ pub async fn launch_minecraft(
     } else {
         java::generate_offline_uuid(&options.username)
     };
-    let mut config = (*load_config()?).clone();
-    config.username = Some(options.username.clone());
-    config.uuid = Some(uuid.clone());
-    save_config(&config)?;
+    update_config(|config| {
+        config.username = Some(options.username.clone());
+        config.uuid = Some(uuid.clone());
+        Ok(())
+    })?;
+    let config = (*load_config()?).clone();
 
     let _ = update_instance_last_played(&options.version);
     let _ = set_last_selected_version(&options.version);
 
     let game_dir = java::resolve_game_dir(&config.game_dir);
-    let version_dir = game_dir.join("versions").join(&options.version);
+    let version_dir = file_utils::version_dir(&game_dir.join("versions"), &options.version)?;
 
     // Quilt 老版本自带的 ASM 读不了新游戏的类，这种实例放它启动只会秒崩；
     // 能就地升级就升级，升级失败也不拦启动，交给崩溃诊断去解释

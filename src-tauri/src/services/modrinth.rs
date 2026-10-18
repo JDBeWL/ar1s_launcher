@@ -3,12 +3,16 @@
 //! 封装 api.modrinth.com/v2 的搜索与项目接口，请求失败按指数退避重试 3 次
 
 use crate::errors::LauncherError;
+use crate::models::DownloadJob;
 use crate::models::modpack::*;
+use crate::services::download;
 use crate::services::http_client;
 use log::{debug, warn};
 use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const MODRINTH_API_BASE: &str = "https://api.modrinth.com/v2";
 const MAX_API_RETRIES: u32 = 3;
@@ -386,28 +390,58 @@ impl ModrinthService {
         &self,
         file_url: &str,
         destination: &std::path::Path,
+        size: u64,
+        sha1: Option<&str>,
+        global_cancel: &Arc<AtomicBool>,
     ) -> Result<(), LauncherError> {
-        let response = self
-            .retry_request(|client| client.get(file_url))
-            .await
-            .map_err(|e| LauncherError::Custom(format!("下载文件失败: {}", e)))?;
-
-        if !response.status().is_success() {
-            return Err(LauncherError::Custom(format!(
-                "下载文件失败: {}",
-                response.status()
-            )));
+        if global_cancel.load(Ordering::Acquire) {
+            return Err(LauncherError::Custom("Download cancelled".to_string()));
         }
 
-        let content = response
-            .bytes()
-            .await
-            .map_err(|e| LauncherError::Custom(format!("读取文件内容失败: {}", e)))?;
+        let job = DownloadJob {
+            url: file_url.to_string(),
+            fallback_url: None,
+            path: destination.to_path_buf(),
+            size,
+            hash: sha1
+                .filter(|hash| !hash.trim().is_empty())
+                .map(str::to_string),
+        };
+        let state = Arc::new(AtomicBool::new(true));
+        let bytes_downloaded = Arc::new(AtomicU64::new(0));
+        let bytes_since_last = Arc::new(AtomicU64::new(0));
 
-        tokio::fs::write(destination, content)
-            .await
-            .map_err(|e| LauncherError::Custom(format!("保存文件失败: {}", e)))?;
+        let mut last_error = None;
+        for attempt in 0..3 {
+            if global_cancel.load(Ordering::Acquire) {
+                return Err(LauncherError::Custom("Download cancelled".to_string()));
+            }
 
-        Ok(())
+            match download::download_file(
+                download::get_http_client(),
+                &job,
+                file_url,
+                &state,
+                global_cancel,
+                &bytes_downloaded,
+                &bytes_since_last,
+            )
+            .await
+            {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if e.to_string().contains("cancelled") {
+                        return Err(e);
+                    }
+                    warn!("整合包文件下载失败 (第 {} 次): {}", attempt + 1, e);
+                    last_error = Some(e);
+                    if attempt < 2 {
+                        tokio::time::sleep(std::time::Duration::from_secs(1 << attempt)).await;
+                    }
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| LauncherError::Custom("整合包文件下载失败".to_string())))
     }
 }

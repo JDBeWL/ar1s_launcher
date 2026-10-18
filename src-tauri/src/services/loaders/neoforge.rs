@@ -6,6 +6,7 @@ use super::forge;
 use crate::errors::LauncherError;
 use crate::services::config;
 use crate::services::http_client;
+use crate::utils::file_utils;
 use log::{info, warn};
 use serde_json::Value;
 use std::fs;
@@ -66,10 +67,26 @@ pub async fn install_neoforge(
     if let Ok(response) = client.get(&bmclapi_url).send().await {
         if response.status().is_success() {
             if let Ok(bytes) = response.bytes().await {
-                if bytes.len() > 1024 {
-                    fs::write(&installer_path, &bytes)?;
-                    downloaded = true;
-                    info!("从 BMCLAPI 下载成功");
+                if bytes.len() > 1024 && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
+                    let expected = match forge::download_sha1(client, &bmclapi_url).await {
+                        Some(hash) => Some(hash),
+                        None => forge::download_sha1(client, &official_url).await,
+                    };
+                    let hash_ok = expected
+                        .as_deref()
+                        .is_none_or(|hash| file_utils::verify_sha1(&bytes, hash));
+                    if hash_ok {
+                        if expected.is_none() {
+                            warn!("NeoForge: 未取到 installer sha1，仅校验 ZIP 头");
+                        }
+                        fs::write(&installer_path, &bytes)?;
+                        downloaded = true;
+                        info!("从 BMCLAPI 下载成功");
+                    } else {
+                        warn!("NeoForge: BMCLAPI installer sha1 不匹配，改试官方源");
+                    }
+                } else {
+                    warn!("NeoForge: BMCLAPI installer 不是有效 ZIP");
                 }
             }
         }
@@ -93,6 +110,23 @@ pub async fn install_neoforge(
             .bytes()
             .await
             .map_err(|e| LauncherError::Custom(format!("读取 NeoForge installer 失败: {}", e)))?;
+
+        if bytes.len() <= 1024 || !bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
+            return Err(LauncherError::Custom(
+                "NeoForge installer 不是有效 ZIP".to_string(),
+            ));
+        }
+
+        if let Some(expected) = forge::download_sha1(client, &official_url).await {
+            if !file_utils::verify_sha1(&bytes, &expected) {
+                return Err(LauncherError::Custom(
+                    "NeoForge installer sha1 校验失败".to_string(),
+                ));
+            }
+        } else {
+            warn!("NeoForge: 未取到 installer sha1，仅校验 ZIP 头");
+        }
+
         fs::write(&installer_path, &bytes)?;
     }
 
@@ -113,7 +147,7 @@ pub async fn install_neoforge(
     libs.extend(array_of(&version_json, "libraries"));
 
     for lib in &libs {
-        if let Err(e) = forge::download_library_from_profile(lib, &libraries_dir, &client).await {
+        if let Err(e) = forge::download_library_from_profile(lib, &libraries_dir, client).await {
             warn!("NeoForge: {}", e);
         }
     }
@@ -131,7 +165,7 @@ pub async fn install_neoforge(
         .collect();
     for lib in &missing {
         info!("NeoForge: 重试下载缺失的库");
-        if let Err(e) = forge::download_library_from_profile(lib, &libraries_dir, &client).await {
+        if let Err(e) = forge::download_library_from_profile(lib, &libraries_dir, client).await {
             warn!("NeoForge: {}", e);
         }
     }

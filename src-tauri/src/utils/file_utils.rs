@@ -18,66 +18,41 @@ pub struct InstanceNameValidation {
     pub error_message: Option<String>,
 }
 
-/// 实例名会直接当目录名用，带路径分隔符或 `..` 就能跳出版本目录
-/// Windows 保留名大小写不敏感，且只看首个 `.` 之前的部分（`CON.txt` 同样拒绝）
-pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
+/// 会直接当目录名/文件名用的字符串：拒绝路径分隔符、`..`、盘符与 Windows 保留名
+fn validate_safe_component(name: &str, label: &str, max_len: usize) -> Result<(), String> {
     if name.is_empty() {
-        return InstanceNameValidation {
-            is_valid: false,
-            error_message: Some("实例名称不能为空".to_string()),
-        };
+        return Err(format!("{label}不能为空"));
     }
 
-    if name.len() > 64 {
-        return InstanceNameValidation {
-            is_valid: false,
-            error_message: Some("实例名称不能超过 64 个字符".to_string()),
-        };
+    if name.len() > max_len {
+        return Err(format!("{label}不能超过 {max_len} 个字符"));
     }
 
     if name.starts_with('.') || name.starts_with(' ') {
-        return InstanceNameValidation {
-            is_valid: false,
-            error_message: Some("实例名称不能以点或空格开头".to_string()),
-        };
+        return Err(format!("{label}不能以点或空格开头"));
     }
 
     if name.ends_with('.') || name.ends_with(' ') {
-        return InstanceNameValidation {
-            is_valid: false,
-            error_message: Some("实例名称不能以点或空格结尾".to_string()),
-        };
+        return Err(format!("{label}不能以点或空格结尾"));
     }
 
     if name.contains("..") {
-        return InstanceNameValidation {
-            is_valid: false,
-            error_message: Some("实例名称不能包含 '..'".to_string()),
-        };
+        return Err(format!("{label}不能包含 '..'"));
     }
 
     if name.contains('/') || name.contains('\\') {
-        return InstanceNameValidation {
-            is_valid: false,
-            error_message: Some("实例名称不能包含路径分隔符 (/ 或 \\)".to_string()),
-        };
+        return Err(format!("{label}不能包含路径分隔符 (/ 或 \\)"));
     }
 
     const RESERVED_CHARS: &[char] = &['<', '>', ':', '"', '|', '?', '*'];
     for c in RESERVED_CHARS {
         if name.contains(*c) {
-            return InstanceNameValidation {
-                is_valid: false,
-                error_message: Some(format!("实例名称不能包含特殊字符 '{}'", c)),
-            };
+            return Err(format!("{label}不能包含特殊字符 '{}'", c));
         }
     }
 
     if name.chars().any(|c| (c as u32) < 32) {
-        return InstanceNameValidation {
-            is_valid: false,
-            error_message: Some("实例名称不能包含控制字符".to_string()),
-        };
+        return Err(format!("{label}不能包含控制字符"));
     }
 
     let name_upper = name.to_uppercase();
@@ -88,40 +63,82 @@ pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
     ];
 
     if RESERVED_NAMES.contains(&base_name) {
-        return InstanceNameValidation {
-            is_valid: false,
-            error_message: Some(format!("'{}' 是 Windows 保留名称，不能用作实例名称", name)),
-        };
+        return Err(format!("'{}' 是 Windows 保留名称，不能用作{label}", name));
     }
 
-    InstanceNameValidation {
-        is_valid: true,
-        error_message: None,
+    Ok(())
+}
+
+/// 实例名会直接当目录名用，带路径分隔符或 `..` 就能跳出版本目录
+/// Windows 保留名大小写不敏感，且只看首个 `.` 之前的部分（`CON.txt` 同样拒绝）
+pub fn validate_instance_name(name: &str) -> InstanceNameValidation {
+    match validate_safe_component(name, "实例名称", 64) {
+        Ok(()) => InstanceNameValidation {
+            is_valid: true,
+            error_message: None,
+        },
+        Err(error_message) => InstanceNameValidation {
+            is_valid: false,
+            error_message: Some(error_message),
+        },
     }
 }
 
 pub fn validate_instance_name_or_error(name: &str) -> Result<(), LauncherError> {
-    let validation = validate_instance_name(name);
-    if !validation.is_valid {
-        return Err(LauncherError::Custom(
-            validation
-                .error_message
-                .unwrap_or_else(|| "实例名称无效".to_string()),
-        ));
-    }
-    Ok(())
+    validate_safe_component(name, "实例名称", 64).map_err(LauncherError::Custom)
+}
+
+/// 版本 ID 会拼进 versions/<id>，规则与实例目录名一致
+pub fn validate_version_id_or_error(version_id: &str) -> Result<(), LauncherError> {
+    validate_safe_component(version_id, "版本 ID", 64).map_err(LauncherError::Custom)
+}
+
+/// 远端给的文件名只允许是单个文件名，不能带目录或 ADS 冒号
+pub fn validate_file_name_or_error(file_name: &str) -> Result<(), LauncherError> {
+    validate_safe_component(file_name, "文件名", 200).map_err(LauncherError::Custom)
+}
+
+pub fn instance_dir(base: &Path, instance_name: &str) -> Result<PathBuf, LauncherError> {
+    validate_instance_name_or_error(instance_name)?;
+    Ok(base.join(instance_name))
+}
+
+pub fn version_dir(base: &Path, version_id: &str) -> Result<PathBuf, LauncherError> {
+    validate_version_id_or_error(version_id)?;
+    Ok(base.join(version_id))
 }
 
 /// mrpack 清单和 zip 条目的路径来自远端，拼到目标目录前先确认它是相对路径
 pub fn is_safe_relative_path(raw: &str) -> bool {
-    if raw.is_empty() || raw.contains("..") {
+    if raw.is_empty() || raw.contains("..") || raw.contains(':') {
         return false;
     }
     if raw.starts_with('/') || raw.starts_with('\\') {
         return false;
     }
-    // 第二个字符是冒号说明带了盘符（C:\ 或 C:/），Windows 下这是绝对路径
-    raw.chars().nth(1) != Some(':')
+    true
+}
+
+pub fn sha1_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// maven 的 .sha1 文件常见格式是「hash  filename」或只有 hash
+pub fn parse_sha1(text: &str) -> Option<String> {
+    let hash = text.split_whitespace().next()?;
+    (hash.len() == 40 && hash.chars().all(|c| c.is_ascii_hexdigit()))
+        .then(|| hash.to_ascii_lowercase())
+}
+
+pub fn verify_sha1(bytes: &[u8], expected: &str) -> bool {
+    let expected = expected.trim();
+    !expected.is_empty() && sha1_hex(bytes).eq_ignore_ascii_case(expected)
 }
 
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), std::io::Error> {
@@ -568,6 +585,7 @@ mod tests {
         assert!(!is_safe("/etc/passwd"));
         assert!(!is_safe("\\windows\\system32"));
         assert!(!is_safe("C:\\evil\\x.jar"));
+        assert!(!is_safe("mods/a:b.jar"));
         assert!(!is_safe(""));
     }
 
@@ -686,5 +704,67 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_checked_instance_dir_rejects_path_components() {
+        let base = Path::new("versions");
+
+        assert!(instance_dir(base, "../outside").is_err());
+        assert!(instance_dir(base, "a/b").is_err());
+        assert!(instance_dir(base, "a\\b").is_err());
+        assert!(instance_dir(base, "").is_err());
+        assert_eq!(
+            instance_dir(base, "1.20.1-Forge").unwrap(),
+            base.join("1.20.1-Forge")
+        );
+        assert_eq!(
+            instance_dir(base, "我的实例").unwrap(),
+            base.join("我的实例")
+        );
+    }
+
+    #[test]
+    fn test_checked_version_dir_rejects_path_components() {
+        let base = Path::new("versions");
+
+        assert!(version_dir(base, "../../etc").is_err());
+        assert!(version_dir(base, "1.20.1/evil").is_err());
+        assert!(version_dir(base, "C:\\evil").is_err());
+        assert!(version_dir(base, ".").is_err());
+        assert_eq!(
+            version_dir(base, "1.20.1-forge-47.2.0").unwrap(),
+            base.join("1.20.1-forge-47.2.0")
+        );
+    }
+
+    #[test]
+    fn test_sha1_helpers() {
+        let text = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
+
+        assert_eq!(sha1_hex(b"hello"), text);
+        assert!(verify_sha1(b"hello", &text.to_uppercase()));
+        assert!(!verify_sha1(
+            b"hello",
+            "0000000000000000000000000000000000000000"
+        ));
+        assert_eq!(
+            parse_sha1("aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d  forge.jar\n").as_deref(),
+            Some(text)
+        );
+        assert_eq!(parse_sha1("not-a-hash"), None);
+        assert_eq!(parse_sha1(""), None);
+    }
+
+    #[test]
+    fn test_download_filename_rejects_paths_but_allows_long_names() {
+        assert!(validate_file_name_or_error("pack.mrpack").is_ok());
+        assert!(validate_file_name_or_error(&format!("{}.mrpack", "a".repeat(120))).is_ok());
+        assert!(validate_file_name_or_error("").is_err());
+        assert!(validate_file_name_or_error("../pack.mrpack").is_err());
+        assert!(validate_file_name_or_error("mods/pack.mrpack").is_err());
+        assert!(validate_file_name_or_error("mods\\pack.mrpack").is_err());
+        assert!(validate_file_name_or_error("C:\\pack.mrpack").is_err());
+        assert!(validate_file_name_or_error("CON.mrpack").is_err());
     }
 }

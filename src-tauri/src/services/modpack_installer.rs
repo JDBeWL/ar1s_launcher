@@ -12,12 +12,15 @@ use log::{error, info, warn};
 use reqwest::Client;
 use serde::Deserialize;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 
 static MODPACK_CANCEL_FLAG: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
+
+const MAX_EXTRACTED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 fn get_cancel_flag() -> Arc<AtomicBool> {
     MODPACK_CANCEL_FLAG
@@ -251,12 +254,28 @@ impl ModpackInstaller {
             fs::create_dir_all(&temp_dir)?;
         }
 
+        file_utils::validate_file_name_or_error(&primary_file.filename)?;
         let modpack_file_path = temp_dir.join(&primary_file.filename);
+        let sha1 = (!primary_file.hashes.sha1.trim().is_empty())
+            .then_some(primary_file.hashes.sha1.as_str());
+        let cancel_flag = get_cancel_flag();
 
         self.modrinth_service
-            .download_modpack_file(&primary_file.url, &modpack_file_path)
+            .download_modpack_file(
+                &primary_file.url,
+                &modpack_file_path,
+                primary_file.size,
+                sha1,
+                &cancel_flag,
+            )
             .await
-            .map_err(|e| LauncherError::Custom(format!("下载整合包文件失败: {}", e)))?;
+            .map_err(|e| {
+                if e.to_string().contains("cancelled") {
+                    LauncherError::Custom("安装已取消".to_string())
+                } else {
+                    LauncherError::Custom(format!("下载整合包文件失败: {}", e))
+                }
+            })?;
 
         send_progress(35, "解压整合包...", false);
         check_cancelled()?;
@@ -675,54 +694,13 @@ impl ModpackInstaller {
         self.create_loader_version_json(instance_name, mc_version, game_dir)
     }
 
-    /// 解压整合包，防止 zip 路径遍历
+    /// 解压整合包，防止 zip 路径遍历与 zip bomb
     async fn extract_modpack(
         &self,
         modpack_file_path: &PathBuf,
         extract_dir: &PathBuf,
     ) -> Result<(), LauncherError> {
-        let file = fs::File::open(modpack_file_path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
-
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)?;
-            let file_name = file.name()?.to_string();
-
-            if !file_utils::is_safe_relative_path(&file_name) {
-                log::warn!("跳过可疑的 zip 条目: {}", file_name);
-                continue;
-            }
-
-            let outpath = extract_dir.join(&file_name);
-
-            let canonical_extract = extract_dir
-                .canonicalize()
-                .unwrap_or_else(|_| extract_dir.clone());
-            if let Ok(canonical_out) = outpath.canonicalize() {
-                if !canonical_out.starts_with(&canonical_extract) {
-                    log::warn!(
-                        "跳过路径遍历尝试: {} -> {}",
-                        file_name,
-                        canonical_out.display()
-                    );
-                    continue;
-                }
-            }
-
-            if file_name.ends_with('/') {
-                fs::create_dir_all(&outpath)?;
-            } else {
-                if let Some(p) = outpath.parent() {
-                    if !p.exists() {
-                        fs::create_dir_all(p)?;
-                    }
-                }
-                let mut outfile = fs::File::create(&outpath)?;
-                std::io::copy(&mut file, &mut outfile)?;
-            }
-        }
-
-        Ok(())
+        extract_zip_limited(modpack_file_path, extract_dir, MAX_EXTRACTED_BYTES)
     }
 
     pub async fn search_modpacks(
@@ -757,5 +735,124 @@ impl ModpackInstaller {
         self.modrinth_service
             .get_modpack_versions(project_id, game_versions, loaders)
             .await
+    }
+}
+
+fn extract_zip_limited(
+    modpack_file_path: &std::path::Path,
+    extract_dir: &std::path::Path,
+    max_bytes: u64,
+) -> Result<(), LauncherError> {
+    fs::create_dir_all(extract_dir)?;
+
+    // 先按 central directory 声明的未压缩大小做快速上限检查
+    let file = fs::File::open(modpack_file_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut declared_total = 0u64;
+    for i in 0..archive.len() {
+        let entry = archive.by_index(i)?;
+        let name = entry.name()?.to_string();
+        if name.ends_with('/') || !file_utils::is_safe_relative_path(&name) {
+            continue;
+        }
+        declared_total = declared_total.saturating_add(entry.size());
+        if declared_total > max_bytes {
+            return Err(LauncherError::Custom(format!(
+                "整合包解压后超过 {} 字节上限，已中止",
+                max_bytes
+            )));
+        }
+    }
+    drop(archive);
+
+    let file = fs::File::open(modpack_file_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut actual_total = 0u64;
+
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let file_name = entry.name()?.to_string();
+
+        if !file_utils::is_safe_relative_path(&file_name) {
+            log::warn!("跳过可疑的 zip 条目: {}", file_name);
+            continue;
+        }
+
+        let outpath = extract_dir.join(&file_name);
+
+        if file_name.ends_with('/') {
+            fs::create_dir_all(&outpath)?;
+            continue;
+        }
+
+        if let Some(parent) = outpath.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut outfile = fs::File::create(&outpath)?;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read = entry.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            actual_total = actual_total.saturating_add(read as u64);
+            if actual_total > max_bytes {
+                return Err(LauncherError::Custom(format!(
+                    "整合包解压后超过 {} 字节上限，已中止",
+                    max_bytes
+                )));
+            }
+            outfile.write_all(&buffer[..read])?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_zip_limited;
+    use std::fs;
+    use std::io::Write;
+    use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
+
+    fn write_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
+        let file = fs::File::create(path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        for (name, content) in entries {
+            zip.start_file(*name, SimpleFileOptions::default()).unwrap();
+            zip.write_all(content).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn test_extract_zip_enforces_uncompressed_limit() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let zip_path = dir.path().join("pack.zip");
+        let extract_dir = dir.path().join("extract");
+        fs::create_dir_all(&extract_dir).unwrap();
+        write_zip(&zip_path, &[("a.txt", b"0123456789")]);
+
+        let error = extract_zip_limited(&zip_path, &extract_dir, 5).unwrap_err();
+        assert!(error.to_string().contains("上限"));
+
+        assert!(extract_zip_limited(&zip_path, &extract_dir, 10).is_ok());
+    }
+
+    #[test]
+    fn test_extract_zip_skips_path_traversal() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let zip_path = dir.path().join("pack.zip");
+        let extract_dir = dir.path().join("extract");
+        fs::create_dir_all(&extract_dir).unwrap();
+        write_zip(&zip_path, &[("ok.txt", b"ok"), ("../evil.txt", b"evil")]);
+
+        extract_zip_limited(&zip_path, &extract_dir, 1024).unwrap();
+
+        assert!(extract_dir.join("ok.txt").exists());
+        assert!(!dir.path().join("evil.txt").exists());
     }
 }

@@ -4,8 +4,8 @@
 
 use crate::errors::LauncherError;
 use crate::models::AuthType;
-use crate::services::config::{load_config, save_config};
-use crate::services::microsoft_auth;
+use crate::services::config::{load_config, update_config};
+use crate::services::{credentials, microsoft_auth};
 use std::sync::Mutex;
 use tauri::Emitter;
 
@@ -151,15 +151,16 @@ pub async fn complete_microsoft_login() -> Result<MicrosoftLoginResult, Launcher
                 )
                 .await?;
 
-                let mut config = (*load_config()?).clone();
-                config.auth_type = AuthType::Microsoft;
-                config.username = Some(auth_result.username.clone());
-                config.uuid = Some(auth_result.uuid.clone());
-                config.skin_url = auth_result.skin_url.clone();
-                config.ms_access_token = Some(auth_result.access_token);
-                config.ms_refresh_token = Some(auth_result.refresh_token);
-                config.ms_expires_at = Some(auth_result.expires_at);
-                save_config(&config)?;
+                update_config(|config| {
+                    config.auth_type = AuthType::Microsoft;
+                    config.username = Some(auth_result.username.clone());
+                    config.uuid = Some(auth_result.uuid.clone());
+                    config.skin_url = auth_result.skin_url.clone();
+                    config.ms_access_token = Some(auth_result.access_token.clone());
+                    config.ms_refresh_token = Some(auth_result.refresh_token.clone());
+                    config.ms_expires_at = Some(auth_result.expires_at);
+                    Ok(())
+                })?;
 
                 return Ok(MicrosoftLoginResult {
                     username: auth_result.username,
@@ -200,9 +201,10 @@ pub async fn refresh_skin_url() -> Result<Option<String>, LauncherError> {
 
     match microsoft_auth::fetch_skin_url(&token).await {
         Ok(skin_url) => {
-            let mut config = (*load_config()?).clone();
-            config.skin_url = skin_url.clone();
-            save_config(&config)?;
+            update_config(|config| {
+                config.skin_url = skin_url.clone();
+                Ok(())
+            })?;
             Ok(skin_url)
         }
         // 皮肤地址只是装饰，取不到就退回已存的值，不该因此打断启动流程
@@ -225,15 +227,16 @@ pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherEr
 
     let auth_result = microsoft_auth::refresh_and_authenticate(&refresh_token).await?;
 
-    let mut config = (*load_config()?).clone();
-    config.auth_type = AuthType::Microsoft;
-    config.username = Some(auth_result.username.clone());
-    config.uuid = Some(auth_result.uuid.clone());
-    config.skin_url = auth_result.skin_url.clone();
-    config.ms_access_token = Some(auth_result.access_token);
-    config.ms_refresh_token = Some(auth_result.refresh_token);
-    config.ms_expires_at = Some(auth_result.expires_at);
-    save_config(&config)?;
+    update_config(|config| {
+        config.auth_type = AuthType::Microsoft;
+        config.username = Some(auth_result.username.clone());
+        config.uuid = Some(auth_result.uuid.clone());
+        config.skin_url = auth_result.skin_url.clone();
+        config.ms_access_token = Some(auth_result.access_token.clone());
+        config.ms_refresh_token = Some(auth_result.refresh_token.clone());
+        config.ms_expires_at = Some(auth_result.expires_at);
+        Ok(())
+    })?;
 
     Ok(MicrosoftLoginResult {
         username: auth_result.username,
@@ -246,14 +249,18 @@ pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherEr
 #[tauri::command]
 pub async fn logout_microsoft() -> Result<(), LauncherError> {
     let _ = microsoft_auth::revoke_microsoft_token().await;
+    if let Err(e) = credentials::clear() {
+        log::warn!("清除凭据文件失败: {}", e);
+    }
 
-    let mut config = (*load_config()?).clone();
-    config.auth_type = AuthType::Offline;
-    config.ms_access_token = None;
-    config.ms_refresh_token = None;
-    config.ms_expires_at = None;
-    config.skin_url = None;
-    save_config(&config)
+    update_config(|config| {
+        config.auth_type = AuthType::Offline;
+        config.ms_access_token = None;
+        config.ms_refresh_token = None;
+        config.ms_expires_at = None;
+        config.skin_url = None;
+        Ok(())
+    })
 }
 
 #[tauri::command]
@@ -287,15 +294,16 @@ pub async fn complete_microsoft_auth_code_login() -> Result<MicrosoftLoginResult
     let auth_result =
         microsoft_auth::complete_auth_code_flow(&flow.code_verifier, &flow.state).await?;
 
-    let mut config = (*load_config()?).clone();
-    config.auth_type = AuthType::Microsoft;
-    config.username = Some(auth_result.username.clone());
-    config.uuid = Some(auth_result.uuid.clone());
-    config.skin_url = auth_result.skin_url.clone();
-    config.ms_access_token = Some(auth_result.access_token);
-    config.ms_refresh_token = Some(auth_result.refresh_token);
-    config.ms_expires_at = Some(auth_result.expires_at);
-    save_config(&config)?;
+    update_config(|config| {
+        config.auth_type = AuthType::Microsoft;
+        config.username = Some(auth_result.username.clone());
+        config.uuid = Some(auth_result.uuid.clone());
+        config.skin_url = auth_result.skin_url.clone();
+        config.ms_access_token = Some(auth_result.access_token.clone());
+        config.ms_refresh_token = Some(auth_result.refresh_token.clone());
+        config.ms_expires_at = Some(auth_result.expires_at);
+        Ok(())
+    })?;
 
     Ok(MicrosoftLoginResult {
         username: auth_result.username,
@@ -307,10 +315,11 @@ pub async fn complete_microsoft_auth_code_login() -> Result<MicrosoftLoginResult
 
 #[tauri::command]
 pub fn set_auth_type(auth_type: String) -> Result<(), LauncherError> {
-    let mut config = (*load_config()?).clone();
-    config.auth_type = match auth_type.as_str() {
-        "microsoft" => AuthType::Microsoft,
-        _ => AuthType::Offline,
-    };
-    save_config(&config)
+    update_config(|config| {
+        config.auth_type = match auth_type.as_str() {
+            "microsoft" => AuthType::Microsoft,
+            _ => AuthType::Offline,
+        };
+        Ok(())
+    })
 }

@@ -7,6 +7,7 @@ use super::http::get_http_client;
 use crate::errors::LauncherError;
 use crate::models::{DownloadJob, VersionManifest};
 use crate::services::config::{self, load_config};
+use crate::utils::file_utils;
 use log::{info, warn};
 use std::fs;
 use std::path::PathBuf;
@@ -63,7 +64,7 @@ pub async fn process_and_download_version(
 
     let config = load_config()?;
     let game_dir = PathBuf::from(&config.game_dir);
-    let version_dir = game_dir.join("versions").join(&version_id);
+    let version_dir = file_utils::version_dir(&game_dir.join("versions"), &version_id)?;
 
     // 记录目录本次调用前是否已存在，供失败清理判断
     let dir_existed_before = version_dir.exists();
@@ -82,6 +83,7 @@ pub async fn process_and_download_version(
             .map_err(|e| LauncherError::Custom(format!("解析本地版本JSON失败: {}", e)))?;
 
         if let Some(inherits_from) = local_json["inheritsFrom"].as_str() {
+            file_utils::validate_version_id_or_error(inherits_from)?;
             info!("版本 {} 继承自 {}", version_id, inherits_from);
             Box::pin(process_and_download_version(
                 inherits_from.to_string(),

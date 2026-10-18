@@ -1,16 +1,17 @@
 //! 配置文件读写模块
 //!
-//! 读写 exe 同目录的 ar1s.json 并带进程内缓存；写入走临时文件 rename，解析失败时备份 .bak 再重建默认配置
+//! exe 同目录可写时保持便携模式，否则改用 Tauri 应用目录；写入走临时文件 rename，
+//! 解析失败时备份 .bak 再重建默认配置
 
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::RwLock;
-use tauri::Emitter;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use tauri::{Emitter, Manager};
 
 use crate::errors::LauncherError;
 use crate::models::{GameConfig, GameDirInfo};
+use crate::services::credentials;
 use crate::services::memory::{
     AutoMemoryConfig, DEFAULT_AUTO_MEMORY_MAX_LIMIT_MB, DEFAULT_AUTO_MEMORY_SAFETY_MARGIN_PERCENT,
     auto_set_memory_if_enabled, get_memory_warning_message, get_system_memory,
@@ -18,6 +19,141 @@ use crate::services::memory::{
 
 static CONFIG_CACHE: std::sync::LazyLock<RwLock<Option<Arc<GameConfig>>>> =
     std::sync::LazyLock::new(|| RwLock::new(None));
+
+static CONFIG_MUTATION_LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageLayout {
+    pub config_dir: PathBuf,
+    pub data_dir: PathBuf,
+    pub log_dir: PathBuf,
+    pub portable: bool,
+}
+
+fn portable_layout(exe_dir: &Path) -> StorageLayout {
+    StorageLayout {
+        config_dir: exe_dir.to_path_buf(),
+        data_dir: exe_dir.to_path_buf(),
+        log_dir: exe_dir.join("logs"),
+        portable: true,
+    }
+}
+
+fn choose_storage_layout(
+    exe_dir: &Path,
+    app_config_dir: PathBuf,
+    app_data_dir: PathBuf,
+    app_log_dir: PathBuf,
+    exe_writable: bool,
+) -> StorageLayout {
+    if exe_writable {
+        portable_layout(exe_dir)
+    } else {
+        StorageLayout {
+            config_dir: app_config_dir,
+            data_dir: app_data_dir,
+            log_dir: app_log_dir,
+            portable: false,
+        }
+    }
+}
+
+fn default_game_dir(layout: &StorageLayout) -> PathBuf {
+    layout.data_dir.join(".minecraft")
+}
+
+fn exe_dir_or_dot() -> PathBuf {
+    match EXE_DIR.as_ref() {
+        Ok(dir) => dir.clone(),
+        Err(_) => PathBuf::from("."),
+    }
+}
+
+static STORAGE: OnceLock<StorageLayout> = OnceLock::new();
+
+/// 未初始化时退回 exe 目录，保证测试和早期调用仍有可用路径
+fn storage() -> &'static StorageLayout {
+    STORAGE.get_or_init(|| portable_layout(&exe_dir_or_dot()))
+}
+
+pub fn init_storage(app: &tauri::AppHandle) -> &'static StorageLayout {
+    STORAGE.get_or_init(|| {
+        let exe_dir = exe_dir_or_dot();
+        // 便携模式只用于 Windows：macOS 的 .app 内部和 Linux AppImage 都不该放配置
+        let exe_writable = cfg!(windows) && is_dir_writable(&exe_dir);
+        let app_config_dir = app
+            .path()
+            .app_config_dir()
+            .unwrap_or_else(|_| exe_dir.join("config"));
+        let app_data_dir = app
+            .path()
+            .app_local_data_dir()
+            .unwrap_or_else(|_| exe_dir.clone());
+        let app_log_dir = app
+            .path()
+            .app_log_dir()
+            .unwrap_or_else(|_| exe_dir.join("logs"));
+
+        let layout = choose_storage_layout(
+            &exe_dir,
+            app_config_dir,
+            app_data_dir,
+            app_log_dir,
+            exe_writable,
+        );
+
+        for dir in [&layout.config_dir, &layout.data_dir, &layout.log_dir] {
+            if let Err(e) = fs::create_dir_all(dir) {
+                eprintln!("无法创建存储目录 {}: {}", dir.display(), e);
+            }
+        }
+
+        if !layout.portable {
+            let legacy = exe_dir.join("ar1s.json");
+            let target = layout.config_dir.join("ar1s.json");
+            match migrate_legacy_config(&legacy, &target) {
+                Ok(true) => eprintln!("已将旧配置迁移到 {}", target.display()),
+                Ok(false) => {}
+                Err(e) => eprintln!("迁移旧配置失败: {}", e),
+            }
+        }
+
+        layout
+    })
+}
+
+fn is_dir_writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".ar1s-write-test-{}", std::process::id()));
+    match fs::File::create(&probe) {
+        Ok(file) => {
+            drop(file);
+            let _ = fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn migrate_legacy_config(legacy: &Path, target: &Path) -> std::io::Result<bool> {
+    if target.exists() || !legacy.exists() {
+        return Ok(false);
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(legacy, target)?;
+    Ok(true)
+}
+
+fn lock_config() -> Result<std::sync::MutexGuard<'static, ()>, LauncherError> {
+    match CONFIG_MUTATION_LOCK.lock() {
+        Ok(guard) => Ok(guard),
+        Err(poisoned) => {
+            log::warn!("配置写锁被破坏，正在恢复");
+            Ok(poisoned.into_inner())
+        }
+    }
+}
 
 fn with_read_lock<F, R>(f: F) -> R
 where
@@ -107,7 +243,33 @@ fn load_config_internal() -> Result<GameConfig, LauncherError> {
         let content = fs::read_to_string(&config_path)?;
         // 配置损坏时备份为 .bak 并重建默认配置，不向上报错
         match serde_json::from_str::<GameConfig>(&content) {
-            Ok(config) => Ok(config),
+            Ok(mut config) => {
+                // 旧版本会把 token 留在 ar1s.json 里；读到后迁移到 credentials.json
+                let had_plaintext_tokens =
+                    config.ms_access_token.is_some() || config.ms_refresh_token.is_some();
+                match credentials::load() {
+                    // 凭据文件比配置文件新：刷新 token 轮换过以后不能再用旧值覆盖
+                    Ok(Some(stored)) => {
+                        if stored.access_token.is_some() {
+                            config.ms_access_token = stored.access_token;
+                        }
+                        if stored.refresh_token.is_some() {
+                            config.ms_refresh_token = stored.refresh_token;
+                        }
+                        if stored.expires_at.is_some() {
+                            config.ms_expires_at = stored.expires_at;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => log::warn!("读取凭据文件失败，继续使用配置文件: {}", e),
+                }
+
+                if had_plaintext_tokens && let Err(e) = save_config_internal(&config) {
+                    log::warn!("迁移 token 到凭据文件失败: {}", e);
+                }
+
+                Ok(config)
+            }
             Err(_) => {
                 let backup_path = config_path.with_extension("bak");
                 let _ = fs::copy(&config_path, &backup_path);
@@ -121,11 +283,7 @@ fn load_config_internal() -> Result<GameConfig, LauncherError> {
 }
 
 fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError> {
-    let exe_dir = EXE_DIR
-        .as_ref()
-        .map_err(|e| LauncherError::Custom(e.clone()))?;
-
-    let mc_dir = exe_dir.join(".minecraft");
+    let mc_dir = default_game_dir(storage());
     let mc_dir_str = mc_dir.to_string_lossy().into_owned();
 
     if !mc_dir.exists() {
@@ -196,6 +354,7 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
 use crate::services::java::auto_detect_java;
 
 pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
+    let _guard = lock_config()?;
     save_config_internal(config)?;
     with_write_lock(|cache| {
         *cache = Some(Arc::new(config.clone()));
@@ -203,12 +362,59 @@ pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
     Ok(())
 }
 
+/// 所有读改写都走这里，避免两个 command 各自 load 后用旧快照覆盖对方
+pub fn update_config<F, R>(update: F) -> Result<R, LauncherError>
+where
+    F: FnOnce(&mut GameConfig) -> Result<R, LauncherError>,
+{
+    let _guard = lock_config()?;
+    let mut config = (*load_config()?).clone();
+    let result = update(&mut config)?;
+    save_config_internal(&config)?;
+    with_write_lock(|cache| {
+        *cache = Some(Arc::new(config));
+    });
+    Ok(result)
+}
+
+fn has_tokens(config: &GameConfig) -> bool {
+    config.ms_access_token.is_some() || config.ms_refresh_token.is_some()
+}
+
+fn config_for_disk(config: &GameConfig, tokens_stored: bool) -> GameConfig {
+    let mut disk_config = config.clone();
+    if tokens_stored {
+        disk_config.ms_access_token = None;
+        disk_config.ms_refresh_token = None;
+    }
+    disk_config
+}
+
 fn save_config_internal(config: &GameConfig) -> Result<(), LauncherError> {
+    // token 优先落 credentials.json；写入失败时退回原行为，保证登录仍能工作
+    let tokens_stored = if has_tokens(config) {
+        let stored = credentials::Credentials {
+            access_token: config.ms_access_token.clone(),
+            refresh_token: config.ms_refresh_token.clone(),
+            expires_at: config.ms_expires_at,
+        };
+        match credentials::save(&stored) {
+            Ok(()) => true,
+            Err(e) => {
+                log::warn!("凭据文件写入失败，token 仍会写入配置文件: {}", e);
+                false
+            }
+        }
+    } else {
+        false
+    };
+
     let config_path = get_config_path()?;
     let dir = config_path
         .parent()
         .ok_or_else(|| LauncherError::Custom("配置文件没有父目录".to_string()))?;
-    let json = serde_json::to_string_pretty(config)?;
+    fs::create_dir_all(dir)?;
+    let json = serde_json::to_string_pretty(&config_for_disk(config, tokens_stored))?;
 
     // 直接覆写会在崩溃时留下截断的 ar1s.json，先写临时文件再 rename
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
@@ -227,10 +433,11 @@ static EXE_DIR: std::sync::LazyLock<Result<PathBuf, String>> = std::sync::LazyLo
 });
 
 fn get_config_path() -> Result<PathBuf, LauncherError> {
-    let exe_dir = EXE_DIR
-        .as_ref()
-        .map_err(|e| LauncherError::Custom(e.clone()))?;
-    Ok(exe_dir.join("ar1s.json"))
+    Ok(storage().config_dir.join("ar1s.json"))
+}
+
+pub(crate) fn credentials_path() -> PathBuf {
+    storage().config_dir.join("credentials.json")
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -395,14 +602,9 @@ pub fn load_config_key(key: String) -> Result<Option<String>, LauncherError> {
 }
 
 pub fn save_config_key(key: String, value: String) -> Result<(), LauncherError> {
-    let mut config = (*load_config()?).clone();
-    match ConfigKey::from_str(&key) {
-        Some(config_key) => {
-            config_key.set_value(&mut config, value)?;
-            save_config(&config)
-        }
-        None => Err(LauncherError::Custom(format!("未知的配置项: {}", key))),
-    }
+    let config_key = ConfigKey::from_str(&key)
+        .ok_or_else(|| LauncherError::Custom(format!("未知的配置项: {}", key)))?;
+    update_config(|config| config_key.set_value(config, value))
 }
 
 fn get_config_value<T, F>(getter: F) -> Result<T, LauncherError>
@@ -417,9 +619,10 @@ fn set_config_value<T, F>(setter: F) -> Result<(), LauncherError>
 where
     F: FnOnce(&mut GameConfig) -> T,
 {
-    let mut config = (*load_config()?).clone();
-    setter(&mut config);
-    save_config(&config)
+    update_config(|config| {
+        setter(config);
+        Ok(())
+    })
 }
 
 pub fn get_game_dir() -> Result<String, LauncherError> {
@@ -589,4 +792,91 @@ pub fn remove_custom_java_path(path: &str) -> Result<(), LauncherError> {
             .custom_java_paths
             .retain(|x| !x.eq_ignore_ascii_case(&p));
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{choose_storage_layout, config_for_disk, default_game_dir, migrate_legacy_config};
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_storage_layout_keeps_portable_exe_dir_when_writable() {
+        let exe = PathBuf::from("C:/launcher");
+        let layout = choose_storage_layout(
+            &exe,
+            PathBuf::from("C:/users/me/AppData/Roaming/ar1s"),
+            PathBuf::from("C:/users/me/AppData/Local/ar1s"),
+            PathBuf::from("C:/users/me/AppData/Local/ar1s/logs"),
+            true,
+        );
+
+        assert!(layout.portable);
+        assert_eq!(layout.config_dir, exe);
+        assert_eq!(layout.data_dir, exe);
+        assert_eq!(layout.log_dir, exe.join("logs"));
+        assert_eq!(default_game_dir(&layout), exe.join(".minecraft"));
+    }
+
+    #[test]
+    fn test_storage_layout_uses_app_dirs_when_exe_is_read_only() {
+        let exe = PathBuf::from("C:/Program Files/Ar1s Launcher");
+        let layout = choose_storage_layout(
+            &exe,
+            PathBuf::from("C:/users/me/AppData/Roaming/ar1s"),
+            PathBuf::from("C:/users/me/AppData/Local/ar1s"),
+            PathBuf::from("C:/users/me/AppData/Local/ar1s/logs"),
+            false,
+        );
+
+        assert!(!layout.portable);
+        assert_eq!(
+            layout.config_dir,
+            PathBuf::from("C:/users/me/AppData/Roaming/ar1s")
+        );
+        assert_eq!(
+            layout.data_dir,
+            PathBuf::from("C:/users/me/AppData/Local/ar1s")
+        );
+        assert_eq!(
+            default_game_dir(&layout),
+            PathBuf::from("C:/users/me/AppData/Local/ar1s/.minecraft")
+        );
+    }
+
+    #[test]
+    fn test_config_for_disk_only_strips_tokens_when_store_succeeded() {
+        let config = crate::models::GameConfig {
+            ms_access_token: Some("access".to_string()),
+            ms_refresh_token: Some("refresh".to_string()),
+            ms_expires_at: Some(123),
+            ..Default::default()
+        };
+
+        let kept = config_for_disk(&config, false);
+        assert_eq!(kept.ms_access_token.as_deref(), Some("access"));
+        assert_eq!(kept.ms_refresh_token.as_deref(), Some("refresh"));
+
+        let stripped = config_for_disk(&config, true);
+        assert!(stripped.ms_access_token.is_none());
+        assert!(stripped.ms_refresh_token.is_none());
+        assert_eq!(stripped.ms_expires_at, Some(123));
+    }
+
+    #[test]
+    fn test_migrate_legacy_config_only_when_target_is_missing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let legacy = dir.path().join("ar1s.json");
+        let target = dir.path().join("config/ar1s.json");
+
+        assert!(!migrate_legacy_config(&legacy, &target).unwrap());
+
+        fs::write(&legacy, b"legacy").unwrap();
+        assert!(migrate_legacy_config(&legacy, &target).unwrap());
+        assert_eq!(fs::read(&target).unwrap(), b"legacy");
+
+        fs::write(&legacy, b"changed").unwrap();
+        assert!(!migrate_legacy_config(&legacy, &target).unwrap());
+        assert_eq!(fs::read(&target).unwrap(), b"legacy");
+    }
 }

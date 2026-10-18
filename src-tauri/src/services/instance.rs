@@ -64,8 +64,8 @@ pub async fn create_instance(
     validate_instance_name_or_error(&new_instance_name)?;
 
     let (game_dir, versions_dir) = get_dirs()?;
-    let source_dir = versions_dir.join(&base_version_id);
-    let dest_dir = versions_dir.join(&new_instance_name);
+    let source_dir = file_utils::version_dir(&versions_dir, &base_version_id)?;
+    let dest_dir = file_utils::instance_dir(&versions_dir, &new_instance_name)?;
 
     let send_progress = |progress: u8, message: &str, indeterminate: bool| {
         let _ = window.emit(
@@ -190,8 +190,7 @@ pub async fn create_instance(
 
             if let Some(fid) = found_forge_id {
                 let forge_json_path = versions_dir.join(&fid).join(format!("{}.json", fid));
-                let base_json_path = versions_dir
-                    .join(&base_version_id)
+                let base_json_path = file_utils::version_dir(&versions_dir, &base_version_id)?
                     .join(format!("{}.json", base_version_id));
 
                 if forge_json_path.exists() && base_json_path.exists() {
@@ -911,7 +910,7 @@ pub fn delete_instance_mod(instance_name: String, file_name: String) -> Result<(
 
 pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError> {
     let (_, versions_dir) = get_dirs()?;
-    let instance_dir = versions_dir.join(&instance_name);
+    let instance_dir = file_utils::instance_dir(&versions_dir, &instance_name)?;
 
     if !instance_dir.exists() {
         return Err(LauncherError::Custom(format!(
@@ -933,8 +932,8 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
     validate_instance_name_or_error(&new_name)?;
 
     let (_, versions_dir) = get_dirs()?;
-    let old_dir = versions_dir.join(&old_name);
-    let new_dir = versions_dir.join(&new_name);
+    let old_dir = file_utils::instance_dir(&versions_dir, &old_name)?;
+    let new_dir = file_utils::instance_dir(&versions_dir, &new_name)?;
 
     if !old_dir.exists() {
         return Err(LauncherError::Custom(format!(
@@ -993,7 +992,7 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
 
 pub async fn open_instance_folder(instance_name: String) -> Result<(), LauncherError> {
     let (_, versions_dir) = get_dirs()?;
-    let instance_dir = versions_dir.join(&instance_name);
+    let instance_dir = file_utils::instance_dir(&versions_dir, &instance_name)?;
 
     if !instance_dir.exists() {
         return Err(LauncherError::Custom(format!(
@@ -1016,7 +1015,7 @@ pub async fn launch_instance(
 ) -> Result<(), LauncherError> {
     let config = config::load_config()?;
     let (_, versions_dir) = get_dirs()?;
-    let instance_dir = versions_dir.join(&instance_name);
+    let instance_dir = file_utils::instance_dir(&versions_dir, &instance_name)?;
 
     let json_path = instance_dir.join(format!("{}.json", instance_name));
     if !json_path.exists() {
@@ -1080,13 +1079,14 @@ pub async fn launch_instance(
                         .await
                     {
                         Ok(auth_result) => {
-                            let mut cfg = (*config::load_config()?).clone();
-                            cfg.ms_access_token = Some(auth_result.access_token.clone());
-                            cfg.ms_refresh_token = Some(auth_result.refresh_token.clone());
-                            cfg.ms_expires_at = Some(auth_result.expires_at);
-                            cfg.username = Some(auth_result.username.clone());
-                            cfg.uuid = Some(auth_result.uuid.clone());
-                            config::save_config(&cfg)?;
+                            config::update_config(|cfg| {
+                                cfg.ms_access_token = Some(auth_result.access_token.clone());
+                                cfg.ms_refresh_token = Some(auth_result.refresh_token.clone());
+                                cfg.ms_expires_at = Some(auth_result.expires_at);
+                                cfg.username = Some(auth_result.username.clone());
+                                cfg.uuid = Some(auth_result.uuid.clone());
+                                Ok(())
+                            })?;
 
                             token = Some(auth_result.access_token);
                             info!("Microsoft token 刷新成功");
