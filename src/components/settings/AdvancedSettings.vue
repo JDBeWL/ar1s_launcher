@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { configApi } from '../../services';
 import { useSettingsStore } from '../../stores/settings';
 import { logError } from '../../utils/logger';
 import type { JvmAdvancedOptions, GcStrategy } from '../../types/events';
 
 const settingsStore = useSettingsStore();
+const { t } = useI18n();
 
 const options = ref<JvmAdvancedOptions>({
   gcStrategy: 'g1',
@@ -33,13 +35,29 @@ const metaspaceTooSmall = computed(
   () => options.value.metaspaceMaxSizeMb !== null && options.value.metaspaceMaxSizeMb < 256,
 );
 
-const gcOptions: { value: GcStrategy; title: string; subtitle: string }[] = [
-  { value: 'g1', title: 'G1GC（推荐）', subtitle: 'G1GC 调优，兼容性最好' },
-  { value: 'default', title: '默认', subtitle: '不指定回收器，完全交给 JVM，与官方启动器一致' },
-  { value: 'parallel', title: 'Parallel GC', subtitle: '吞吐量优先，适合核心数较少的机器' },
-  { value: 'serial', title: 'Serial GC', subtitle: '单线程回收，一般只用于排查 GC 问题' },
-  { value: 'z', title: 'ZGC', subtitle: '极低停顿，适合超大堆；Java 15 以下会自动回退到 G1' },
-];
+const gcOptions = computed<{ value: GcStrategy; title: string; subtitle: string }[]>(() => [
+  {
+    value: 'g1',
+    title: t('settings.advanced.gcOptions.g1Title'),
+    subtitle: t('settings.advanced.gcOptions.g1Subtitle'),
+  },
+  {
+    value: 'default',
+    title: t('settings.advanced.gcOptions.defaultTitle'),
+    subtitle: t('settings.advanced.gcOptions.defaultSubtitle'),
+  },
+  {
+    value: 'parallel',
+    title: t('settings.advanced.gcOptions.parallelTitle'),
+    subtitle: t('settings.advanced.gcOptions.parallelSubtitle'),
+  },
+  {
+    value: 'serial',
+    title: t('settings.advanced.gcOptions.serialTitle'),
+    subtitle: t('settings.advanced.gcOptions.serialSubtitle'),
+  },
+  { value: 'z', title: t('settings.advanced.gcOptions.zTitle'), subtitle: t('settings.advanced.gcOptions.zSubtitle') },
+]);
 
 const gcArgsPreview = computed(() => {
   switch (options.value.gcStrategy) {
@@ -50,9 +68,9 @@ const gcArgsPreview = computed(() => {
     case 'serial':
       return '-XX:+UseSerialGC';
     case 'z':
-      return '-XX:+UseZGC（Java 21~23 追加 -XX:+ZGenerational；Java 15 以下回退 G1）';
+      return t('settings.advanced.gcArgs.z');
     default:
-      return '不添加任何 GC 参数，由 JVM 自行决定';
+      return t('settings.advanced.gcArgs.default');
   }
 });
 
@@ -148,22 +166,24 @@ onMounted(async () => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-1">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-recycle</v-icon>
-          <span class="text-title-medium">垃圾回收器</span>
+          <span class="text-title-medium">{{ t('settings.advanced.gcTitle') }}</span>
         </div>
-        <p class="text-body-medium text-on-surface-variant mb-4">默认 G1GC 会使用调优参数</p>
+        <p class="text-body-medium text-on-surface-variant mb-4">{{ t('settings.advanced.gcHint') }}</p>
 
         <v-select
           v-model="options.gcStrategy"
           :items="gcOptions"
           item-title="title"
           item-value="value"
-          label="GC 策略"
+          :label="t('settings.advanced.gcStrategyLabel')"
           density="comfortable"
           variant="outlined"
           hide-details
         />
 
-        <p class="text-body-medium text-on-surface-variant mt-4 mb-0">将写入的参数</p>
+        <p class="text-body-medium text-on-surface-variant mt-4 mb-0">
+          {{ t('settings.advanced.gcArgsPreview') }}
+        </p>
         <pre class="jvm-code mt-2">{{ gcArgsPreview }}</pre>
       </v-card-text>
     </v-card>
@@ -172,22 +192,22 @@ onMounted(async () => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-3">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-tune-variant</v-icon>
-          <span class="text-title-medium">可选优化项</span>
+          <span class="text-title-medium">{{ t('settings.advanced.optionsTitle') }}</span>
         </div>
         <p class="text-body-medium text-on-surface-variant mb-4">
-          以下选项默认全部关闭，以保证与官方启动器一致的稳定性
+          {{ t('settings.advanced.optionsHint') }}
         </p>
 
         <div class="option-row">
           <div class="option-text">
-            <span class="text-body-medium">预分配堆内存 (AlwaysPreTouch)</span>
+            <span class="text-body-medium">{{ t('settings.advanced.alwaysPreTouch') }}</span>
             <p class="text-body-small text-on-surface-variant mb-0">
-              启动时提交整个堆，减少运行期缺页抖动；会让启动变慢
+              {{ t('settings.advanced.alwaysPreTouchHint') }}
             </p>
           </div>
           <v-switch
             v-model="options.alwaysPreTouch"
-            aria-label="预分配堆内存"
+            :aria-label="t('settings.advanced.alwaysPreTouchAria')"
             hide-details
             inset
             density="compact"
@@ -199,14 +219,14 @@ onMounted(async () => {
 
         <div class="option-row">
           <div class="option-text">
-            <span class="text-body-medium">禁用显式 GC (DisableExplicitGC)</span>
+            <span class="text-body-medium">{{ t('settings.advanced.disableExplicitGc') }}</span>
             <p class="text-body-small text-on-surface-variant mb-0">
-              阻止模组调用 System.gc() 触发的整堆回收；少数模组依赖它释放堆外内存
+              {{ t('settings.advanced.disableExplicitGcHint') }}
             </p>
           </div>
           <v-switch
             v-model="options.disableExplicitGc"
-            aria-label="禁用显式 GC"
+            :aria-label="t('settings.advanced.disableExplicitGcAria')"
             hide-details
             inset
             density="compact"
@@ -218,12 +238,12 @@ onMounted(async () => {
 
         <div class="option-row">
           <div class="option-text">
-            <span class="text-body-medium">字符串去重</span>
-            <p class="text-body-small text-on-surface-variant mb-0">省内存，但会拉长每次 Young GC 的时间</p>
+            <span class="text-body-medium">{{ t('settings.advanced.stringDedup') }}</span>
+            <p class="text-body-small text-on-surface-variant mb-0">{{ t('settings.advanced.stringDedupHint') }}</p>
           </div>
           <v-switch
             v-model="options.stringDeduplication"
-            aria-label="字符串去重"
+            :aria-label="t('settings.advanced.stringDedupAria')"
             hide-details
             inset
             density="compact"
@@ -235,14 +255,14 @@ onMounted(async () => {
 
         <div class="option-row">
           <div class="option-text">
-            <span class="text-body-medium">关闭性能计数器 (PerfDisableSharedMem)</span>
+            <span class="text-body-medium">{{ t('settings.advanced.perfDisableSharedMem') }}</span>
             <p class="text-body-small text-on-surface-variant mb-0">
-              不再写 hsperfdata 共享内存；会失去 jstat 等外部监控能力
+              {{ t('settings.advanced.perfDisableSharedMemHint') }}
             </p>
           </div>
           <v-switch
             v-model="options.perfDisableSharedMem"
-            aria-label="关闭性能计数器"
+            :aria-label="t('settings.advanced.perfDisableSharedMemAria')"
             hide-details
             inset
             density="compact"
@@ -254,14 +274,14 @@ onMounted(async () => {
 
         <div class="option-row">
           <div class="option-text">
-            <span class="text-body-medium">崩溃时导出堆转储</span>
+            <span class="text-body-medium">{{ t('settings.advanced.heapDump') }}</span>
             <p class="text-body-small text-on-surface-variant mb-0">
-              内存溢出时把堆写到 ./logs/heapdump.hprof，可能占用数 GB 磁盘
+              {{ t('settings.advanced.heapDumpHint') }}
             </p>
           </div>
           <v-switch
             v-model="options.heapDumpOnOom"
-            aria-label="崩溃时导出堆转储"
+            :aria-label="t('settings.advanced.heapDumpAria')"
             hide-details
             inset
             density="compact"
@@ -276,11 +296,11 @@ onMounted(async () => {
         <div class="d-flex align-center justify-space-between mb-1">
           <div class="d-flex align-center">
             <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-memory</v-icon>
-            <span class="text-title-medium">Metaspace 元空间</span>
+            <span class="text-title-medium">{{ t('settings.advanced.metaspaceTitle') }}</span>
           </div>
           <v-switch
             :model-value="metaspaceEnabled"
-            aria-label="设置 Metaspace 大小"
+            :aria-label="t('settings.advanced.metaspaceToggleAria')"
             hide-details
             inset
             density="compact"
@@ -289,12 +309,12 @@ onMounted(async () => {
           />
         </div>
         <p class="text-body-medium text-on-surface-variant mb-0">
-          存放类与模组的元数据。初始水位抬高可减少加载阶段的扩容；上限用来防止大型整合包无限膨胀
+          {{ t('settings.advanced.metaspaceHint') }}
         </p>
 
         <v-expand-transition>
           <div v-if="metaspaceEnabled" class="mt-4">
-            <div class="text-body-medium mb-2">初始大小（MetaspaceSize）</div>
+            <div class="text-body-medium mb-2">{{ t('settings.advanced.metaspaceInitial') }}</div>
             <div class="d-flex flex-wrap ga-2 mb-3">
               <v-chip
                 v-for="mb in metaspacePresets"
@@ -309,18 +329,18 @@ onMounted(async () => {
             <v-text-field
               v-model.number="options.metaspaceSizeMb"
               type="number"
-              label="初始大小"
+              :label="t('settings.advanced.metaspaceInitialLabel')"
               suffix="MB"
               density="compact"
               hide-details
               :min="0"
-              hint="超过上限时会自动收敛到上限值"
+              :hint="t('settings.advanced.metaspaceInitialHint')"
               style="max-width: 220px"
             />
 
             <v-divider class="my-4" />
 
-            <div class="text-body-medium mb-2">上限（MaxMetaspaceSize）</div>
+            <div class="text-body-medium mb-2">{{ t('settings.advanced.metaspaceMax') }}</div>
             <div class="d-flex flex-wrap ga-2 mb-3">
               <v-chip
                 v-for="mb in metaspaceMaxPresets"
@@ -335,18 +355,20 @@ onMounted(async () => {
             <v-text-field
               v-model.number="options.metaspaceMaxSizeMb"
               type="number"
-              label="上限"
+              :label="t('settings.advanced.metaspaceMaxLabel')"
               suffix="MB"
               density="compact"
               hide-details
               :min="0"
-              hint="留空或不填表示不限制；只填上限时初始值会自动对齐上限"
+              :hint="t('settings.advanced.metaspaceMaxHint')"
               style="max-width: 220px"
             />
 
             <v-alert v-if="metaspaceTooSmall" color="warning-container" density="compact" class="mt-4">
               <span class="text-body-small text-on-warning-container">
-                上限给低了会导致 <code>OutOfMemoryError: Metaspace</code>，大型整合包建议 512 MB 起
+                {{ t('settings.advanced.metaspaceTooSmallPrefix') }}
+                <code>OutOfMemoryError: Metaspace</code>
+                {{ t('settings.advanced.metaspaceTooSmallSuffix') }}
               </span>
             </v-alert>
           </div>
@@ -358,10 +380,10 @@ onMounted(async () => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-1">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-console-line</v-icon>
-          <span class="text-title-medium">自定义 JVM 参数</span>
+          <span class="text-title-medium">{{ t('settings.advanced.extraArgsTitle') }}</span>
         </div>
         <p class="text-body-medium text-on-surface-variant mb-3">
-          每行一条或空格分隔，<code>#</code> 开头为注释。这些参数追加在最后，会覆盖上面的同名设置
+          {{ t('settings.advanced.extraArgsHint') }} <code>#</code> {{ t('settings.advanced.extraArgsHintComment') }}
         </p>
 
         <v-textarea
@@ -373,7 +395,7 @@ onMounted(async () => {
           auto-grow
           :disabled="saving"
           spellcheck="false"
-          placeholder="# 例如：使用 ZGC 替代 G1GC&#10;-XX:+UseZGC&#10;-XX:+ZGenerational"
+          :placeholder="t('settings.advanced.extraArgsPlaceholder')"
         />
       </v-card-text>
     </v-card>
@@ -383,7 +405,7 @@ onMounted(async () => {
         <div class="d-flex align-center justify-space-between mb-3">
           <div class="d-flex align-center">
             <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-file-document-outline</v-icon>
-            <span class="text-title-medium">实际生效的 JVM 参数</span>
+            <span class="text-title-medium">{{ t('settings.advanced.effectiveTitle') }}</span>
           </div>
           <v-btn
             size="small"
@@ -395,18 +417,17 @@ onMounted(async () => {
               refreshPreview();
             "
           >
-            {{ showPreview ? '刷新' : '预览' }}
+            {{ showPreview ? t('settings.advanced.effectiveRefresh') : t('settings.advanced.effectivePreview') }}
           </v-btn>
         </div>
 
         <v-expand-transition>
           <div v-if="showPreview">
             <p v-if="settingsStore.autoMemoryEnabled" class="text-body-small text-on-surface-variant mb-2">
-              已开启自动内存：这里的 -Xmx/-Xms 按手动值 {{ settingsStore.maxMemory }} MB
-              预览，实际启动时按实例动态计算。
+              {{ t('settings.advanced.autoMemoryNote', { memory: settingsStore.maxMemory }) }}
             </p>
             <pre v-if="effectiveArgs.length" class="jvm-code jvm-code-block">{{ effectiveArgs.join('\n') }}</pre>
-            <p v-else class="text-body-medium text-on-surface-variant mb-0">暂无预览数据</p>
+            <p v-else class="text-body-medium text-on-surface-variant mb-0">{{ t('settings.advanced.noPreview') }}</p>
           </div>
         </v-expand-transition>
       </v-card-text>
@@ -417,13 +438,13 @@ onMounted(async () => {
         <v-icon size="20" color="on-warning-container">mdi-alert-outline</v-icon>
       </template>
       <ul class="text-body-small pl-4 mb-0 text-on-warning-container">
-        <li>修改会在下次启动游戏时生效</li>
-        <li>自定义参数写错可能导致游戏无法启动，改动前先点「预览」确认</li>
+        <li>{{ t('settings.advanced.tip1') }}</li>
+        <li>{{ t('settings.advanced.tip2') }}</li>
       </ul>
     </v-alert>
 
     <v-btn variant="text" color="secondary" prepend-icon="mdi-restore" @click="resetToDefaults">
-      恢复默认（只保留 G1GC）
+      {{ t('settings.advanced.reset') }}
     </v-btn>
   </div>
 </template>

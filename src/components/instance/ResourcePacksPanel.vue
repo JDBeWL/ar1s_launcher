@@ -5,6 +5,7 @@
  * 所以这里的开关是改配置而不是改文件名，禁用后文件仍然留在 resourcepacks 目录
  */
 import { computed, onMounted, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { open } from '@tauri-apps/plugin-dialog';
 import ResourcePackBrowserDialog from './ResourcePackBrowserDialog.vue';
 import { useNotificationStore } from '../../stores/notificationStore';
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 }>();
 
 const notificationStore = useNotificationStore();
+const { t } = useI18n();
 
 const packs = ref<ResourcePackInfo[]>([]);
 const loading = ref(false);
@@ -54,17 +56,19 @@ const enabledCount = computed(() => packs.value.filter((pack) => pack.enabled).l
 /** pack.mcmeta 里声明的格式区间，读不到就不显示 */
 function formatRange(pack: ResourcePackInfo): string {
   if (pack.minFormat === null && pack.maxFormat === null) return '';
-  if (pack.minFormat === null) return `格式 ${pack.maxFormat}`;
-  if (pack.maxFormat === null || pack.minFormat === pack.maxFormat) return `格式 ${pack.minFormat}`;
-  return `格式 ${pack.minFormat}–${pack.maxFormat}`;
+  if (pack.minFormat === null) return t('resourcePacks.formatSingle', { format: pack.maxFormat });
+  if (pack.maxFormat === null || pack.minFormat === pack.maxFormat) {
+    return t('resourcePacks.formatSingle', { format: pack.minFormat });
+  }
+  return t('resourcePacks.formatRange', { range: `${pack.minFormat}–${pack.maxFormat}` });
 }
 
 function compatibilityHint(pack: ResourcePackInfo): { text: string; color: string } | null {
   switch (pack.compatibility) {
     case 'outdated':
-      return { text: '版本偏旧', color: 'warning' };
+      return { text: t('resourcePacks.outdated'), color: 'warning' };
     case 'tooNew':
-      return { text: '版本偏新', color: 'error' };
+      return { text: t('resourcePacks.tooNew'), color: 'error' };
     default:
       return null;
   }
@@ -100,7 +104,7 @@ async function togglePack(pack: ResourcePackInfo) {
     emit('changed');
   } catch (e) {
     logError('Failed to toggle resource pack', e, 'ResourcePacksPanel');
-    notificationStore.error('资源包操作失败', getErrorMessage(e));
+    notificationStore.error(t('resourcePacks.toggleFailed'), getErrorMessage(e));
   } finally {
     busyFile.value = null;
   }
@@ -125,7 +129,7 @@ async function deletePack() {
     emit('changed');
   } catch (e) {
     logError('Failed to delete resource pack', e, 'ResourcePacksPanel');
-    notificationStore.error('删除资源包失败', getErrorMessage(e));
+    notificationStore.error(t('resourcePacks.deleteFailed'), getErrorMessage(e));
   } finally {
     busyFile.value = null;
   }
@@ -137,8 +141,8 @@ async function importPacks() {
   try {
     const selected = await open({
       multiple: true,
-      title: '选择资源包',
-      filters: [{ name: '资源包', extensions: ['zip'] }],
+      title: t('resourcePacks.pickTitle'),
+      filters: [{ name: t('resourcePacks.pickFilter'), extensions: ['zip'] }],
     });
     if (!selected) return;
 
@@ -152,17 +156,25 @@ async function importPacks() {
 
     if (summary.imported.length === 0) {
       notificationStore.warning(
-        '没有导入任何资源包',
-        summary.skipped.length > 0 ? `已跳过：${summary.skipped.join('、')}` : '所选文件不是资源包',
+        t('resourcePacks.nothingImported'),
+        summary.skipped.length > 0
+          ? t('resourcePacks.nothingImportedSkipped', { names: summary.skipped.join(', ') })
+          : t('resourcePacks.nothingImportedInvalid'),
       );
     } else if (summary.skipped.length > 0) {
-      notificationStore.warning(`导入了 ${summary.imported.length} 个资源包`, `跳过：${summary.skipped.join('、')}`);
+      notificationStore.warning(
+        t('resourcePacks.importedSome', { count: summary.imported.length }, summary.imported.length),
+        t('resourcePacks.importedSkipped', { names: summary.skipped.join(', ') }),
+      );
     } else {
-      notificationStore.success('导入完成', `${summary.imported.length} 个资源包已放入 resourcepacks`);
+      notificationStore.success(
+        t('resourcePacks.importDone'),
+        t('resourcePacks.importDoneHint', { count: summary.imported.length }, summary.imported.length),
+      );
     }
   } catch (e) {
     logError('Failed to import resource packs', e, 'ResourcePacksPanel');
-    notificationStore.error('导入资源包失败', getErrorMessage(e), true);
+    notificationStore.error(t('resourcePacks.importFailed'), getErrorMessage(e), true);
   } finally {
     importing.value = false;
   }
@@ -173,7 +185,7 @@ async function openFolder() {
     await resourcePackApi.openFolder(props.instanceName);
   } catch (e) {
     logError('Failed to open resourcepacks folder', e, 'ResourcePacksPanel');
-    notificationStore.error('打开文件夹失败', getErrorMessage(e));
+    notificationStore.error(t('resourcePacks.openFolderFailed'), getErrorMessage(e));
   }
 }
 
@@ -193,13 +205,16 @@ async function checkUpdates() {
   try {
     updates.value = await resourcePackApi.checkUpdates(props.instanceName);
     if (updates.value.length === 0) {
-      notificationStore.success('已是最新', '没有检测到可更新的资源包');
+      notificationStore.success(t('resourcePacks.upToDate'), t('resourcePacks.upToDateHint'));
     } else {
-      notificationStore.info('发现更新', `${updates.value.length} 个资源包有新版本`);
+      notificationStore.info(
+        t('resourcePacks.updateFound'),
+        t('resourcePacks.updateFoundHint', { count: updates.value.length }, updates.value.length),
+      );
     }
   } catch (e) {
     logError('Failed to check resource pack updates', e, 'ResourcePacksPanel');
-    notificationStore.error('检查更新失败', getErrorMessage(e), true);
+    notificationStore.error(t('resourcePacks.checkFailed'), getErrorMessage(e), true);
   } finally {
     checking.value = false;
   }
@@ -215,10 +230,13 @@ async function updatePack(pack: ResourcePackInfo) {
     updates.value = updates.value.filter((item) => item.fileName !== pack.fileName);
     await loadPacks();
     emit('changed');
-    notificationStore.success('更新成功', `${pack.displayName} 已更新到 ${installed.versionNumber}`);
+    notificationStore.success(
+      t('resourcePacks.updateSuccess'),
+      t('resourcePacks.updateSuccessHint', { name: pack.displayName, version: installed.versionNumber }),
+    );
   } catch (e) {
     logError('Failed to update resource pack', e, 'ResourcePacksPanel');
-    notificationStore.error('更新失败', getErrorMessage(e), true);
+    notificationStore.error(t('resourcePacks.updateFailed'), getErrorMessage(e), true);
   } finally {
     updatingFile.value = null;
   }
@@ -249,9 +267,15 @@ async function updateAll() {
     emit('changed');
 
     if (failed === 0) {
-      notificationStore.success('更新完成', `${succeeded} 个资源包已更新`);
+      notificationStore.success(
+        t('resourcePacks.updateDone'),
+        t('resourcePacks.updateDoneHint', { count: succeeded }, succeeded),
+      );
     } else {
-      notificationStore.warning('部分更新失败', `成功 ${succeeded} 个，失败 ${failed} 个`);
+      notificationStore.warning(
+        t('resourcePacks.updatePartlyFailed'),
+        t('resourcePacks.updatePartlyFailedHint', { succeeded, failed }),
+      );
     }
   } finally {
     updatingAll.value = false;
@@ -277,7 +301,7 @@ watch(
   <div>
     <div class="d-flex align-center ga-2 mb-3 flex-wrap">
       <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-plus" @click="openBrowser">
-        安装资源包
+        {{ t('resourcePacks.install') }}
       </v-btn>
       <v-btn
         variant="text"
@@ -286,12 +310,19 @@ watch(
         :loading="importing"
         @click="importPacks"
       >
-        从文件导入
+        {{ t('resourcePacks.importFromFile') }}
       </v-btn>
       <v-btn variant="text" size="small" prepend-icon="mdi-update" :loading="checking" @click="checkUpdates">
-        检查更新
+        {{ t('resourcePacks.checkUpdates') }}
       </v-btn>
-      <v-btn icon size="small" variant="text" aria-label="刷新资源包列表" :loading="loading" @click="loadPacks">
+      <v-btn
+        icon
+        size="small"
+        variant="text"
+        :aria-label="t('resourcePacks.refreshList')"
+        :loading="loading"
+        @click="loadPacks"
+      >
         <v-icon size="18">mdi-refresh</v-icon>
       </v-btn>
 
@@ -305,7 +336,7 @@ watch(
         :loading="updatingAll"
         @click="updateAll"
       >
-        全部更新 ({{ updatableCount }})
+        {{ t('resourcePacks.updateAll', { count: updatableCount }) }}
       </v-btn>
     </div>
 
@@ -316,13 +347,13 @@ watch(
 
       <div v-else-if="error" class="text-center pa-8">
         <div class="text-body-medium text-error mb-3">{{ error }}</div>
-        <v-btn size="small" variant="tonal" color="primary" @click="loadPacks">重试</v-btn>
+        <v-btn size="small" variant="tonal" color="primary" @click="loadPacks">{{ t('common.retry') }}</v-btn>
       </div>
 
       <div v-else-if="packs.length === 0" class="text-center pa-10 text-on-surface-variant">
         <v-icon size="40" class="mb-2" color="on-surface-variant">mdi-texture-box</v-icon>
-        <div class="text-body-medium">这个实例还没有资源包</div>
-        <div class="text-body-small mt-1">点「安装资源包」从 Modrinth 搜索，或把 zip 拖进 resourcepacks 目录</div>
+        <div class="text-body-medium">{{ t('resourcePacks.emptyTitle') }}</div>
+        <div class="text-body-small mt-1">{{ t('resourcePacks.emptyHint') }}</div>
       </div>
 
       <v-list v-else lines="two" density="compact">
@@ -344,7 +375,7 @@ watch(
           <v-list-item-subtitle class="text-body-small">
             <template v-if="formatRange(pack)">{{ formatRange(pack) }} · </template>
             {{ formatFileSize(pack.size) }} · {{ pack.fileName }}
-            <template v-if="pack.isDirectory"> · 文件夹</template>
+            <template v-if="pack.isDirectory"> · {{ t('resourcePacks.folderSuffix') }}</template>
           </v-list-item-subtitle>
 
           <template #append>
@@ -368,7 +399,7 @@ watch(
                 color="primary"
                 :loading="updatingFile === pack.fileName"
                 :disabled="updatingAll"
-                :aria-label="`更新 ${pack.displayName}`"
+                :aria-label="t('resourcePacks.updateAria', { name: pack.displayName })"
                 @click="updatePack(pack)"
               >
                 <v-icon size="18">mdi-update</v-icon>
@@ -377,7 +408,11 @@ watch(
                 :model-value="pack.enabled"
                 :loading="busyFile === pack.fileName"
                 :disabled="busyFile === pack.fileName"
-                :aria-label="pack.enabled ? `禁用 ${pack.displayName}` : `启用 ${pack.displayName}`"
+                :aria-label="
+                  pack.enabled
+                    ? t('resourcePacks.disableAria', { name: pack.displayName })
+                    : t('resourcePacks.enableAria', { name: pack.displayName })
+                "
                 hide-details
                 inset
                 density="compact"
@@ -388,7 +423,7 @@ watch(
                 icon
                 size="small"
                 variant="text"
-                :aria-label="`删除 ${pack.displayName}`"
+                :aria-label="t('resourcePacks.deleteAria', { name: pack.displayName })"
                 :disabled="busyFile === pack.fileName"
                 @click="askDeletePack(pack)"
               >
@@ -404,18 +439,18 @@ watch(
         v-if="packs.length > 0"
         class="d-flex align-center flex-wrap ga-2 text-body-small text-on-surface-variant pa-3"
       >
-        <span>已启用 {{ enabledCount }} / {{ packs.length }}</span>
+        <span>{{ t('resourcePacks.enabledCount', { enabled: enabledCount, total: packs.length }) }}</span>
         <span>·</span>
-        <span>启用状态写进 options.txt，游戏内仍可调整顺序</span>
+        <span>{{ t('resourcePacks.enabledHint') }}</span>
         <v-spacer />
         <v-btn size="x-small" variant="text" prepend-icon="mdi-folder-open-outline" @click="openFolder">
-          打开文件夹
+          {{ t('common.openFolder') }}
         </v-btn>
       </div>
 
       <v-divider v-if="!versionIsolation" />
       <div v-if="!versionIsolation" class="text-body-small text-error pa-3">
-        当前关闭了版本隔离，资源包在共享目录里，这里的启停会影响所有实例。
+        {{ t('resourcePacks.sharedFolderWarning') }}
       </div>
     </v-card>
 
@@ -429,19 +464,23 @@ watch(
     <v-dialog v-model="deleteDialog" max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
-          <div class="text-title-large font-weight-bold mb-2">删除资源包</div>
+          <div class="text-title-large font-weight-bold mb-2">{{ t('resourcePacks.deleteTitle') }}</div>
           <div class="text-body-medium text-on-surface-variant">
-            确定要删除 <strong class="text-on-surface">{{ packToDelete?.displayName }}</strong> 吗？ 文件
-            {{ packToDelete?.fileName }} 会直接从磁盘移除。
+            {{ t('resourcePacks.deleteConfirmPrefix') }}
+            <strong class="text-on-surface">{{ packToDelete?.displayName }}</strong>
+            {{ t('resourcePacks.deleteConfirmMiddle') }} {{ packToDelete?.fileName }}
+            {{ t('resourcePacks.deleteConfirmSuffix') }}
           </div>
           <div v-if="!versionIsolation" class="text-body-small text-error mt-3">
-            当前关闭了版本隔离，这个文件在共享 resourcepacks 目录里，删除后所有实例都不再能用它。
+            {{ t('resourcePacks.deleteSharedWarning') }}
           </div>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
-          <v-btn variant="text" @click="deleteDialog = false">取消</v-btn>
-          <v-btn color="error" :loading="busyFile === packToDelete?.fileName" @click="deletePack">删除</v-btn>
+          <v-btn variant="text" @click="deleteDialog = false">{{ t('common.cancel') }}</v-btn>
+          <v-btn color="error" :loading="busyFile === packToDelete?.fileName" @click="deletePack">
+            {{ t('common.delete') }}
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

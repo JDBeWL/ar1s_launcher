@@ -5,6 +5,7 @@
  */
 import { defineStore } from 'pinia';
 import { useMultiEventSubscription } from '../composables/useEventSubscription';
+import { translate } from '../i18n';
 import { useNotificationStore } from './notificationStore';
 import { useCrashStore } from './crashStore';
 import type { CrashDiagnosis } from '../types/events';
@@ -14,23 +15,23 @@ export const useLauncherStore = defineStore('launcher', () => {
   const eventSubs = useMultiEventSubscription();
 
   eventSubs.add<string>('minecraft-exited', (event) => {
-    const msg = String(event.payload ?? '游戏已退出');
+    const msg = String(event.payload ?? translate('game.exitedHint'));
     const notificationStore = useNotificationStore();
-    notificationStore.info('Minecraft 已退出', msg);
+    notificationStore.info(translate('game.exitedTitle'), msg);
   });
 
   eventSubs.add<string>('minecraft-error', (event) => {
-    const msg = String(event.payload ?? '未知错误');
-    logError('Minecraft 运行错误', msg, 'LauncherStore');
+    const msg = String(event.payload ?? translate('errors.globalUnknown'));
+    logError('Minecraft runtime error', msg, 'LauncherStore');
     const notificationStore = useNotificationStore();
-    notificationStore.error('Minecraft 运行错误', msg, true);
+    notificationStore.error(translate('game.errorTitle'), msg, true);
   });
 
   eventSubs.add<CrashDiagnosis>('minecraft-crash', (event) => {
     const diagnosis = event.payload;
     if (!diagnosis) return;
 
-    logError('Minecraft 启动失败', diagnosis.headline, 'LauncherStore');
+    logError('Minecraft launch failed', diagnosis.headline, 'LauncherStore');
     useCrashStore().open(diagnosis);
   });
 

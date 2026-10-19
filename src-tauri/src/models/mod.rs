@@ -145,6 +145,9 @@ pub struct GameConfig {
     pub theme_palette: Option<String>,
     /// 界面明暗模式 (dark / light)
     pub theme_mode: Option<String>,
+    /// 启动器界面语言 (zh-CN / en-US)，与游戏内语言 language 相互独立
+    #[serde(default)]
+    pub ui_language: Option<String>,
     #[serde(default)]
     pub auth_type: AuthType,
     /// Microsoft access_token (仅后端使用)
@@ -185,6 +188,7 @@ impl Default for GameConfig {
             last_selected_version: None,
             theme_palette: None,
             theme_mode: None,
+            ui_language: None,
             auth_type: AuthType::default(),
             ms_access_token: None,
             ms_refresh_token: None,

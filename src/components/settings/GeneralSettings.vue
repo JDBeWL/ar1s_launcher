@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { useSettingsStore } from '../../stores/settings';
+import { useUiLanguageStore } from '../../stores/uiLanguage';
 import { configApi } from '../../services';
 import { logError } from '../../utils/logger';
 import { getThemePalette } from '../../utils/storage';
@@ -11,6 +13,9 @@ import ThemePalettePicker from './ThemePalettePicker.vue';
 import NetworkProxySettings from './NetworkProxySettings.vue';
 
 const settingsStore = useSettingsStore();
+const uiLanguageStore = useUiLanguageStore();
+const { t } = useI18n();
+
 const gameDir = ref('');
 const versionIsolation = ref(true);
 const downloadThreads = ref(16);
@@ -18,6 +23,9 @@ const downloadThreadsInput = ref('16');
 const isInitialized = ref(false);
 const appVersion = __APP_VERSION__;
 const themePalette = ref(getThemePalette());
+
+// 界面语言用 nativeName 展示，游戏内语言用各自语言的写法
+const interfaceLanguages = uiLanguageStore.languages.map((item) => ({ title: item.nativeName, value: item.value }));
 
 const gameLanguage = ref('zh_cn');
 const gameLanguages = [
@@ -50,7 +58,7 @@ async function selectGameDir() {
     const selected = await open({
       directory: true,
       multiple: false,
-      title: '选择游戏目录',
+      title: t('settings.general.gameDirDialog'),
     });
     if (selected) {
       gameDir.value = selected as string;
@@ -181,11 +189,23 @@ onUnmounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-3">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-folder-outline</v-icon>
-          <span class="text-title-medium">游戏目录</span>
+          <span class="text-title-medium">{{ t('settings.general.gameDirTitle') }}</span>
         </div>
-        <v-text-field density="comfortable" v-model="gameDir" label="游戏安装目录" readonly hide-details>
+        <v-text-field
+          density="comfortable"
+          v-model="gameDir"
+          :label="t('settings.general.gameDirLabel')"
+          readonly
+          hide-details
+        >
           <template #append-inner>
-            <v-btn icon variant="text" size="x-small" aria-label="选择游戏目录" @click="selectGameDir">
+            <v-btn
+              icon
+              variant="text"
+              size="x-small"
+              :aria-label="t('settings.general.gameDirAria')"
+              @click="selectGameDir"
+            >
               <v-icon size="18">mdi-folder-open-outline</v-icon>
             </v-btn>
           </template>
@@ -198,11 +218,11 @@ onUnmounted(() => {
         <div class="d-flex align-center justify-space-between mb-1">
           <div class="d-flex align-center">
             <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-folder-multiple-outline</v-icon>
-            <span class="text-title-medium">版本隔离</span>
+            <span class="text-title-medium">{{ t('settings.general.isolationTitle') }}</span>
           </div>
           <v-switch
             v-model="versionIsolation"
-            aria-label="版本隔离"
+            :aria-label="t('settings.general.isolationTitle')"
             hide-details
             inset
             density="compact"
@@ -210,11 +230,11 @@ onUnmounted(() => {
           />
         </div>
         <p class="text-body-medium text-on-surface-variant mb-0">
-          开启后每个版本使用独立目录，存档、模组、配置互不影响；关闭后所有版本共用根目录的 mods、存档与配置。
+          {{ t('settings.general.isolationHint') }}
         </p>
 
         <v-alert v-if="!versionIsolation" type="warning" variant="tonal" density="compact" class="mt-3 text-body-small">
-          关闭隔离后游戏读取的是根目录，启动器会把模组装到根目录的 mods；实例目录里已有的模组不会被加载。
+          {{ t('settings.general.isolationWarning') }}
         </v-alert>
       </v-card-text>
     </v-card>
@@ -223,18 +243,18 @@ onUnmounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-download-outline</v-icon>
-          <span class="text-title-medium">下载设置</span>
+          <span class="text-title-medium">{{ t('settings.general.downloadTitle') }}</span>
         </div>
 
         <div class="mb-5">
           <div class="d-flex align-center justify-space-between mb-2">
-            <span class="text-body-medium">下载线程数</span>
+            <span class="text-body-medium">{{ t('settings.general.downloadThreads') }}</span>
             <v-text-field
               v-model="downloadThreadsInput"
               type="number"
               density="compact"
-              aria-label="下载线程数"
-              suffix="线程"
+              :aria-label="t('settings.general.downloadThreads')"
+              :suffix="t('settings.general.downloadThreadsSuffix')"
               hide-details
               hide-spin-buttons
               class="download-threads-input"
@@ -259,11 +279,13 @@ onUnmounted(() => {
               <span class="text-body-small text-on-surface-variant">256</span>
             </template>
           </v-slider>
-          <p class="text-body-small text-on-surface-variant mt-2 mb-0">范围 1–256，过高可能触发下载源限速</p>
+          <p class="text-body-small text-on-surface-variant mt-2 mb-0">
+            {{ t('settings.general.downloadThreadsHint') }}
+          </p>
         </div>
 
         <div>
-          <div class="text-body-medium mb-3">优先下载源</div>
+          <div class="text-body-medium mb-3">{{ t('settings.general.mirrorTitle') }}</div>
           <v-btn-toggle
             v-model="settingsStore.downloadMirror"
             mandatory
@@ -276,15 +298,15 @@ onUnmounted(() => {
           >
             <v-btn value="official" class="px-4">
               <v-icon start size="18">mdi-web</v-icon>
-              官方源
+              {{ t('settings.general.mirrorOfficial') }}
             </v-btn>
             <v-btn value="bmcl" class="px-4">
               <v-icon start size="18">mdi-lightning-bolt</v-icon>
-              BMCL 镜像
+              {{ t('settings.general.mirrorBmcl') }}
             </v-btn>
           </v-btn-toggle>
           <p class="text-body-small text-on-surface-variant mt-2 mb-0">
-            优先使用所选源；BMCL 镜像不可用时自动回退官方源
+            {{ t('settings.general.mirrorHint') }}
           </p>
         </div>
       </v-card-text>
@@ -296,7 +318,27 @@ onUnmounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-translate</v-icon>
-          <span class="text-title-medium">游戏语言</span>
+          <span class="text-title-medium">{{ t('settings.uiLanguage.title') }}</span>
+        </div>
+        <v-select
+          density="comfortable"
+          :model-value="uiLanguageStore.current"
+          :items="interfaceLanguages"
+          item-title="title"
+          item-value="value"
+          :label="t('settings.uiLanguage.label')"
+          hide-details
+          @update:model-value="uiLanguageStore.setLanguage"
+        />
+        <div class="text-body-small text-on-surface-variant mt-2">{{ t('settings.uiLanguage.hint') }}</div>
+      </v-card-text>
+    </v-card>
+
+    <v-card variant="flat" color="surface-container" class="mb-4">
+      <v-card-text class="pa-4">
+        <div class="d-flex align-center mb-4">
+          <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-translate</v-icon>
+          <span class="text-title-medium">{{ t('settings.general.gameLanguageTitle') }}</span>
         </div>
         <v-select
           density="comfortable"
@@ -304,10 +346,12 @@ onUnmounted(() => {
           :items="gameLanguages"
           item-title="title"
           item-value="value"
-          label="选择游戏内显示语言"
+          :label="t('settings.general.gameLanguageLabel')"
           hide-details
         />
-        <div class="text-body-small text-on-surface-variant mt-2">启动游戏时将自动设置 options.txt 中的语言选项</div>
+        <div class="text-body-small text-on-surface-variant mt-2">
+          {{ t('settings.general.gameLanguageHint') }}
+        </div>
       </v-card-text>
     </v-card>
 
@@ -315,11 +359,11 @@ onUnmounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-palette-outline</v-icon>
-          <span class="text-title-medium">外观</span>
+          <span class="text-title-medium">{{ t('settings.general.appearanceTitle') }}</span>
         </div>
         <ThemePalettePicker v-model="themePalette" />
         <div class="text-body-small text-on-surface-variant mt-3">
-          配色由种子色推导，浅色与深色模式共用同一套色调关系
+          {{ t('settings.general.appearanceHint') }}
         </div>
       </v-card-text>
     </v-card>
@@ -328,14 +372,14 @@ onUnmounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-information-outline</v-icon>
-          <span class="text-title-medium">关于</span>
+          <span class="text-title-medium">{{ t('settings.general.aboutTitle') }}</span>
         </div>
         <div class="d-flex align-center justify-space-between mb-2">
-          <div class="text-body-medium text-on-surface-variant">应用版本</div>
+          <div class="text-body-medium text-on-surface-variant">{{ t('settings.general.appVersion') }}</div>
           <v-chip size="small" color="primary" variant="tonal">{{ appVersion }}</v-chip>
         </div>
         <div class="text-body-small text-on-surface-variant">
-          快捷键：Ctrl+D 下载，Ctrl+N 新建实例，Ctrl+I 实例列表，Ctrl+, 设置
+          {{ t('settings.general.shortcuts') }}
         </div>
       </v-card-text>
     </v-card>

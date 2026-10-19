@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import InstanceCard from '../components/instance/InstanceCard.vue';
 import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
 import { useNotificationStore } from '../stores/notificationStore';
@@ -18,6 +19,7 @@ const router = useRouter();
 const notificationStore = useNotificationStore();
 const { launchInstance: startInstance } = useGameLaunch();
 const { exportDiagnostics } = useDiagnosticsExport();
+const { t } = useI18n();
 
 const instances = ref<GameInstance[]>(getInstanceListCache());
 const loading = ref(false);
@@ -34,11 +36,11 @@ const deleteDialog = ref(false);
 const deleteConfirmName = ref('');
 const sortBy = ref(getInstanceSortBy());
 
-const sortOptions = [
-  { title: '最近游玩', value: 'lastPlayed' },
-  { title: '名称', value: 'name' },
-  { title: '游戏版本', value: 'version' },
-];
+const sortOptions = computed(() => [
+  { title: t('instanceManager.sortLastPlayed'), value: 'lastPlayed' },
+  { title: t('instanceManager.sortName'), value: 'name' },
+  { title: t('instanceManager.sortVersion'), value: 'version' },
+]);
 
 const filteredInstances = computed(() => {
   let result = instances.value;
@@ -98,11 +100,11 @@ function instanceMeta(instance: GameInstance): string {
   }
 
   if (instance.modCount) {
-    parts.push(`${instance.modCount} Mods`);
+    parts.push(t('loader.modsSuffix', { count: instance.modCount }, instance.modCount));
   }
 
   if (instance.autoMemoryMb) {
-    parts.push(`自动内存 ≈ ${(instance.autoMemoryMb / 1024).toFixed(1)} GB`);
+    parts.push(t('loader.autoMemoryShort', { size: (instance.autoMemoryMb / 1024).toFixed(1) }));
   }
 
   return parts.join(' · ');
@@ -139,11 +141,11 @@ async function renameInstance() {
   try {
     await instanceApi.renameInstance(currentInstance.value.name, renameInstanceName.value);
     renameDialog.value = false;
-    notificationStore.success('重命名成功');
+    notificationStore.success(t('instanceManager.renameSuccess'));
     await loadInstances();
   } catch (error) {
     logError('Failed to rename instance', error, 'InstanceManagerView');
-    notificationStore.error('重命名失败', getErrorMessage(error));
+    notificationStore.error(t('instanceManager.renameFailed'), getErrorMessage(error));
   }
 }
 
@@ -163,11 +165,11 @@ async function deleteInstance() {
   try {
     await instanceApi.deleteInstance(currentInstance.value.name);
     deleteDialog.value = false;
-    notificationStore.success('删除成功');
+    notificationStore.success(t('instanceManager.deleteSuccess'));
     await loadInstances();
   } catch (error) {
     logError('Failed to delete instance', error, 'InstanceManagerView');
-    notificationStore.error('删除失败', getErrorMessage(error));
+    notificationStore.error(t('instanceManager.deleteFailed'), getErrorMessage(error));
   }
 }
 
@@ -204,7 +206,7 @@ onUnmounted(() => {
       <div class="d-flex align-center flex-grow-1 mr-4">
         <v-text-field
           v-model="searchQuery"
-          label="搜索实例"
+          :label="t('instanceManager.searchLabel')"
           density="comfortable"
           variant="outlined"
           hide-details
@@ -219,7 +221,7 @@ onUnmounted(() => {
 
         <v-select
           v-model="sortBy"
-          aria-label="排序方式"
+          :aria-label="t('instanceManager.sortLabel')"
           :items="sortOptions"
           hide-details
           density="comfortable"
@@ -243,10 +245,10 @@ onUnmounted(() => {
           color="primary"
           class="ml-3"
         >
-          <v-btn value="grid" icon aria-label="网格视图">
+          <v-btn value="grid" icon :aria-label="t('instanceManager.gridView')">
             <v-icon size="18">mdi-view-grid</v-icon>
           </v-btn>
-          <v-btn value="list" icon aria-label="列表视图">
+          <v-btn value="list" icon :aria-label="t('instanceManager.listView')">
             <v-icon size="18">mdi-view-list</v-icon>
           </v-btn>
         </v-btn-toggle>
@@ -258,16 +260,16 @@ onUnmounted(() => {
           variant="tonal"
           color="secondary"
           size="small"
-          aria-label="刷新列表"
+          :aria-label="t('instanceManager.refreshList')"
           :loading="refreshing"
           @click="loadInstances"
         >
           <v-icon size="20">mdi-refresh</v-icon>
-          <v-tooltip activator="parent" location="bottom">刷新列表</v-tooltip>
+          <v-tooltip activator="parent" location="bottom">{{ t('instanceManager.refreshList') }}</v-tooltip>
         </v-btn>
         <v-btn color="primary" to="/add-instance">
           <v-icon start size="18">mdi-plus</v-icon>
-          新建
+          {{ t('instanceManager.newInstance') }}
         </v-btn>
       </div>
     </div>
@@ -296,11 +298,11 @@ onUnmounted(() => {
       <v-avatar size="80" color="surface-container-high" class="mb-4">
         <v-icon size="40" color="on-surface-variant">mdi-cube-outline</v-icon>
       </v-avatar>
-      <div class="text-title-large font-weight-medium mb-2">没有实例</div>
-      <div class="text-body-medium text-on-surface-variant mb-4">创建你的第一个游戏实例</div>
+      <div class="text-title-large font-weight-medium mb-2">{{ t('instanceManager.emptyTitle') }}</div>
+      <div class="text-body-medium text-on-surface-variant mb-4">{{ t('instanceManager.emptyHint') }}</div>
       <v-btn color="primary" to="/add-instance">
         <v-icon start size="18">mdi-plus</v-icon>
-        创建实例
+        {{ t('instanceManager.createInstance') }}
       </v-btn>
     </div>
 
@@ -308,8 +310,8 @@ onUnmounted(() => {
       <v-avatar size="64" color="surface-container-high" class="mb-3">
         <v-icon size="32" color="on-surface-variant">mdi-magnify-close</v-icon>
       </v-avatar>
-      <div class="text-body-large font-weight-medium">没有找到匹配的实例</div>
-      <div class="text-body-medium text-on-surface-variant">尝试其他搜索词</div>
+      <div class="text-body-large font-weight-medium">{{ t('instanceManager.noMatchTitle') }}</div>
+      <div class="text-body-medium text-on-surface-variant">{{ t('instanceManager.noMatchHint') }}</div>
     </div>
 
     <v-row v-else-if="viewMode === 'grid'" density="compact">
@@ -355,11 +357,11 @@ onUnmounted(() => {
               @click="launchInstance(instance)"
             >
               <v-icon start size="16">mdi-play</v-icon>
-              启动
+              {{ t('instanceManager.launch') }}
             </v-btn>
             <v-menu>
               <template v-slot:activator="{ props }">
-                <v-btn icon variant="text" size="small" aria-label="实例操作菜单" v-bind="props">
+                <v-btn icon variant="text" size="small" :aria-label="t('instanceManager.instanceMenu')" v-bind="props">
                   <v-icon size="18">mdi-dots-vertical</v-icon>
                 </v-btn>
               </template>
@@ -368,32 +370,36 @@ onUnmounted(() => {
                   <template #prepend>
                     <v-icon size="18">mdi-folder-open</v-icon>
                   </template>
-                  <v-list-item-title class="text-body-medium">打开文件夹</v-list-item-title>
+                  <v-list-item-title class="text-body-medium">{{ t('instanceManager.openFolder') }}</v-list-item-title>
                 </v-list-item>
                 <v-list-item @click="openInstanceDetail(instance)">
                   <template #prepend>
                     <v-icon size="18">mdi-view-dashboard-outline</v-icon>
                   </template>
-                  <v-list-item-title class="text-body-medium">实例详情</v-list-item-title>
+                  <v-list-item-title class="text-body-medium">{{ t('instanceManager.details') }}</v-list-item-title>
                 </v-list-item>
                 <v-list-item @click="exportDiagnostics(instance)">
                   <template #prepend>
                     <v-icon size="18">mdi-zip-box-outline</v-icon>
                   </template>
-                  <v-list-item-title class="text-body-medium">导出诊断包</v-list-item-title>
+                  <v-list-item-title class="text-body-medium">
+                    {{ t('instanceManager.exportDiagnostics') }}
+                  </v-list-item-title>
                 </v-list-item>
                 <v-list-item @click="openRenameDialog(instance)">
                   <template #prepend>
                     <v-icon size="18">mdi-pencil</v-icon>
                   </template>
-                  <v-list-item-title class="text-body-medium">重命名</v-list-item-title>
+                  <v-list-item-title class="text-body-medium">{{ t('instanceManager.rename') }}</v-list-item-title>
                 </v-list-item>
                 <v-divider class="my-1" />
                 <v-list-item @click="openDeleteDialog(instance)">
                   <template #prepend>
                     <v-icon size="18" color="error">mdi-delete</v-icon>
                   </template>
-                  <v-list-item-title class="text-body-medium text-error">删除</v-list-item-title>
+                  <v-list-item-title class="text-body-medium text-error">
+                    {{ t('instanceManager.delete') }}
+                  </v-list-item-title>
                 </v-list-item>
               </v-list>
             </v-menu>
@@ -403,19 +409,19 @@ onUnmounted(() => {
     </v-card>
 
     <div v-if="instances.length > 0" class="text-center text-body-small text-on-surface-variant mt-4">
-      共 {{ instances.length }} 个实例
+      {{ t('instanceManager.totalInstances', { count: instances.length }, instances.length) }}
       <span v-if="searchQuery && filteredInstances.length !== instances.length">
-        ，显示 {{ filteredInstances.length }} 个
+        {{ t('instanceManager.filteredInstances', { count: filteredInstances.length }) }}
       </span>
     </div>
 
     <v-dialog v-model="renameDialog" max-width="360">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
-          <div class="text-title-large font-weight-bold mb-4">重命名实例</div>
+          <div class="text-title-large font-weight-bold mb-4">{{ t('instanceManager.renameTitle') }}</div>
           <v-text-field
             v-model="renameInstanceName"
-            label="新名称"
+            :label="t('instanceManager.newName')"
             autofocus
             density="comfortable"
             variant="outlined"
@@ -424,8 +430,8 @@ onUnmounted(() => {
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
-          <v-btn variant="text" @click="renameDialog = false">取消</v-btn>
-          <v-btn color="primary" @click="renameInstance">确定</v-btn>
+          <v-btn variant="text" @click="renameDialog = false">{{ t('common.cancel') }}</v-btn>
+          <v-btn color="primary" @click="renameInstance">{{ t('common.confirm') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -433,14 +439,16 @@ onUnmounted(() => {
     <v-dialog v-model="deleteDialog" max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
-          <div class="text-title-large font-weight-bold mb-2">删除实例</div>
+          <div class="text-title-large font-weight-bold mb-2">{{ t('instanceManager.deleteTitle') }}</div>
           <div class="text-body-medium text-on-surface-variant mb-4">
-            确定要删除 <strong class="text-on-surface">{{ currentInstance?.name }}</strong> 吗？此操作无法撤销。
+            {{ t('instanceManager.deleteConfirmPrefix') }}
+            <strong class="text-on-surface">{{ currentInstance?.name }}</strong>
+            {{ t('instanceManager.deleteConfirmSuffix') }}
           </div>
           <v-text-field
             v-model="deleteConfirmName"
-            label="实例名称"
-            placeholder="请输入实例名称以确认删除"
+            :label="t('instanceManager.deleteNameLabel')"
+            :placeholder="t('instanceManager.deleteNamePlaceholder')"
             density="comfortable"
             variant="outlined"
             hide-details
@@ -449,8 +457,10 @@ onUnmounted(() => {
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
-          <v-btn variant="text" @click="deleteDialog = false">取消</v-btn>
-          <v-btn color="error" :disabled="!deleteConfirmed" @click="deleteInstance">删除</v-btn>
+          <v-btn variant="text" @click="deleteDialog = false">{{ t('common.cancel') }}</v-btn>
+          <v-btn color="error" :disabled="!deleteConfirmed" @click="deleteInstance">
+            {{ t('instanceManager.delete') }}
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

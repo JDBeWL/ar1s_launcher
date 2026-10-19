@@ -5,6 +5,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
 import ModsPanel from '../components/instance/ModsPanel.vue';
 import ResourcePacksPanel from '../components/instance/ResourcePacksPanel.vue';
@@ -21,6 +22,7 @@ const route = useRoute();
 const router = useRouter();
 const notificationStore = useNotificationStore();
 const { launchInstance: startInstance } = useGameLaunch();
+const { t } = useI18n();
 
 const tab = ref<'mods' | 'settings' | 'resourcepacks' | 'shaderpacks'>('mods');
 
@@ -53,11 +55,11 @@ async function loadInstance(silent = false) {
     const instances = await instanceApi.getInstances();
     instance.value = instances.find((item) => item.name === instanceName.value) ?? null;
     if (!instance.value) {
-      error.value = `没有找到名为「${instanceName.value}」的实例，可能已被删除或重命名`;
+      error.value = t('instanceDetail.notFound', { name: instanceName.value });
     }
   } catch (e) {
     logError('Failed to load instance detail', e, 'InstanceDetailView');
-    error.value = '加载实例信息失败';
+    error.value = t('instanceDetail.loadFailed');
   } finally {
     if (!silent) {
       loading.value = false;
@@ -84,7 +86,7 @@ async function openFolder() {
     await instanceApi.openInstanceFolder(instance.value.name);
   } catch (e) {
     logError('Failed to open instance folder', e, 'InstanceDetailView');
-    notificationStore.error('打开文件夹失败', '请检查实例目录是否还存在');
+    notificationStore.error(t('instanceDetail.openFolderFailed'), t('instanceDetail.openFolderFailedHint'));
   }
 }
 
@@ -107,7 +109,7 @@ onMounted(() => {
 <template>
   <v-container fluid class="page-container pa-4">
     <div class="d-flex align-center mb-3">
-      <v-btn variant="text" prepend-icon="mdi-arrow-left" @click="goBack">返回实例列表</v-btn>
+      <v-btn variant="text" prepend-icon="mdi-arrow-left" @click="goBack">{{ t('instanceDetail.back') }}</v-btn>
     </div>
 
     <v-card v-if="loading" variant="flat" color="surface-container" class="pa-8">
@@ -119,7 +121,7 @@ onMounted(() => {
     <v-card v-else-if="error" variant="flat" color="surface-container" class="pa-8 text-center">
       <v-icon size="40" class="mb-2" color="on-surface-variant">mdi-alert-circle-outline</v-icon>
       <div class="text-body-large mb-4">{{ error }}</div>
-      <v-btn color="primary" variant="tonal" @click="goBack">返回实例列表</v-btn>
+      <v-btn color="primary" variant="tonal" @click="goBack">{{ t('instanceDetail.back') }}</v-btn>
     </v-card>
 
     <template v-else-if="instance">
@@ -131,16 +133,20 @@ onMounted(() => {
             <div class="text-title-large font-weight-bold text-truncate">{{ instance.name }}</div>
             <div class="text-body-small text-on-surface-variant">
               {{ versionLabel }}
-              <template v-if="instance.modCount"> · {{ instance.modCount }} Mods</template>
+              <template v-if="instance.modCount">
+                · {{ t('loader.modsSuffix', { count: instance.modCount }, instance.modCount) }}
+              </template>
               <template v-if="instance.lastPlayed"> · {{ formatLastPlayed(instance.lastPlayed) }}</template>
             </div>
           </div>
 
           <div class="d-flex align-center ga-2">
-            <v-btn variant="text" prepend-icon="mdi-folder-open-outline" @click="openFolder">打开文件夹</v-btn>
+            <v-btn variant="text" prepend-icon="mdi-folder-open-outline" @click="openFolder">
+              {{ t('instanceDetail.openFolder') }}
+            </v-btn>
             <v-btn color="primary" :loading="launching" @click="launch">
               <v-icon start>mdi-play</v-icon>
-              启动
+              {{ t('instanceDetail.launch') }}
             </v-btn>
           </div>
         </v-card-text>
@@ -149,19 +155,19 @@ onMounted(() => {
       <v-tabs v-model="tab" color="primary" class="mb-3">
         <v-tab value="mods">
           <v-icon start size="18">mdi-puzzle-outline</v-icon>
-          模组管理
+          {{ t('instanceDetail.tabMods') }}
         </v-tab>
         <v-tab value="settings">
           <v-icon start size="18">mdi-cog-outline</v-icon>
-          游戏设置
+          {{ t('instanceDetail.tabSettings') }}
         </v-tab>
         <v-tab value="resourcepacks">
           <v-icon start size="18">mdi-texture-box</v-icon>
-          资源包
+          {{ t('instanceDetail.tabResourcePacks') }}
         </v-tab>
         <v-tab value="shaderpacks">
           <v-icon start size="18">mdi-shimmer</v-icon>
-          光影
+          {{ t('instanceDetail.tabShaderPacks') }}
         </v-tab>
       </v-tabs>
 
@@ -178,25 +184,29 @@ onMounted(() => {
         <v-window-item value="settings">
           <v-card variant="flat" color="surface-container">
             <v-card-text class="pa-4">
-              <div class="text-title-small mb-3">实例信息</div>
+              <div class="text-title-small mb-3">{{ t('instanceDetail.instanceInfo') }}</div>
               <v-row density="compact">
                 <v-col cols="12" sm="6" md="3">
-                  <div class="text-body-small text-on-surface-variant">Minecraft 版本</div>
+                  <div class="text-body-small text-on-surface-variant">{{ t('instanceDetail.minecraftVersion') }}</div>
                   <div class="text-body-medium">{{ instance.gameVersion || instance.version }}</div>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                  <div class="text-body-small text-on-surface-variant">加载器</div>
+                  <div class="text-body-small text-on-surface-variant">{{ t('instanceDetail.loader') }}</div>
                   <div class="text-body-medium">
-                    {{ instance.loaderType && instance.loaderType !== 'None' ? instance.loaderType : '原版' }}
+                    {{
+                      instance.loaderType && instance.loaderType !== 'None'
+                        ? instance.loaderType
+                        : t('instanceDetail.vanilla')
+                    }}
                     <template v-if="instance.loaderVersion"> {{ instance.loaderVersion }}</template>
                   </div>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                  <div class="text-body-small text-on-surface-variant">模组数量</div>
+                  <div class="text-body-small text-on-surface-variant">{{ t('instanceDetail.modCount') }}</div>
                   <div class="text-body-medium">{{ instance.modCount ?? 0 }}</div>
                 </v-col>
                 <v-col cols="12" sm="6" md="3">
-                  <div class="text-body-small text-on-surface-variant">最后启动</div>
+                  <div class="text-body-small text-on-surface-variant">{{ t('instanceDetail.lastLaunch') }}</div>
                   <div class="text-body-medium">{{ formatLastPlayed(instance.lastPlayed) }}</div>
                 </v-col>
               </v-row>
@@ -204,15 +214,16 @@ onMounted(() => {
               <v-divider class="my-4" />
 
               <v-alert type="info" variant="tonal" density="comfortable">
-                实例级的内存、Java 与窗口设置还在开发中。目前这些参数在「设置」里统一调整，启动时按实例的
-                版本与模组自动匹配 Java。
+                {{ t('instanceDetail.perInstanceHint') }}
               </v-alert>
 
               <div class="d-flex ga-2 mt-4">
                 <v-btn variant="tonal" prepend-icon="mdi-folder-open-outline" @click="openFolder">
-                  打开实例文件夹
+                  {{ t('instanceDetail.openInstanceFolder') }}
                 </v-btn>
-                <v-btn variant="text" prepend-icon="mdi-cog-outline" to="/settings">打开全局设置</v-btn>
+                <v-btn variant="text" prepend-icon="mdi-cog-outline" to="/settings">
+                  {{ t('instanceDetail.openGlobalSettings') }}
+                </v-btn>
               </div>
             </v-card-text>
           </v-card>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { VStepperVertical, VStepperVerticalItem } from 'vuetify/components';
 import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
 import PlayerHead from '../components/PlayerHead.vue';
@@ -11,6 +12,8 @@ import { formatLastPlayed } from '../utils/format';
 import { useDebounceFn } from '../composables/useDebounce';
 import { logError } from '../utils/logger';
 import type { GameInstance } from '../types/events';
+
+const { t } = useI18n();
 
 const { selectedVersion: selectedInstance, loadGameDir, initListeners } = useVersionManager();
 
@@ -39,25 +42,32 @@ const recentPlays = computed(() => {
 
 const instanceSummary = computed(() => {
   const i = selectedInstanceData.value;
-  if (!i) return '选择一个实例开始游戏';
+  if (!i) return t('home.selectInstanceHint');
   const loader =
     i.loaderType && i.loaderType !== 'None' && i.loaderType !== 'Modded'
       ? i.loaderVersion
         ? `${i.loaderType} ${i.loaderVersion}`
         : i.loaderType
       : '';
-  const memory = i.autoMemoryMb ? `自动内存 ≈ ${(i.autoMemoryMb / 1024).toFixed(1)} GB` : '';
+  const memory = i.autoMemoryMb ? t('home.autoMemory', { size: (i.autoMemoryMb / 1024).toFixed(1) }) : '';
   // 实例名经常就是版本号本身，副标题再写一遍只会变成噪音
-  const parts = [i.gameVersion || i.version, loader, i.modCount ? `${i.modCount} 个模组` : '', memory]
+  const parts = [
+    i.gameVersion || i.version,
+    loader,
+    i.modCount ? t('home.modCount', { count: i.modCount }, i.modCount) : '',
+    memory,
+  ]
     .filter(Boolean)
     .filter((p) => p !== i.name);
-  if (parts.length === 0 && i.lastPlayed != null) parts.push(`上次游玩 ${formatLastPlayed(i.lastPlayed)}`);
+  if (parts.length === 0 && i.lastPlayed != null) {
+    parts.push(t('home.lastPlayed', { time: formatLastPlayed(i.lastPlayed) }));
+  }
   return parts.join(' · ');
 });
 
 const accountLabel = computed(() => {
-  if (authStore.authType === 'microsoft') return authStore.msLoggedIn ? authStore.msUsername : '未登录';
-  return authStore.username || '未设置玩家名称';
+  if (authStore.authType === 'microsoft') return authStore.msLoggedIn ? authStore.msUsername : t('home.notLoggedIn');
+  return authStore.username || t('home.noPlayerName');
 });
 
 function quickLaunch(instanceName: string) {
@@ -162,7 +172,9 @@ onMounted(async () => {
             </v-avatar>
 
             <div class="hero-id">
-              <div class="text-headline-small text-truncate">{{ selectedInstance || '未选择实例' }}</div>
+              <div class="text-headline-small text-truncate">
+                {{ selectedInstance || t('home.noInstanceSelected') }}
+              </div>
               <div class="text-body-medium text-on-surface-variant text-truncate">{{ instanceSummary }}</div>
               <div class="d-flex align-center ga-2 mt-1">
                 <PlayerHead v-if="authStore.msSkinUrl" :skin-url="authStore.msSkinUrl" :size="20" />
@@ -170,7 +182,7 @@ onMounted(async () => {
                   {{ authStore.authType === 'microsoft' ? 'mdi-microsoft' : 'mdi-account' }}
                 </v-icon>
                 <span class="text-body-small font-weight-medium">{{ accountLabel }}</span>
-                <v-btn size="x-small" variant="text" to="/settings">认证设置</v-btn>
+                <v-btn size="x-small" variant="text" to="/settings">{{ t('home.account') }}</v-btn>
               </div>
             </div>
 
@@ -180,7 +192,7 @@ onMounted(async () => {
                 v-model="selectedInstance"
                 :items="instanceNames"
                 :loading="instancesLoading"
-                label="游戏实例"
+                :label="t('home.instanceLabel')"
                 density="comfortable"
                 variant="outlined"
                 hide-details
@@ -192,7 +204,7 @@ onMounted(async () => {
                     icon
                     variant="text"
                     size="x-small"
-                    aria-label="重新加载实例列表"
+                    :aria-label="t('home.reloadInstances')"
                     :loading="instancesLoading"
                     @click.stop="loadInstances"
                   >
@@ -201,7 +213,9 @@ onMounted(async () => {
                 </template>
                 <template #no-data>
                   <v-list-item>
-                    <v-list-item-title class="text-on-surface-variant"> 还没有实例 </v-list-item-title>
+                    <v-list-item-title class="text-on-surface-variant">{{
+                      t('home.noInstancesYet')
+                    }}</v-list-item-title>
                   </v-list-item>
                 </template>
               </v-select>
@@ -216,7 +230,7 @@ onMounted(async () => {
                 @click="handleLaunch"
               >
                 <v-icon start size="24">mdi-play</v-icon>
-                启动游戏
+                {{ t('home.launchGame') }}
               </v-btn>
             </div>
           </div>
@@ -227,20 +241,24 @@ onMounted(async () => {
                 :complete="!!selectedInstance"
                 :color="selectedInstance ? 'success' : 'warning'"
                 :icon="selectedInstance ? 'mdi-check' : 'mdi-cube-outline'"
-                title="选择游戏实例"
+                :title="t('home.stepSelectInstance')"
                 value="version"
               >
-                <div class="text-body-small text-on-surface-variant">从上方下拉菜单选择一个实例</div>
+                <div class="text-body-small text-on-surface-variant">{{ t('home.stepSelectInstanceHint') }}</div>
               </v-stepper-vertical-item>
               <v-stepper-vertical-item
                 :complete="!!authStore.displayName"
                 :color="authStore.displayName ? 'success' : 'warning'"
                 :icon="authStore.displayName ? 'mdi-check' : 'mdi-account-outline'"
-                :title="authStore.authType === 'microsoft' ? '登录 Microsoft 账户' : '设置玩家名称'"
+                :title="authStore.authType === 'microsoft' ? t('home.stepLoginMicrosoft') : t('home.stepSetPlayerName')"
                 value="auth"
               >
                 <div class="text-body-small text-on-surface-variant">
-                  前往 <router-link to="/settings" class="text-primary">设置页面</router-link> 配置认证信息
+                  <i18n-t keypath="home.stepAuthHint" tag="span">
+                    <template #link>
+                      <router-link to="/settings" class="text-primary">{{ t('home.settingsLink') }}</router-link>
+                    </template>
+                  </i18n-t>
                 </div>
               </v-stepper-vertical-item>
             </v-stepper-vertical>
@@ -255,15 +273,17 @@ onMounted(async () => {
               <v-card-text class="pa-4 d-flex align-center card-head-row">
                 <div class="d-flex align-center flex-grow-1">
                   <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-history</v-icon>
-                  <span class="text-title-medium">最近游玩</span>
+                  <span class="text-title-medium">{{ t('home.recentPlays') }}</span>
                 </div>
-                <span class="text-body-small text-on-surface-variant mr-3">{{ instances.length }} 个实例</span>
-                <v-btn size="x-small" variant="text" to="/instance-manager"> 实例列表 </v-btn>
+                <span class="text-body-small text-on-surface-variant mr-3">
+                  {{ t('home.instanceCount', { count: instances.length }, instances.length) }}
+                </span>
+                <v-btn size="x-small" variant="text" to="/instance-manager">{{ t('home.instanceListLink') }}</v-btn>
               </v-card-text>
               <v-divider />
               <v-card-text class="pa-4 flex-grow-1">
                 <div v-if="recentPlays.length === 0" class="text-body-small text-on-surface-variant">
-                  还没有游玩记录，启动游戏后会在这里显示
+                  {{ t('home.noRecentPlays') }}
                 </div>
                 <v-list v-else density="compact" bg-color="transparent">
                   <v-list-item v-for="instance in recentPlays" :key="instance.id" class="px-0">
@@ -291,18 +311,18 @@ onMounted(async () => {
                           size="x-small"
                           variant="text"
                           color="primary"
-                          :aria-label="`启动 ${instance.name}`"
+                          :aria-label="`${t('home.launch')} ${instance.name}`"
                           @click="quickLaunch(instance.name)"
                         >
-                          启动
+                          {{ t('home.launch') }}
                         </v-btn>
                         <v-btn
                           size="x-small"
                           variant="text"
-                          :aria-label="`查看 ${instance.name} 的实例详情`"
+                          :aria-label="`${t('home.details')} ${instance.name}`"
                           :to="{ name: 'instance-detail', params: { name: instance.name } }"
                         >
-                          详情
+                          {{ t('home.details') }}
                         </v-btn>
                       </div>
                     </template>
@@ -319,16 +339,16 @@ onMounted(async () => {
               <v-card-text class="pa-4">
                 <div class="d-flex align-center mb-3">
                   <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-lightning-bolt</v-icon>
-                  <span class="text-title-medium">快捷操作</span>
+                  <span class="text-title-medium">{{ t('home.quickActions') }}</span>
                 </div>
                 <div class="d-flex flex-column ga-2">
                   <v-btn variant="tonal" color="primary" block to="/download">
                     <v-icon start size="18">mdi-download</v-icon>
-                    下载版本
+                    {{ t('home.downloadVersion') }}
                   </v-btn>
                   <v-btn variant="tonal" color="secondary" block to="/add-instance">
                     <v-icon start size="18">mdi-plus</v-icon>
-                    创建实例
+                    {{ t('home.createInstance') }}
                   </v-btn>
                 </div>
               </v-card-text>
@@ -347,11 +367,11 @@ onMounted(async () => {
               <v-icon size="26" color="on-primary-container">mdi-wrench</v-icon>
             </v-avatar>
           </div>
-          <div class="text-title-large font-weight-bold text-center mb-4">修复游戏文件</div>
+          <div class="text-title-large font-weight-bold text-center mb-4">{{ t('home.repairing') }}</div>
 
           <template v-if="repairProgress">
             <div class="d-flex justify-space-between mb-2 text-body-medium num-mono">
-              <span>{{ repairProgress.status === 'downloading' ? '下载中' : '处理中' }}</span>
+              <span>{{ repairProgress.status === 'downloading' ? t('home.downloading') : t('home.processing') }}</span>
               <span class="font-weight-medium">{{ repairProgress.percent }}%</span>
             </div>
             <v-progress-linear :model-value="repairProgress.percent" height="6" rounded color="primary" />
@@ -364,7 +384,7 @@ onMounted(async () => {
               }}</span>
             </div>
           </template>
-          <div v-else class="text-center text-body-medium text-on-surface-variant">准备中...</div>
+          <div v-else class="text-center text-body-medium text-on-surface-variant">{{ t('home.preparing') }}</div>
         </v-card-text>
       </v-card>
     </v-dialog>

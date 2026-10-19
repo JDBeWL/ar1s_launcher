@@ -7,6 +7,7 @@ import { ref, computed } from 'vue';
 import { emit } from '@tauri-apps/api/event';
 import type { DownloadProgress, DownloadStatus } from '../types/events';
 import { api } from '../services/api';
+import { translate } from '../i18n';
 import { useNotificationStore } from './notificationStore';
 import { getErrorMessage, getErrorCode } from '../utils/format';
 import { logError } from '../utils/logger';
@@ -58,9 +59,13 @@ export const useDownloadStore = defineStore('download', () => {
       selectedVersion.value = '';
       userHidNotification.value = false;
       if (data.status === 'error') {
-        downloadError.value = data.error || '下载过程中发生未知错误';
+        downloadError.value = data.error || translate('downloadStatus.unknownError');
         const notificationStore = useNotificationStore();
-        notificationStore.error('下载失败', data.error || '下载过程中发生未知错误', true);
+        notificationStore.error(
+          translate('downloadStatus.title'),
+          data.error || translate('downloadStatus.unknownError'),
+          true,
+        );
       }
     }
 
@@ -116,7 +121,7 @@ export const useDownloadStore = defineStore('download', () => {
       const errorMessage = getErrorMessage(err);
       downloadError.value = errorMessage;
       const notificationStore = useNotificationStore();
-      notificationStore.error('下载失败', errorMessage, true);
+      notificationStore.error(translate('downloadStatus.title'), errorMessage, true);
     }
   }
 

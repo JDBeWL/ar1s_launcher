@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { GameInstance } from '../../types/events';
 import { formatLastPlayed, getLoaderColor } from '../../utils/format';
 
@@ -17,6 +18,8 @@ const emit = defineEmits<{
   (e: 'export-diagnostics', instance: GameInstance): void;
 }>();
 
+const { t } = useI18n();
+
 const loaderColor = computed(() => getLoaderColor(props.instance.loaderType));
 
 const versionLabel = computed(() => {
@@ -25,13 +28,13 @@ const versionLabel = computed(() => {
   const lv = props.instance.loaderVersion;
 
   if (!lt || lt === 'None') {
-    return gv || '原版';
+    return gv || t('loader.vanilla');
   }
   if (lt === 'Modded') {
-    return lv ? `${gv} - 整合包` : `${gv} - 整合包/模组`;
+    return lv ? `${gv} - ${t('loader.modpack')}` : `${gv} - ${t('loader.modded')}`;
   }
   if (lt === 'Unknown') {
-    return gv || '未知加载器';
+    return gv || t('loader.unknownLoader');
   }
 
   if (lv) {
@@ -42,9 +45,9 @@ const versionLabel = computed(() => {
 
 const chipLabel = computed(() => {
   const lt = props.instance.loaderType;
-  if (!lt || lt === 'None') return '原版';
-  if (lt === 'Modded') return '整合包';
-  if (lt === 'Unknown') return '未知';
+  if (!lt || lt === 'None') return t('loader.vanilla');
+  if (lt === 'Modded') return t('loader.modpack');
+  if (lt === 'Unknown') return t('loader.unknown');
   return lt;
 });
 </script>
@@ -77,7 +80,14 @@ const chipLabel = computed(() => {
 
         <v-menu>
           <template v-slot:activator="{ props }">
-            <v-btn icon variant="text" size="x-small" aria-label="实例操作菜单" v-bind="props" class="mt-1">
+            <v-btn
+              icon
+              variant="text"
+              size="x-small"
+              :aria-label="t('instanceManager.instanceMenu')"
+              v-bind="props"
+              class="mt-1"
+            >
               <v-icon size="20">mdi-dots-vertical</v-icon>
             </v-btn>
           </template>
@@ -86,32 +96,34 @@ const chipLabel = computed(() => {
               <template #prepend>
                 <v-icon size="18">mdi-folder-open-outline</v-icon>
               </template>
-              <v-list-item-title class="text-body-medium">打开文件夹</v-list-item-title>
+              <v-list-item-title class="text-body-medium">{{ t('instanceManager.openFolder') }}</v-list-item-title>
             </v-list-item>
             <v-list-item @click="emit('open', instance)">
               <template #prepend>
                 <v-icon size="18">mdi-view-dashboard-outline</v-icon>
               </template>
-              <v-list-item-title class="text-body-medium">实例详情</v-list-item-title>
+              <v-list-item-title class="text-body-medium">{{ t('instanceManager.details') }}</v-list-item-title>
             </v-list-item>
             <v-list-item @click="emit('export-diagnostics', instance)">
               <template #prepend>
                 <v-icon size="18">mdi-zip-box-outline</v-icon>
               </template>
-              <v-list-item-title class="text-body-medium">导出诊断包</v-list-item-title>
+              <v-list-item-title class="text-body-medium">
+                {{ t('instanceManager.exportDiagnostics') }}
+              </v-list-item-title>
             </v-list-item>
             <v-list-item @click="emit('rename', instance)">
               <template #prepend>
                 <v-icon size="18">mdi-pencil-outline</v-icon>
               </template>
-              <v-list-item-title class="text-body-medium">重命名</v-list-item-title>
+              <v-list-item-title class="text-body-medium">{{ t('instanceManager.rename') }}</v-list-item-title>
             </v-list-item>
             <v-divider class="my-1" />
             <v-list-item @click="emit('delete', instance)" color="error">
               <template #prepend>
                 <v-icon size="18" color="error">mdi-delete-outline</v-icon>
               </template>
-              <v-list-item-title class="text-body-medium">删除</v-list-item-title>
+              <v-list-item-title class="text-body-medium">{{ t('instanceManager.delete') }}</v-list-item-title>
             </v-list-item>
           </v-list>
         </v-menu>
@@ -124,11 +136,11 @@ const chipLabel = computed(() => {
         </div>
         <div v-if="instance.modCount" class="d-flex align-center">
           <v-icon size="14" class="mr-1.5" color="on-surface-variant">mdi-puzzle-outline</v-icon>
-          {{ instance.modCount }} Mods
+          {{ t('loader.modsSuffix', { count: instance.modCount }, instance.modCount) }}
         </div>
         <div v-if="instance.autoMemoryMb" class="d-flex align-center">
           <v-icon size="14" class="mr-1.5" color="on-surface-variant">mdi-memory</v-icon>
-          自动 ≈ {{ (instance.autoMemoryMb / 1024).toFixed(1) }} GB
+          {{ t('loader.autoMemoryShort', { size: (instance.autoMemoryMb / 1024).toFixed(1) }) }}
         </div>
       </div>
 
@@ -141,7 +153,7 @@ const chipLabel = computed(() => {
         @click="emit('launch', instance)"
       >
         <v-icon start size="18" class="mr-2">mdi-play</v-icon>
-        启动
+        {{ t('instanceManager.launch') }}
       </v-btn>
     </v-card-text>
   </v-card>

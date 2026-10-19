@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted, watch, nextTick } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useDownloadStore } from '@/stores/downloadStore';
 import { useSettingsStore } from '@/stores/settings';
 import { useNotificationStore } from '@/stores/notificationStore';
@@ -13,6 +14,7 @@ const downloadStore = useDownloadStore();
 const settingsStore = useSettingsStore();
 const notificationStore = useNotificationStore();
 const { installedVersions, loadGameDir, initListeners } = useVersionManager();
+const { t } = useI18n();
 
 const allVersions = ref<MinecraftVersion[]>([]);
 const loading = ref(false);
@@ -27,7 +29,7 @@ let observer: IntersectionObserver | null = null;
 
 const formatDateTime = (value: string) => {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '发布日期未知';
+  if (Number.isNaN(date.getTime())) return t('download.unknownReleaseDate');
   return date.toLocaleDateString();
 };
 
@@ -45,15 +47,15 @@ const getVersionIcon = (type: string) => {
 const getVersionTypeName = (type: string) => {
   switch (type) {
     case 'release':
-      return '正式版';
+      return t('download.typeRelease');
     case 'snapshot':
-      return '快照';
+      return t('download.typeSnapshot');
     case 'old_alpha':
       return 'Alpha';
     case 'old_beta':
       return 'Beta';
     default:
-      return '其他';
+      return t('common.unknown');
   }
 };
 
@@ -87,8 +89,8 @@ async function fetchVersions() {
     }
     loadError.value = false;
   } catch (err) {
-    logError('获取版本列表失败', err, 'DownloadView');
-    notificationStore.error('获取版本列表失败', '请检查网络连接或稍后再试');
+    logError('Failed to fetch version list', err, 'DownloadView');
+    notificationStore.error(t('download.fetchFailed'), t('download.fetchFailedHint'));
     loadError.value = true;
   } finally {
     loading.value = false;
@@ -168,7 +170,7 @@ onUnmounted(() => {
             <v-text-field
               density="comfortable"
               v-model="searchQuery"
-              label="搜索版本号"
+              :label="t('download.searchLabel')"
               hide-details
               clearable
               :disabled="isDownloading"
@@ -190,9 +192,9 @@ onUnmounted(() => {
               color="primary"
               :disabled="isDownloading"
             >
-              <v-btn value="release">正式版</v-btn>
-              <v-btn value="snapshot">快照</v-btn>
-              <v-btn value="all">全部</v-btn>
+              <v-btn value="release">{{ t('download.typeRelease') }}</v-btn>
+              <v-btn value="snapshot">{{ t('download.typeSnapshot') }}</v-btn>
+              <v-btn value="all">{{ t('download.typeAll') }}</v-btn>
             </v-btn-toggle>
           </v-col>
           <v-col cols="6" sm="3">
@@ -200,10 +202,10 @@ onUnmounted(() => {
               <v-select
                 density="comfortable"
                 v-model="sortOrder"
-                aria-label="排序方式"
+                :aria-label="t('download.sortLabel')"
                 :items="[
-                  { title: '最新优先', value: 'newest' },
-                  { title: '最旧优先', value: 'oldest' },
+                  { title: t('download.sortNewest'), value: 'newest' },
+                  { title: t('download.sortOldest'), value: 'oldest' },
                 ]"
                 hide-details
                 class="flex-grow-1"
@@ -217,7 +219,7 @@ onUnmounted(() => {
                 icon
                 variant="tonal"
                 color="secondary"
-                aria-label="重新获取版本列表"
+                :aria-label="t('download.reloadList')"
                 :loading="loading"
                 :disabled="isDownloading"
                 @click="fetchVersions"
@@ -256,17 +258,19 @@ onUnmounted(() => {
       <v-avatar size="80" color="surface-container-high" class="mb-4">
         <v-icon size="40" color="on-surface-variant">mdi-cloud-off-outline</v-icon>
       </v-avatar>
-      <div class="text-body-large font-weight-medium">版本列表获取失败</div>
-      <div class="text-body-medium text-on-surface-variant mb-4">检查网络连接后重试</div>
-      <v-btn variant="tonal" color="primary" prepend-icon="mdi-refresh" @click="fetchVersions">重新加载</v-btn>
+      <div class="text-body-large font-weight-medium">{{ t('download.fetchFailed') }}</div>
+      <div class="text-body-medium text-on-surface-variant mb-4">{{ t('download.fetchFailedHint') }}</div>
+      <v-btn variant="tonal" color="primary" prepend-icon="mdi-refresh" @click="fetchVersions">
+        {{ t('download.reload') }}
+      </v-btn>
     </div>
 
     <div v-else-if="displayedVersions.length === 0" class="text-center py-12">
       <v-avatar size="80" color="surface-container-high" class="mb-4">
         <v-icon size="40" color="on-surface-variant">mdi-magnify-close</v-icon>
       </v-avatar>
-      <div class="text-body-large font-weight-medium">没有找到匹配的版本</div>
-      <div class="text-body-medium text-on-surface-variant">尝试调整搜索条件</div>
+      <div class="text-body-large font-weight-medium">{{ t('download.emptyTitle') }}</div>
+      <div class="text-body-medium text-on-surface-variant">{{ t('download.emptyHint') }}</div>
     </div>
 
     <template v-else>
@@ -293,7 +297,7 @@ onUnmounted(() => {
 
               <div v-if="isInstalled(item.id)" class="install-state text-body-medium font-weight-medium">
                 <v-icon size="18" class="mr-2">mdi-check</v-icon>
-                已安装
+                {{ t('download.installed') }}
               </div>
               <v-btn
                 v-else
@@ -305,7 +309,7 @@ onUnmounted(() => {
                 @click="startDownload(item.id)"
               >
                 <v-icon start size="18">mdi-download</v-icon>
-                下载
+                {{ t('download.download') }}
               </v-btn>
             </v-card-text>
           </v-card>
@@ -317,8 +321,8 @@ onUnmounted(() => {
       <div class="text-center text-body-small text-on-surface-variant mt-3">
         {{
           hasMore
-            ? `已显示 ${displayedVersions.length} / ${filteredVersions.length} 个版本`
-            : `共 ${filteredVersions.length} 个版本`
+            ? t('download.shownCount', { shown: displayedVersions.length, total: filteredVersions.length })
+            : t('download.totalCount', { total: filteredVersions.length }, filteredVersions.length)
         }}
       </div>
     </template>

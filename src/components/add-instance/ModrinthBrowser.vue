@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useModrinth } from '../../composables/useModrinth';
 import type { ModrinthModpack } from '../../types/events';
 import ModpackCard from './ModpackCard.vue';
 
 const router = useRouter();
+const { t } = useI18n();
 const selectedModpack = ref<ModrinthModpack | null>(null);
 
 const {
@@ -52,7 +54,13 @@ onMounted(async () => {
       <v-card-text class="pa-4">
         <v-row density="compact">
           <v-col cols="12" sm="6">
-            <v-text-field density="comfortable" v-model="modpackSearchQuery" label="搜索整合包" hide-details clearable>
+            <v-text-field
+              density="comfortable"
+              v-model="modpackSearchQuery"
+              :label="t('modpackBrowser.searchLabel')"
+              hide-details
+              clearable
+            >
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-magnify</v-icon>
               </template>
@@ -63,7 +71,7 @@ onMounted(async () => {
               density="comfortable"
               v-model="selectedGameVersion"
               :items="gameVersions"
-              label="游戏版本"
+              :label="t('modpackBrowser.gameVersionLabel')"
               clearable
               hide-details
             >
@@ -77,7 +85,7 @@ onMounted(async () => {
               density="comfortable"
               v-model="selectedLoader"
               :items="loaders"
-              label="加载器"
+              :label="t('modpackBrowser.loaderLabel')"
               clearable
               hide-details
             >
@@ -94,7 +102,7 @@ onMounted(async () => {
               density="comfortable"
               v-model="selectedCategory"
               :items="categoryOptions"
-              label="分类"
+              :label="t('modpackBrowser.categoryLabel')"
               clearable
               hide-details
             >
@@ -104,7 +112,13 @@ onMounted(async () => {
             </v-select>
           </v-col>
           <v-col cols="6">
-            <v-select density="comfortable" v-model="sortBy" :items="modpackSortOptions" label="排序" hide-details>
+            <v-select
+              density="comfortable"
+              v-model="sortBy"
+              :items="modpackSortOptions"
+              :label="t('modpackBrowser.sortLabel')"
+              hide-details
+            >
               <template #prepend-inner>
                 <v-icon size="20" color="on-surface-variant">mdi-sort</v-icon>
               </template>
@@ -116,7 +130,7 @@ onMounted(async () => {
 
     <div v-if="loadingModpacks" class="text-center py-12">
       <v-progress-circular indeterminate size="48" color="primary" />
-      <div class="text-body-medium text-on-surface-variant mt-4">搜索整合包中...</div>
+      <div class="text-body-medium text-on-surface-variant mt-4">{{ t('modpackBrowser.searching') }}</div>
     </div>
 
     <div v-else-if="modpacks.length === 0" class="text-center py-12">
@@ -124,10 +138,10 @@ onMounted(async () => {
         <v-icon size="40" color="on-surface-variant">mdi-package-variant</v-icon>
       </v-avatar>
       <div class="text-body-large font-weight-medium">
-        {{ modpackInitialLoad ? '正在加载...' : '没有找到整合包' }}
+        {{ modpackInitialLoad ? t('modpackBrowser.loading') : t('modpackBrowser.empty') }}
       </div>
       <div class="text-body-medium text-on-surface-variant">
-        {{ modpackInitialLoad ? '' : '尝试调整搜索条件或输入关键词' }}
+        {{ modpackInitialLoad ? '' : t('modpackBrowser.emptyHint') }}
       </div>
     </div>
 
@@ -147,7 +161,9 @@ onMounted(async () => {
           color="primary"
           @update:model-value="onModpackPageChange"
         />
-        <div class="text-body-small text-on-surface-variant mt-2">共 {{ modpackTotalHits }} 个整合包</div>
+        <div class="text-body-small text-on-surface-variant mt-2">
+          {{ t('modpackBrowser.totalHits', { count: modpackTotalHits }, modpackTotalHits) }}
+        </div>
       </div>
     </template>
   </div>

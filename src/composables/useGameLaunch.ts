@@ -5,6 +5,7 @@
 import { ref } from 'vue';
 import { useEventSubscription } from './useEventSubscription';
 import { versionApi, instanceApi, javaApi } from '../services';
+import { translate } from '../i18n';
 import { useSettingsStore } from '../stores/settings';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useAuthStore } from '../stores/authStore';
@@ -45,15 +46,21 @@ export function useGameLaunch() {
       return { shouldLaunch: true };
     }
 
-    const currentVer = result.currentJavaVersion != null ? `Java ${result.currentJavaVersion}` : '未知';
+    const currentVer =
+      result.currentJavaVersion != null ? `Java ${result.currentJavaVersion}` : translate('launch.javaUnknown');
     const requiredVer = `Java ${result.requiredJavaVersion}`;
 
     // 推荐项也是退而求其次时，把原因一起说清楚，用户才知道该不该去补一份
     const note = result.recommendedJavaWarning ? `\n\n${result.recommendedJavaWarning}` : '';
 
     const content = result.hardBlock
-      ? `当前 Java 起不了这个实例，后端给出的诊断如下：\n\n${result.diagnostic}\n\n请选择如何处理：`
-      : `当前 Java 版本 (${currentVer}) 不满足 Minecraft ${instanceName} 的要求 (需要 ${requiredVer})。${note}\n\n请选择如何处理：`;
+      ? translate('launch.javaHardBlock', { diagnostic: result.diagnostic })
+      : translate('launch.javaMismatch', {
+          current: currentVer,
+          instance: instanceName,
+          required: requiredVer,
+          note,
+        });
 
     const options: Array<{
       id: string;
@@ -65,7 +72,7 @@ export function useGameLaunch() {
     if (result.recommendedJavaPath) {
       options.push({
         id: 'temp',
-        label: `临时使用 Java ${result.recommendedJavaVersion}`,
+        label: translate('launch.useTempJava', { version: result.recommendedJavaVersion }),
         color: 'primary',
         variant: 'elevated',
       });
@@ -73,14 +80,14 @@ export function useGameLaunch() {
 
     options.push({
       id: 'auto',
-      label: '开启自动匹配',
+      label: translate('launch.enableAutoMatch'),
       color: 'success',
       variant: 'tonal',
     });
 
     options.push({
       id: 'manual',
-      label: '手动选择 Java',
+      label: translate('launch.chooseManualJava'),
       color: 'warning',
       variant: 'outlined',
     });
@@ -89,12 +96,15 @@ export function useGameLaunch() {
     // 否则后端会自己挑一份更合适的，用户的选择等于没生效
     options.push({
       id: 'continue',
-      label: result.hardBlock ? '仍用当前 Java 启动' : result.recommendedJavaPath ? '继续启动' : '仍用当前 Java 启动',
+      label:
+        result.hardBlock || !result.recommendedJavaPath
+          ? translate('launch.continueAnyway')
+          : translate('launch.continueLaunch'),
       color: result.hardBlock ? 'error' : result.recommendedJavaPath ? 'info' : 'error',
       variant: 'text',
     });
 
-    const selected = await notificationStore.choice('Java 版本提示', content, options, 'warning');
+    const selected = await notificationStore.choice(translate('launch.javaTitle'), content, options, 'warning');
 
     if (selected === 'continue') {
       return { shouldLaunch: true, forceJavaMismatch: true };
@@ -108,7 +118,7 @@ export function useGameLaunch() {
       settingsStore.autoMatchJava = true;
       await settingsStore.saveAutoMatchJava();
     } else if (selected === 'manual') {
-      notificationStore.warning('请在设置中手动选择兼容的 Java 路径');
+      notificationStore.warning(translate('launch.manualJavaHint'));
     }
 
     return { shouldLaunch: false };
@@ -130,10 +140,10 @@ export function useGameLaunch() {
       const mirror = settingsStore.downloadMirror === 'bmcl' ? 'bmcl' : undefined;
 
       await versionApi.downloadVersion(instanceName, mirror);
-      notificationStore.success('修复完成', '请重新启动游戏');
+      notificationStore.success(translate('launch.repairDone'), translate('launch.repairDoneHint'));
     } catch (err) {
       logError('Repair failed', err, 'useGameLaunch');
-      notificationStore.error('修复失败', getErrorMessage(err), true);
+      notificationStore.error(translate('launch.repairFailed'), getErrorMessage(err), true);
     } finally {
       repairEventSub.unsubscribe();
       isRepairing.value = false;
@@ -143,12 +153,12 @@ export function useGameLaunch() {
 
   async function launchInstance(instanceName: string): Promise<boolean> {
     if (!instanceName) {
-      notificationStore.warning('请先选择一个实例');
+      notificationStore.warning(translate('launch.selectInstanceFirst'));
       return false;
     }
 
     if (!authStore.isLoggedIn) {
-      notificationStore.warning('请先设置玩家名称或登录 Microsoft 账户');
+      notificationStore.warning(translate('launch.loginFirst'));
       return false;
     }
 
@@ -167,8 +177,8 @@ export function useGameLaunch() {
       const missingFiles = await versionApi.validateVersionFiles(instanceName);
       if (missingFiles.length > 0) {
         const shouldRepair = await notificationStore.confirm(
-          '文件缺失',
-          `检测到 ${missingFiles.length} 个游戏文件缺失，是否立即修复？`,
+          translate('launch.missingFilesTitle'),
+          translate('launch.missingFilesContent', { count: missingFiles.length }, missingFiles.length),
           'warning',
         );
 
@@ -180,11 +190,11 @@ export function useGameLaunch() {
 
       await instanceApi.launchInstance(instanceName, javaResolve.overrideJavaPath, javaResolve.forceJavaMismatch);
       // 命令返回只代表 Java 进程已派生；真正启动成功要等游戏窗口/日志，失败会走崩溃诊断
-      notificationStore.info('Minecraft 正在启动', instanceName);
+      notificationStore.info(translate('launch.starting'), instanceName);
       return true;
     } catch (err) {
       logError('Failed to launch instance', err, 'useGameLaunch');
-      notificationStore.error('启动失败', getErrorMessage(err), true);
+      notificationStore.error(translate('launch.launchFailed'), getErrorMessage(err), true);
       return false;
     } finally {
       loading.value = false;
@@ -199,11 +209,14 @@ export function useGameLaunch() {
     try {
       loading.value = true;
       await instanceApi.launchInstance(instanceName, javaPath, false);
-      notificationStore.info('Minecraft 正在重新启动', `${instanceName} 已改用指定的 Java`);
+      notificationStore.info(
+        translate('launch.relaunching'),
+        translate('launch.relaunchedHint', { name: instanceName }),
+      );
       return true;
     } catch (err) {
       logError('Failed to relaunch with another Java', err, 'useGameLaunch');
-      notificationStore.error('启动失败', getErrorMessage(err), true);
+      notificationStore.error(translate('launch.launchFailed'), getErrorMessage(err), true);
       return false;
     } finally {
       loading.value = false;

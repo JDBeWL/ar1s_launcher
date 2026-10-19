@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useNotificationStore } from '../stores/notificationStore';
 import { copyText } from '../utils/clipboard';
 
 const store = useNotificationStore();
+const { t } = useI18n();
 
 const currentNotification = computed(() => store.notifications[0]);
 const hasNotification = computed(() => store.notifications.length > 0);
@@ -38,9 +40,9 @@ function closeSnackbar() {
 
 async function copyDialogContent() {
   if (await copyText(store.dialogContent)) {
-    store.success('已复制到剪贴板');
+    store.success(t('notifications.copySuccess'));
   } else {
-    store.error('复制失败，请手动选中文字');
+    store.error(t('notifications.copyFailed'));
   }
 }
 
@@ -106,7 +108,7 @@ const choiceColor = computed(() => store.choiceType);
       </div>
     </div>
     <template #actions>
-      <v-btn variant="text" @click="closeSnackbar">关闭</v-btn>
+      <v-btn variant="text" @click="closeSnackbar">{{ t('common.close') }}</v-btn>
     </template>
   </v-snackbar>
 
@@ -120,9 +122,9 @@ const choiceColor = computed(() => store.choiceType);
         <pre class="dialog-content">{{ store.dialogContent }}</pre>
       </v-card-text>
       <v-card-actions>
-        <v-btn variant="text" prepend-icon="mdi-content-copy" @click="copyDialogContent">复制</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-content-copy" @click="copyDialogContent">{{ t('common.copy') }}</v-btn>
         <v-spacer />
-        <v-btn color="primary" @click="store.closeDialog">确定</v-btn>
+        <v-btn color="primary" @click="store.closeDialog">{{ t('common.confirm') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -138,8 +140,8 @@ const choiceColor = computed(() => store.choiceType);
       </v-card-text>
       <v-card-actions>
         <v-spacer />
-        <v-btn variant="text" @click="store.handleConfirm(false)">取消</v-btn>
-        <v-btn color="primary" variant="elevated" @click="store.handleConfirm(true)">确定</v-btn>
+        <v-btn variant="text" @click="store.handleConfirm(false)">{{ t('common.cancel') }}</v-btn>
+        <v-btn color="primary" variant="elevated" @click="store.handleConfirm(true)">{{ t('common.confirm') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

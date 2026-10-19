@@ -2,22 +2,27 @@
  * 格式化与排序工具
  * 相对时间、加载器图标与配色映射、错误载荷提取、MC 版本号比较与版本列表排序
  */
+import { translate } from '../i18n';
+
 export function formatTimeAgo(timestamp: number): string {
   const diff = Date.now() - timestamp;
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   const days = Math.floor(diff / 86400000);
 
-  if (minutes < 1) return '刚刚';
-  if (minutes < 60) return `${minutes} 分钟前`;
-  if (hours < 24) return `${hours} 小时前`;
-  if (days < 7) return `${days} 天前`;
-  if (days < 30) return `${Math.floor(days / 7)} 周前`;
+  if (minutes < 1) return translate('time.justNow');
+  if (minutes < 60) return translate('time.minutesAgo', { count: minutes }, minutes);
+  if (hours < 24) return translate('time.hoursAgo', { count: hours }, hours);
+  if (days < 7) return translate('time.daysAgo', { count: days }, days);
+  if (days < 30) {
+    const weeks = Math.floor(days / 7);
+    return translate('time.weeksAgo', { count: weeks }, weeks);
+  }
   return new Date(timestamp).toLocaleDateString();
 }
 
 export function formatLastPlayed(timestamp?: number): string {
-  if (!timestamp) return '从未启动';
+  if (!timestamp) return translate('time.neverLaunched');
   return formatTimeAgo(timestamp);
 }
 

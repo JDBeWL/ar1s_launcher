@@ -4,6 +4,7 @@
  * 只按当前实例的 MC 版本搜索；资源包没有加载器维度，装好后仍要在面板里手动启用
  */
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { resourcePackApi } from '../../services';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useDebounceFn } from '../../composables/useDebounce';
@@ -23,6 +24,7 @@ const emit = defineEmits<{
 }>();
 
 const notificationStore = useNotificationStore();
+const { t } = useI18n();
 
 const query = ref('');
 const results = ref<ModrinthModpack[]>([]);
@@ -51,7 +53,7 @@ async function search() {
     results.value = result.hits || [];
     totalHits.value = result.total_hits || 0;
   } catch (e) {
-    logError('搜索资源包失败', e, 'ResourcePackBrowserDialog');
+    logError('Failed to search resource packs', e, 'ResourcePackBrowserDialog');
     error.value = getErrorMessage(e);
     results.value = [];
     totalHits.value = 0;
@@ -89,12 +91,15 @@ async function install(pack: ModrinthModpack) {
   installing.value = pack.slug;
   try {
     const installed = await resourcePackApi.installModrinthResourcePack(props.instanceName, pack.slug);
-    notificationStore.success('安装成功', `${installed.name} 已放入 resourcepacks`);
+    notificationStore.success(
+      t('resourcePackBrowser.installSuccess'),
+      t('resourcePackBrowser.installSuccessHint', { name: installed.name }),
+    );
     installedSlugs.value = new Set([...installedSlugs.value, pack.slug]);
     emit('installed');
   } catch (e) {
-    logError('安装资源包失败', e, 'ResourcePackBrowserDialog');
-    notificationStore.error('安装失败', getErrorMessage(e), true);
+    logError('Failed to install resource pack', e, 'ResourcePackBrowserDialog');
+    notificationStore.error(t('resourcePackBrowser.installFailed'), getErrorMessage(e), true);
   } finally {
     installing.value = null;
   }
@@ -131,13 +136,19 @@ function iconUrl(url: string | undefined): string {
       <v-card-title class="d-flex align-center pa-4 pb-2">
         <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-texture-box</v-icon>
         <div class="flex-grow-1">
-          <div class="text-title-medium font-weight-bold">安装资源包</div>
+          <div class="text-title-medium font-weight-bold">{{ t('resourcePackBrowser.title') }}</div>
           <div class="text-body-small text-on-surface-variant">
             {{ instanceName }}
             <template v-if="gameVersion"> · {{ gameVersion }}</template>
           </div>
         </div>
-        <v-btn icon size="small" variant="text" aria-label="关闭" @click="emit('update:modelValue', false)">
+        <v-btn
+          icon
+          size="small"
+          variant="text"
+          :aria-label="t('resourcePackBrowser.close')"
+          @click="emit('update:modelValue', false)"
+        >
           <v-icon size="18">mdi-close</v-icon>
         </v-btn>
       </v-card-title>
@@ -147,8 +158,8 @@ function iconUrl(url: string | undefined): string {
           v-model="query"
           density="comfortable"
           variant="outlined"
-          label="搜索资源包"
-          placeholder="输入名称，例如 Faithful"
+          :label="t('resourcePackBrowser.searchLabel')"
+          :placeholder="t('resourcePackBrowser.searchPlaceholder')"
           hide-details
           clearable
         >
@@ -167,12 +178,14 @@ function iconUrl(url: string | undefined): string {
 
         <div v-else-if="error" class="text-center pa-8">
           <div class="text-body-medium text-error mb-3">{{ error }}</div>
-          <v-btn size="small" variant="tonal" color="primary" @click="search">重试</v-btn>
+          <v-btn size="small" variant="tonal" color="primary" @click="search">
+            {{ t('resourcePackBrowser.retry') }}
+          </v-btn>
         </div>
 
         <div v-else-if="results.length === 0" class="text-center pa-10 text-on-surface-variant">
           <v-icon size="36" class="mb-2">mdi-texture-box</v-icon>
-          <div class="text-body-medium">没有找到适配当前版本的资源包</div>
+          <div class="text-body-medium">{{ t('resourcePackBrowser.empty') }}</div>
         </div>
 
         <v-list v-else lines="two" density="compact">
@@ -208,7 +221,11 @@ function iconUrl(url: string | undefined): string {
                   :disabled="installing !== null || installedSlugs.has(pack.slug)"
                   @click="install(pack)"
                 >
-                  {{ installedSlugs.has(pack.slug) ? '已安装' : '安装' }}
+                  {{
+                    installedSlugs.has(pack.slug)
+                      ? t('resourcePackBrowser.installed')
+                      : t('resourcePackBrowser.install')
+                  }}
                 </v-btn>
               </div>
             </template>
@@ -218,7 +235,9 @@ function iconUrl(url: string | undefined): string {
 
       <v-divider v-if="totalPages > 1" />
       <v-card-actions v-if="totalPages > 1" class="pa-2">
-        <span class="text-body-small text-on-surface-variant ml-2">共 {{ totalHits }} 个资源包</span>
+        <span class="text-body-small text-on-surface-variant ml-2">
+          {{ t('resourcePackBrowser.totalHits', { count: totalHits }, totalHits) }}
+        </span>
         <v-spacer />
         <v-pagination v-model="page" :length="totalPages" :total-visible="5" density="compact" color="primary" />
       </v-card-actions>

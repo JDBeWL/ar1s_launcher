@@ -5,6 +5,7 @@ import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from './App.vue';
 import router from './router';
+import { i18n } from './i18n';
 import { installGlobalErrorHandlers } from './utils/globalErrors';
 
 // 字体全部自托管，@font-face 与度量覆盖见 style.css；别导入 @fontsource 的 CSS 入口，那组同名规则没有度量覆盖会互相干扰
@@ -22,6 +23,7 @@ const app = createApp(App);
 const pinia = createPinia();
 
 app.use(vuetify);
+app.use(i18n);
 app.use(pinia);
 app.use(router);
 installGlobalErrorHandlers(app);

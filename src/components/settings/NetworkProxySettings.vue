@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { configApi } from '../../services';
 import { getErrorMessage } from '../../utils/format';
 import type { ProxyMode, ProxySettings } from '../../types/events';
+
+const { t } = useI18n();
 
 const mode = ref<ProxyMode>('system');
 const url = ref('');
@@ -25,11 +28,11 @@ const canTest = computed(
 const modeDescription = computed(() => {
   switch (mode.value) {
     case 'direct':
-      return '忽略系统代理与环境变量，所有请求直接连接。';
+      return t('settings.proxy.descDirect');
     case 'custom':
-      return '启动器的下载、版本清单、模组源与登录请求都经下方代理转发。';
+      return t('settings.proxy.descCustom');
     default:
-      return '跟随 Windows 系统代理（设置 → 网络和 Internet → 代理）以及 HTTP_PROXY / HTTPS_PROXY 环境变量，这是默认行为。';
+      return t('settings.proxy.descSystem');
   }
 });
 
@@ -106,7 +109,7 @@ async function testConnection() {
     });
     testResult.value = {
       type: 'success',
-      text: `连接成功 · ${result.latencyMs} ms · HTTP ${result.status}`,
+      text: t('settings.proxy.testSuccess', { latency: result.latencyMs, status: result.status }),
     };
   } catch (err) {
     testResult.value = { type: 'error', text: getErrorMessage(err) };
@@ -123,8 +126,10 @@ onMounted(load);
     <v-card-text class="pa-4">
       <div class="d-flex align-center mb-3">
         <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-lan-connect</v-icon>
-        <span class="text-title-medium">网络代理</span>
-        <v-chip v-if="isCustom && dirty" size="small" color="warning" variant="tonal" class="ml-2"> 未应用 </v-chip>
+        <span class="text-title-medium">{{ t('settings.proxy.title') }}</span>
+        <v-chip v-if="isCustom && dirty" size="small" color="warning" variant="tonal" class="ml-2">
+          {{ t('settings.proxy.notApplied') }}
+        </v-chip>
       </div>
 
       <v-btn-toggle
@@ -141,15 +146,15 @@ onMounted(load);
       >
         <v-btn value="system" class="px-4">
           <v-icon start size="18">mdi-microsoft-windows</v-icon>
-          跟随系统
+          {{ t('settings.proxy.modeSystem') }}
         </v-btn>
         <v-btn value="direct" class="px-4">
           <v-icon start size="18">mdi-lan-disconnect</v-icon>
-          直连
+          {{ t('settings.proxy.modeDirect') }}
         </v-btn>
         <v-btn value="custom" class="px-4">
           <v-icon start size="18">mdi-tune-variant</v-icon>
-          自定义
+          {{ t('settings.proxy.modeCustom') }}
         </v-btn>
       </v-btn-toggle>
 
@@ -159,8 +164,8 @@ onMounted(load);
         <div v-if="isCustom" class="mt-4">
           <v-text-field
             v-model="url"
-            label="代理地址"
-            placeholder="http://127.0.0.1:7890"
+            :label="t('settings.proxy.urlLabel')"
+            :placeholder="t('settings.proxy.urlPlaceholder')"
             density="comfortable"
             hide-details
             autocomplete="off"
@@ -168,7 +173,7 @@ onMounted(load);
             @keyup.enter="applyCustom"
           />
           <div class="text-body-small text-on-surface-variant mt-2">
-            支持 http://、https://、socks5://；需要认证时写成 http://用户名:密码@主机:端口，凭据会明文保存在配置文件中
+            {{ t('settings.proxy.urlHint') }}
           </div>
           <div class="d-flex flex-wrap align-center ga-2 mt-3">
             <v-btn
@@ -179,7 +184,7 @@ onMounted(load);
               :disabled="!canApply"
               @click="applyCustom"
             >
-              应用
+              {{ t('settings.proxy.apply') }}
             </v-btn>
             <v-btn
               variant="outlined"
@@ -188,7 +193,7 @@ onMounted(load);
               :disabled="!canTest"
               @click="testConnection"
             >
-              测试连接
+              {{ t('settings.proxy.test') }}
             </v-btn>
           </div>
         </div>
@@ -202,7 +207,7 @@ onMounted(load);
           :disabled="!canTest"
           @click="testConnection"
         >
-          测试连接
+          {{ t('settings.proxy.test') }}
         </v-btn>
       </div>
 
@@ -214,7 +219,7 @@ onMounted(load);
       </v-alert>
 
       <p class="text-body-small text-on-surface-variant mt-3 mb-0">
-        只作用于启动器的下载、版本清单、模组源与登录请求，不改变游戏内连接服务器的方式。
+        {{ t('settings.proxy.scopeHint') }}
       </p>
     </v-card-text>
   </v-card>

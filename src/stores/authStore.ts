@@ -146,7 +146,7 @@ export const useAuthStore = defineStore('auth', () => {
       const url = await userApi.refreshSkinUrl();
       if (url) msSkinUrl.value = url;
     } catch (err) {
-      logError('刷新皮肤地址失败', err, 'AuthStore');
+      logError('Failed to refresh skin URL', err, 'AuthStore');
     }
   }
 

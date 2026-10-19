@@ -297,6 +297,7 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
         last_selected_version: None,
         theme_palette: None,
         theme_mode: None,
+        ui_language: None,
         auth_type: crate::models::AuthType::Offline,
         ms_access_token: None,
         ms_refresh_token: None,
@@ -489,6 +490,7 @@ enum ConfigKey {
     LastSelectedVersion,
     ThemePalette,
     ThemeMode,
+    UiLanguage,
 }
 
 impl ConfigKey {
@@ -512,6 +514,7 @@ impl ConfigKey {
             "lastSelectedVersion" => Some(Self::LastSelectedVersion),
             "themePalette" => Some(Self::ThemePalette),
             "themeMode" => Some(Self::ThemeMode),
+            "uiLanguage" => Some(Self::UiLanguage),
             _ => None,
         }
     }
@@ -539,6 +542,7 @@ impl ConfigKey {
             Self::LastSelectedVersion => config.last_selected_version.clone(),
             Self::ThemePalette => config.theme_palette.clone(),
             Self::ThemeMode => config.theme_mode.clone(),
+            Self::UiLanguage => config.ui_language.clone(),
         }
     }
 
@@ -615,6 +619,18 @@ impl ConfigKey {
                     _ => {
                         return Err(LauncherError::Custom(
                             "主题模式无效，仅支持 dark 或 light".to_string(),
+                        ));
+                    }
+                }
+            }
+            Self::UiLanguage => {
+                // 归一化后再落盘：前端可能传 zh / en 这类简写，存成标准标签才不会反复判断
+                config.ui_language = match value.to_lowercase().replace('_', "-").as_str() {
+                    "zh" | "zh-cn" | "zh-hans" => Some("zh-CN".to_string()),
+                    "en" | "en-us" => Some("en-US".to_string()),
+                    _ => {
+                        return Err(LauncherError::Custom(
+                            "界面语言无效，仅支持 zh-CN 或 en-US".to_string(),
                         ));
                     }
                 }
@@ -797,7 +813,8 @@ pub fn remove_custom_java_path(path: &str) -> Result<(), LauncherError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        TokenSnapshot, config_for_disk, default_game_dir, file_stamp, validate_download_threads,
+        ConfigKey, TokenSnapshot, config_for_disk, default_game_dir, file_stamp,
+        validate_download_threads,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -846,6 +863,21 @@ mod tests {
 
         fs::remove_file(&path).unwrap();
         assert_ne!(second, file_stamp(&path));
+    }
+
+    #[test]
+    fn test_ui_language_is_normalized_on_save() {
+        let mut config = crate::models::GameConfig::default();
+        let key = ConfigKey::UiLanguage;
+
+        key.set_value(&mut config, "zh".to_string()).unwrap();
+        assert_eq!(config.ui_language.as_deref(), Some("zh-CN"));
+
+        key.set_value(&mut config, "EN_us".to_string()).unwrap();
+        assert_eq!(config.ui_language.as_deref(), Some("en-US"));
+
+        assert!(key.set_value(&mut config, "fr-FR".to_string()).is_err());
+        assert!(key.set_value(&mut config, String::new()).is_err());
     }
 
     #[test]

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useDownloadStore } from '../stores/downloadStore';
 import NotificationDownload from './NotificationDownload.vue';
 
 const downloadStore = useDownloadStore();
+const { t } = useI18n();
 const isDownloading = computed(() => downloadStore.isDownloading);
 const selectedVersion = computed(() => downloadStore.selectedVersion);
 const downloadProgress = computed(() => downloadStore.downloadProgress);
@@ -59,7 +61,11 @@ function cancelDownload() {
         class="download-fab-progress"
       />
       <v-tooltip activator="parent" location="left">
-        <span class="num-mono">{{ isDownloading ? `下载中 ${progressPercentage.toFixed(0)}%` : '下载完成' }}</span>
+        <span class="num-mono">{{
+          isDownloading
+            ? t('downloadStatus.downloadingPercent', { percent: progressPercentage.toFixed(0) })
+            : t('downloadStatus.completed')
+        }}</span>
       </v-tooltip>
     </v-btn>
   </div>

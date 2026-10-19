@@ -6,6 +6,7 @@
  * 所以这里只改配置，不挪文件；同一时间只有一个包是启用的。
  */
 import { computed, onMounted, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { open } from '@tauri-apps/plugin-dialog';
 import ShaderPackBrowserDialog from './ShaderPackBrowserDialog.vue';
 import { useNotificationStore } from '../../stores/notificationStore';
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 }>();
 
 const notificationStore = useNotificationStore();
+const { t } = useI18n();
 
 const state = ref<ShaderPackList | null>(null);
 const loading = ref(false);
@@ -50,13 +52,13 @@ const shadersEnabled = computed(() => state.value?.enabled ?? false);
 const backendLabel = computed(() => {
   switch (backend.value) {
     case 'iris':
-      return 'Iris';
+      return t('shaderPacks.backendIris');
     case 'oculus':
-      return 'Oculus';
+      return t('shaderPacks.backendOculus');
     case 'optifine':
-      return 'OptiFine';
+      return t('shaderPacks.backendOptiFine');
     default:
-      return '未检测到光影加载器';
+      return t('shaderPacks.backendUnknown');
   }
 });
 
@@ -88,13 +90,13 @@ const selectedDisplayName = computed(() => selectedPack.value?.displayName ?? se
 function backendHint(): string {
   switch (backend.value) {
     case 'iris':
-      return '选择即时生效，游戏下次启动或按 K 重载光影时读取 iris.properties';
+      return t('shaderPacks.hintIris');
     case 'oculus':
-      return '选择即时生效，游戏下次启动或按 K 重载光影时读取 oculus.properties';
+      return t('shaderPacks.hintOculus');
     case 'optifine':
-      return '选择即时生效，游戏下次启动读取 optionsshaders.txt；关闭光影写 shaderPack=OFF';
+      return t('shaderPacks.hintOptiFine');
     default:
-      return '光影包已放入 shaderpacks，但游戏不会加载它们：先在「模组管理」里安装 Iris / Oculus 或 OptiFine';
+      return t('shaderPacks.hintUnknown');
   }
 }
 
@@ -127,10 +129,10 @@ async function selectPack(pack: ShaderPackInfo) {
   try {
     state.value = await shaderPackApi.selectShaderPack(props.instanceName, pack.fileName);
     emit('changed');
-    notificationStore.success('已启用光影', pack.displayName);
+    notificationStore.success(t('shaderPacks.enableSuccess'), pack.displayName);
   } catch (e) {
     logError('Failed to select shader pack', e, 'ShaderPacksPanel');
-    notificationStore.error('启用光影失败', getErrorMessage(e), true);
+    notificationStore.error(t('shaderPacks.enableFailed'), getErrorMessage(e), true);
   } finally {
     busyFile.value = null;
   }
@@ -145,7 +147,7 @@ async function toggleShaders() {
     emit('changed');
   } catch (e) {
     logError('Failed to toggle shaders', e, 'ShaderPacksPanel');
-    notificationStore.error('切换光影开关失败', getErrorMessage(e), true);
+    notificationStore.error(t('shaderPacks.toggleFailed'), getErrorMessage(e), true);
   } finally {
     toggling.value = false;
   }
@@ -158,10 +160,10 @@ async function disableShaders() {
   try {
     state.value = await shaderPackApi.disableShaderPack(props.instanceName);
     emit('changed');
-    notificationStore.success('已关闭光影', '文件仍留在 shaderpacks 目录里');
+    notificationStore.success(t('shaderPacks.disableSuccess'), t('shaderPacks.disableSuccessHint'));
   } catch (e) {
     logError('Failed to disable shaders', e, 'ShaderPacksPanel');
-    notificationStore.error('关闭光影失败', getErrorMessage(e), true);
+    notificationStore.error(t('shaderPacks.disableFailed'), getErrorMessage(e), true);
   } finally {
     busyFile.value = null;
   }
@@ -186,7 +188,7 @@ async function deletePack() {
     emit('changed');
   } catch (e) {
     logError('Failed to delete shader pack', e, 'ShaderPacksPanel');
-    notificationStore.error('删除光影包失败', getErrorMessage(e));
+    notificationStore.error(t('shaderPacks.deleteFailed'), getErrorMessage(e));
   } finally {
     busyFile.value = null;
   }
@@ -198,8 +200,8 @@ async function importPacks() {
   try {
     const selected = await open({
       multiple: true,
-      title: '选择光影包',
-      filters: [{ name: '光影包', extensions: ['zip'] }],
+      title: t('shaderPacks.pickTitle'),
+      filters: [{ name: t('shaderPacks.pickFilter'), extensions: ['zip'] }],
     });
     if (!selected) return;
 
@@ -213,17 +215,25 @@ async function importPacks() {
 
     if (summary.imported.length === 0) {
       notificationStore.warning(
-        '没有导入任何光影包',
-        summary.skipped.length > 0 ? `已跳过：${summary.skipped.join('、')}` : '所选文件里没有 shaders 目录',
+        t('shaderPacks.nothingImported'),
+        summary.skipped.length > 0
+          ? t('shaderPacks.nothingImportedSkipped', { names: summary.skipped.join(', ') })
+          : t('shaderPacks.nothingImportedInvalid'),
       );
     } else if (summary.skipped.length > 0) {
-      notificationStore.warning(`导入了 ${summary.imported.length} 个光影包`, `跳过：${summary.skipped.join('、')}`);
+      notificationStore.warning(
+        t('shaderPacks.importedSome', { count: summary.imported.length }, summary.imported.length),
+        t('shaderPacks.importedSkipped', { names: summary.skipped.join(', ') }),
+      );
     } else {
-      notificationStore.success('导入完成', `${summary.imported.length} 个光影包已放入 shaderpacks`);
+      notificationStore.success(
+        t('shaderPacks.importDone'),
+        t('shaderPacks.importDoneHint', { count: summary.imported.length }, summary.imported.length),
+      );
     }
   } catch (e) {
     logError('Failed to import shader packs', e, 'ShaderPacksPanel');
-    notificationStore.error('导入光影包失败', getErrorMessage(e), true);
+    notificationStore.error(t('shaderPacks.importFailed'), getErrorMessage(e), true);
   } finally {
     importing.value = false;
   }
@@ -234,7 +244,7 @@ async function openFolder() {
     await shaderPackApi.openFolder(props.instanceName);
   } catch (e) {
     logError('Failed to open shaderpacks folder', e, 'ShaderPacksPanel');
-    notificationStore.error('打开文件夹失败', getErrorMessage(e));
+    notificationStore.error(t('shaderPacks.openFolderFailed'), getErrorMessage(e));
   }
 }
 
@@ -254,13 +264,16 @@ async function checkUpdates() {
   try {
     updates.value = await shaderPackApi.checkUpdates(props.instanceName);
     if (updates.value.length === 0) {
-      notificationStore.success('已是最新', '没有检测到可更新的光影包');
+      notificationStore.success(t('shaderPacks.upToDate'), t('shaderPacks.upToDateHint'));
     } else {
-      notificationStore.info('发现更新', `${updates.value.length} 个光影包有新版本`);
+      notificationStore.info(
+        t('shaderPacks.updateFound'),
+        t('shaderPacks.updateFoundHint', { count: updates.value.length }, updates.value.length),
+      );
     }
   } catch (e) {
     logError('Failed to check shader pack updates', e, 'ShaderPacksPanel');
-    notificationStore.error('检查更新失败', getErrorMessage(e), true);
+    notificationStore.error(t('shaderPacks.checkFailed'), getErrorMessage(e), true);
   } finally {
     checking.value = false;
   }
@@ -276,10 +289,13 @@ async function updatePack(pack: ShaderPackInfo) {
     updates.value = updates.value.filter((item) => item.fileName !== pack.fileName);
     await loadPacks();
     emit('changed');
-    notificationStore.success('更新成功', `${pack.displayName} 已更新到 ${installed.versionNumber}`);
+    notificationStore.success(
+      t('shaderPacks.updateSuccess'),
+      t('shaderPacks.updateSuccessHint', { name: pack.displayName, version: installed.versionNumber }),
+    );
   } catch (e) {
     logError('Failed to update shader pack', e, 'ShaderPacksPanel');
-    notificationStore.error('更新失败', getErrorMessage(e), true);
+    notificationStore.error(t('shaderPacks.updateFailed'), getErrorMessage(e), true);
   } finally {
     updatingFile.value = null;
   }
@@ -310,9 +326,15 @@ async function updateAll() {
     emit('changed');
 
     if (failed === 0) {
-      notificationStore.success('更新完成', `${succeeded} 个光影包已更新`);
+      notificationStore.success(
+        t('shaderPacks.updateDone'),
+        t('shaderPacks.updateDoneHint', { count: succeeded }, succeeded),
+      );
     } else {
-      notificationStore.warning('部分更新失败', `成功 ${succeeded} 个，失败 ${failed} 个`);
+      notificationStore.warning(
+        t('shaderPacks.updatePartlyFailed'),
+        t('shaderPacks.updatePartlyFailedHint', { succeeded, failed }),
+      );
     }
   } finally {
     updatingAll.value = false;
@@ -338,7 +360,7 @@ watch(
   <div>
     <div class="d-flex align-center ga-2 mb-3 flex-wrap">
       <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-plus" @click="openBrowser">
-        安装光影包
+        {{ t('shaderPacks.install') }}
       </v-btn>
       <v-btn
         variant="text"
@@ -347,12 +369,19 @@ watch(
         :loading="importing"
         @click="importPacks"
       >
-        从文件导入
+        {{ t('shaderPacks.importFromFile') }}
       </v-btn>
       <v-btn variant="text" size="small" prepend-icon="mdi-update" :loading="checking" @click="checkUpdates">
-        检查更新
+        {{ t('shaderPacks.checkUpdates') }}
       </v-btn>
-      <v-btn icon size="small" variant="text" aria-label="刷新光影包列表" :loading="loading" @click="loadPacks">
+      <v-btn
+        icon
+        size="small"
+        variant="text"
+        :aria-label="t('shaderPacks.refreshList')"
+        :loading="loading"
+        @click="loadPacks"
+      >
         <v-icon size="18">mdi-refresh</v-icon>
       </v-btn>
 
@@ -366,7 +395,7 @@ watch(
         :loading="updatingAll"
         @click="updateAll"
       >
-        全部更新 ({{ updatableCount }})
+        {{ t('shaderPacks.updateAll', { count: updatableCount }) }}
       </v-btn>
     </div>
 
@@ -379,11 +408,15 @@ watch(
 
           <div class="flex-grow-1 min-width-0">
             <div class="text-title-small">
-              <template v-if="shadersEnabled && selectedDisplayName"> 当前光影：{{ selectedDisplayName }} </template>
-              <template v-else-if="shadersEnabled">光影已开启，但还没选择光影包</template>
-              <template v-else>光影已关闭</template>
+              <template v-if="shadersEnabled && selectedDisplayName">
+                {{ t('shaderPacks.currentShader', { name: selectedDisplayName }) }}
+              </template>
+              <template v-else-if="shadersEnabled">{{ t('shaderPacks.enabledNoSelection') }}</template>
+              <template v-else>{{ t('shaderPacks.disabled') }}</template>
             </div>
-            <div class="text-body-small text-on-surface-variant">加载器：{{ backendLabel }} · {{ backendHint() }}</div>
+            <div class="text-body-small text-on-surface-variant">
+              {{ t('shaderPacks.backendLine', { backend: backendLabel, hint: backendHint() }) }}
+            </div>
           </div>
 
           <div class="d-flex align-center ga-1">
@@ -392,8 +425,8 @@ watch(
               :model-value="shadersEnabled"
               :loading="toggling"
               :disabled="toggling || packs.length === 0"
-              aria-label="光影总开关"
-              label="启用光影"
+              :aria-label="t('shaderPacks.toggleAria')"
+              :label="t('shaderPacks.toggleLabel')"
               hide-details
               inset
               density="compact"
@@ -407,17 +440,17 @@ watch(
               :loading="busyFile !== null"
               @click="disableShaders"
             >
-              关闭光影
+              {{ t('shaderPacks.turnOff') }}
             </v-btn>
           </div>
         </div>
 
         <v-alert v-if="missingSelection" type="warning" variant="tonal" density="compact" class="mt-3">
-          配置里选中的光影包 <strong>{{ missingSelection }}</strong> 已经不在 shaderpacks 目录里，游戏会退回无光影。
+          {{ t('shaderPacks.missingSelection') }} <strong>{{ missingSelection }}</strong>
+          {{ t('shaderPacks.missingSelectionSuffix') }}
         </v-alert>
         <v-alert v-else-if="backend === 'unknown'" type="info" variant="tonal" density="compact" class="mt-3">
-          这个实例没有安装 Iris / Oculus 或 OptiFine，光影包不会生效。可以到「模组管理」里搜索安装 Iris（Fabric / Quilt
-          / NeoForge）或 Oculus（Forge）。
+          {{ t('shaderPacks.noBackend') }}
         </v-alert>
       </v-card-text>
     </v-card>
@@ -429,13 +462,13 @@ watch(
 
       <div v-else-if="error" class="text-center pa-8">
         <div class="text-body-medium text-error mb-3">{{ error }}</div>
-        <v-btn size="small" variant="tonal" color="primary" @click="loadPacks">重试</v-btn>
+        <v-btn size="small" variant="tonal" color="primary" @click="loadPacks">{{ t('common.retry') }}</v-btn>
       </div>
 
       <div v-else-if="packs.length === 0" class="text-center pa-10 text-on-surface-variant">
         <v-icon size="40" class="mb-2" color="on-surface-variant">mdi-shimmer</v-icon>
-        <div class="text-body-medium">这个实例还没有光影包</div>
-        <div class="text-body-small mt-1">点「安装光影包」从 Modrinth 搜索，或把 zip 拖进 shaderpacks 目录</div>
+        <div class="text-body-medium">{{ t('shaderPacks.emptyTitle') }}</div>
+        <div class="text-body-small mt-1">{{ t('shaderPacks.emptyHint') }}</div>
       </div>
 
       <v-list v-else lines="two" density="compact">
@@ -454,17 +487,19 @@ watch(
           >
             {{ pack.displayName }}
             <v-chip v-if="pack.selected && shadersEnabled" size="x-small" color="primary" variant="tonal" class="ml-2">
-              使用中
+              {{ t('shaderPacks.inUse') }}
             </v-chip>
           </v-list-item-title>
           <v-list-item-subtitle class="text-body-small">
             {{ formatFileSize(pack.size) }} · {{ pack.fileName }}
-            <template v-if="pack.isDirectory"> · 文件夹</template>
+            <template v-if="pack.isDirectory"> · {{ t('shaderPacks.folderSuffix') }}</template>
           </v-list-item-subtitle>
 
           <template #append>
             <div class="d-flex align-center ga-1">
-              <v-chip v-if="!pack.valid" size="x-small" color="error" variant="tonal"> 缺少 shaders </v-chip>
+              <v-chip v-if="!pack.valid" size="x-small" color="error" variant="tonal">
+                {{ t('shaderPacks.missingShaders') }}
+              </v-chip>
               <v-chip v-if="updateMap.get(pack.fileName)" size="x-small" color="warning" variant="tonal">
                 {{ updateMap.get(pack.fileName)?.versionNumber }}
               </v-chip>
@@ -476,7 +511,7 @@ watch(
                 color="primary"
                 :loading="updatingFile === pack.fileName"
                 :disabled="updatingAll"
-                :aria-label="`更新 ${pack.displayName}`"
+                :aria-label="t('shaderPacks.updateAria', { name: pack.displayName })"
                 @click="updatePack(pack)"
               >
                 <v-icon size="18">mdi-update</v-icon>
@@ -487,16 +522,16 @@ watch(
                 color="primary"
                 :loading="busyFile === pack.fileName"
                 :disabled="pack.selected || busyFile !== null || backend === 'unknown'"
-                :aria-label="`启用 ${pack.displayName}`"
+                :aria-label="t('shaderPacks.enableAria', { name: pack.displayName })"
                 @click="selectPack(pack)"
               >
-                {{ pack.selected ? '已选择' : '启用' }}
+                {{ pack.selected ? t('shaderPacks.selected') : t('shaderPacks.enable') }}
               </v-btn>
               <v-btn
                 icon
                 size="small"
                 variant="text"
-                :aria-label="`删除 ${pack.displayName}`"
+                :aria-label="t('shaderPacks.deleteAria', { name: pack.displayName })"
                 :disabled="busyFile === pack.fileName"
                 @click="askDeletePack(pack)"
               >
@@ -512,20 +547,20 @@ watch(
         v-if="packs.length > 0"
         class="d-flex align-center flex-wrap ga-2 text-body-small text-on-surface-variant pa-3"
       >
-        <span>共 {{ packs.length }} 个光影包</span>
+        <span>{{ t('shaderPacks.totalPacks', { count: packs.length }, packs.length) }}</span>
         <template v-if="invalidCount > 0">
           <span>·</span>
-          <span class="text-error">{{ invalidCount }} 个缺少 shaders 目录，游戏会拒绝加载</span>
+          <span class="text-error">{{ t('shaderPacks.invalidPacks', { count: invalidCount }, invalidCount) }}</span>
         </template>
         <v-spacer />
         <v-btn size="x-small" variant="text" prepend-icon="mdi-folder-open-outline" @click="openFolder">
-          打开文件夹
+          {{ t('common.openFolder') }}
         </v-btn>
       </div>
 
       <v-divider v-if="!versionIsolation" />
       <div v-if="!versionIsolation" class="text-body-small text-error pa-3">
-        当前关闭了版本隔离，光影包在共享目录里，这里的选择会影响所有实例。
+        {{ t('shaderPacks.sharedFolderWarning') }}
       </div>
     </v-card>
 
@@ -539,22 +574,26 @@ watch(
     <v-dialog v-model="deleteDialog" max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
-          <div class="text-title-large font-weight-bold mb-2">删除光影包</div>
+          <div class="text-title-large font-weight-bold mb-2">{{ t('shaderPacks.deleteTitle') }}</div>
           <div class="text-body-medium text-on-surface-variant">
-            确定要删除 <strong class="text-on-surface">{{ packToDelete?.displayName }}</strong> 吗？ 文件
-            {{ packToDelete?.fileName }} 会直接从磁盘移除。
+            {{ t('shaderPacks.deleteConfirmPrefix') }}
+            <strong class="text-on-surface">{{ packToDelete?.displayName }}</strong>
+            {{ t('shaderPacks.deleteConfirmMiddle') }} {{ packToDelete?.fileName }}
+            {{ t('shaderPacks.deleteConfirmSuffix') }}
           </div>
           <div v-if="packToDelete?.selected" class="text-body-small text-error mt-3">
-            它正是当前选中的光影包，删除后配置里的选择会被清空，游戏会退回无光影。
+            {{ t('shaderPacks.deleteSelectedWarning') }}
           </div>
           <div v-if="!versionIsolation" class="text-body-small text-error mt-3">
-            当前关闭了版本隔离，这个文件在共享 shaderpacks 目录里，删除后所有实例都不再能用它。
+            {{ t('shaderPacks.deleteSharedWarning') }}
           </div>
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
-          <v-btn variant="text" @click="deleteDialog = false">取消</v-btn>
-          <v-btn color="error" :loading="busyFile === packToDelete?.fileName" @click="deletePack">删除</v-btn>
+          <v-btn variant="text" @click="deleteDialog = false">{{ t('common.cancel') }}</v-btn>
+          <v-btn color="error" :loading="busyFile === packToDelete?.fileName" @click="deletePack">
+            {{ t('common.delete') }}
+          </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

@@ -4,6 +4,7 @@
  * 只按当前实例的 MC 版本与加载器搜索，安装时后端会顺带补齐 required 依赖
  */
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { modApi } from '../../services';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useDebounceFn } from '../../composables/useDebounce';
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 }>();
 
 const notificationStore = useNotificationStore();
+const { t } = useI18n();
 
 const query = ref('');
 const results = ref<ModrinthModpack[]>([]);
@@ -52,7 +54,7 @@ async function search() {
     results.value = result.hits || [];
     totalHits.value = result.total_hits || 0;
   } catch (e) {
-    logError('搜索模组失败', e, 'ModBrowserDialog');
+    logError('Failed to search mods', e, 'ModBrowserDialog');
     error.value = getErrorMessage(e);
     results.value = [];
     totalHits.value = 0;
@@ -91,13 +93,18 @@ async function install(mod: ModrinthModpack) {
   try {
     const result = await modApi.installModrinthMod(props.instanceName, mod.slug, undefined, true);
     const names = result.installed.map((item) => item.name);
-    const extra = names.length > 1 ? `，并补齐 ${names.length - 1} 个依赖` : '';
-    notificationStore.success('安装成功', `${names[0] ?? mod.title}${extra}`);
+    const name = names[0] ?? mod.title;
+    notificationStore.success(
+      t('modBrowser.installSuccess'),
+      names.length > 1
+        ? t('modBrowser.installSuccessWithDeps', { name, count: names.length - 1 }, names.length - 1)
+        : name,
+    );
     installedSlugs.value = new Set([...installedSlugs.value, mod.slug]);
     emit('installed');
   } catch (e) {
-    logError('安装模组失败', e, 'ModBrowserDialog');
-    notificationStore.error('安装失败', getErrorMessage(e), true);
+    logError('Failed to install mod', e, 'ModBrowserDialog');
+    notificationStore.error(t('modBrowser.installFailed'), getErrorMessage(e), true);
   } finally {
     installing.value = null;
   }
@@ -134,7 +141,7 @@ function iconUrl(url: string | undefined): string {
       <v-card-title class="d-flex align-center pa-4 pb-2">
         <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-plus-box-outline</v-icon>
         <div class="flex-grow-1">
-          <div class="text-title-medium font-weight-bold">安装模组</div>
+          <div class="text-title-medium font-weight-bold">{{ t('modBrowser.title') }}</div>
           <div class="text-body-small text-on-surface-variant">
             {{ instanceName }}
             <template v-if="gameVersion"> · {{ gameVersion }}</template>
@@ -145,7 +152,7 @@ function iconUrl(url: string | undefined): string {
           icon
           size="small"
           variant="text"
-          aria-label="关闭"
+          :aria-label="t('modBrowser.close')"
           @click="emit('update:modelValue', false)"
         >
           <v-icon size="18">mdi-close</v-icon>
@@ -157,8 +164,8 @@ function iconUrl(url: string | undefined): string {
           v-model="query"
           density="comfortable"
           variant="outlined"
-          label="搜索模组"
-          placeholder="输入名称，例如 Sodium"
+          :label="t('modBrowser.searchLabel')"
+          :placeholder="t('modBrowser.searchPlaceholder')"
           hide-details
           clearable
         >
@@ -177,12 +184,12 @@ function iconUrl(url: string | undefined): string {
 
         <div v-else-if="error" class="text-center pa-8">
           <div class="text-body-medium text-error mb-3">{{ error }}</div>
-          <v-btn size="small" variant="tonal" color="primary" @click="search">重试</v-btn>
+          <v-btn size="small" variant="tonal" color="primary" @click="search">{{ t('modBrowser.retry') }}</v-btn>
         </div>
 
         <div v-else-if="results.length === 0" class="text-center pa-10 text-on-surface-variant">
           <v-icon size="36" class="mb-2">mdi-puzzle-outline</v-icon>
-          <div class="text-body-medium">没有找到适配当前版本与加载器的模组</div>
+          <div class="text-body-medium">{{ t('modBrowser.empty') }}</div>
         </div>
 
         <v-list v-else lines="two" density="compact">
@@ -218,7 +225,7 @@ function iconUrl(url: string | undefined): string {
                   :disabled="installing !== null || installedSlugs.has(mod.slug)"
                   @click="install(mod)"
                 >
-                  {{ installedSlugs.has(mod.slug) ? '已安装' : '安装' }}
+                  {{ installedSlugs.has(mod.slug) ? t('modBrowser.installed') : t('modBrowser.install') }}
                 </v-btn>
               </div>
             </template>
@@ -228,15 +235,11 @@ function iconUrl(url: string | undefined): string {
 
       <v-divider v-if="totalPages > 1" />
       <v-card-actions v-if="totalPages > 1" class="pa-2">
-        <span class="text-body-small text-on-surface-variant ml-2">共 {{ totalHits }} 个模组</span>
+        <span class="text-body-small text-on-surface-variant ml-2">
+          {{ t('modBrowser.totalHits', { count: totalHits }, totalHits) }}
+        </span>
         <v-spacer />
-        <v-pagination
-          v-model="page"
-          :length="totalPages"
-          :total-visible="5"
-          density="compact"
-          color="primary"
-        />
+        <v-pagination v-model="page" :length="totalPages" :total-visible="5" density="compact" color="primary" />
       </v-card-actions>
     </v-card>
   </v-dialog>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, defineAsyncComponent } from 'vue';
+import { useI18n } from 'vue-i18n';
 
 const GeneralSettings = defineAsyncComponent(() => import('../components/settings/GeneralSettings.vue'));
 const AuthSettings = defineAsyncComponent(() => import('../components/settings/AuthSettings.vue'));
@@ -8,17 +9,19 @@ const MemorySettings = defineAsyncComponent(() => import('../components/settings
 const WindowSettings = defineAsyncComponent(() => import('../components/settings/WindowSettings.vue'));
 const AdvancedSettings = defineAsyncComponent(() => import('../components/settings/AdvancedSettings.vue'));
 
+const { t } = useI18n();
+
 const activeSection = ref('general');
 const isSmallScreen = ref(false);
 
-const sections = [
-  { id: 'general', title: '常规设置', icon: 'mdi-cog-outline' },
-  { id: 'auth', title: '账户与认证', icon: 'mdi-account-circle-outline' },
-  { id: 'java', title: 'Java 配置', icon: 'mdi-language-java' },
-  { id: 'memory', title: '内存管理', icon: 'mdi-memory' },
-  { id: 'window', title: '窗口设置', icon: 'mdi-monitor' },
-  { id: 'advanced', title: '高级选项', icon: 'mdi-tune-variant' },
-];
+const sections = computed(() => [
+  { id: 'general', title: t('settings.sections.general'), icon: 'mdi-cog-outline' },
+  { id: 'auth', title: t('settings.sections.auth'), icon: 'mdi-account-circle-outline' },
+  { id: 'java', title: t('settings.sections.java'), icon: 'mdi-language-java' },
+  { id: 'memory', title: t('settings.sections.memory'), icon: 'mdi-memory' },
+  { id: 'window', title: t('settings.sections.window'), icon: 'mdi-monitor' },
+  { id: 'advanced', title: t('settings.sections.advanced'), icon: 'mdi-tune-variant' },
+]);
 
 const activeTab = computed({
   get: () => activeSection.value,
@@ -46,8 +49,8 @@ onUnmounted(() => {
     <template v-if="isSmallScreen">
       <div class="settings-mobile">
         <div class="pa-4 pb-0">
-          <h1 class="text-headline-small font-weight-bold">设置</h1>
-          <p class="text-body-medium text-on-surface-variant mt-1">管理启动器配置</p>
+          <h1 class="text-headline-small font-weight-bold">{{ t('settings.title') }}</h1>
+          <p class="text-body-medium text-on-surface-variant mt-1">{{ t('settings.subtitle') }}</p>
         </div>
         <v-tabs v-model="activeTab" color="primary" density="comfortable" class="px-2" show-arrows>
           <v-tab
@@ -75,8 +78,8 @@ onUnmounted(() => {
     <template v-else>
       <div class="settings-nav">
         <div class="nav-header pa-4">
-          <h1 class="text-headline-small font-weight-bold">设置</h1>
-          <p class="text-body-medium text-on-surface-variant mt-1">管理启动器配置</p>
+          <h1 class="text-headline-small font-weight-bold">{{ t('settings.title') }}</h1>
+          <p class="text-body-medium text-on-surface-variant mt-1">{{ t('settings.subtitle') }}</p>
         </div>
 
         <v-list nav density="comfortable" class="px-2" bg-color="transparent">

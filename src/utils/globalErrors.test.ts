@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { LauncherCommandError } from '../services/invoke';
-import { GLOBAL_ERROR_DEDUPE_MS, GLOBAL_ERROR_MESSAGE_MAX_CHARS, createGlobalErrorReporter } from './globalErrors';
+import {
+  GLOBAL_ERROR_DEDUPE_MS,
+  GLOBAL_ERROR_LOG_LABEL,
+  GLOBAL_ERROR_MESSAGE_MAX_CHARS,
+  createGlobalErrorReporter,
+} from './globalErrors';
 
 function setupReporter() {
   const notify = vi.fn();
@@ -69,7 +74,7 @@ describe('global error reporter', () => {
     reporter.report('window', new Error(message));
 
     expect((notify.mock.calls[0][0] as string).endsWith('…')).toBe(true);
-    expect(log).toHaveBeenCalledWith('界面出现未处理错误', expect.any(Error), 'window');
+    expect(log).toHaveBeenCalledWith(GLOBAL_ERROR_LOG_LABEL, expect.any(Error), 'window');
   });
 
   it('ResizeObserver 循环噪音不提示', () => {

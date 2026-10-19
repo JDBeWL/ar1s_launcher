@@ -5,6 +5,7 @@
 import { ref } from 'vue';
 import { save } from '@tauri-apps/plugin-dialog';
 import { instanceApi } from '../services';
+import { translate } from '../i18n';
 import { useNotificationStore } from '../stores/notificationStore';
 import { getErrorMessage } from '../utils/format';
 import { logError } from '../utils/logger';
@@ -28,7 +29,7 @@ export function useDiagnosticsExport() {
 
     try {
       const selected = await save({
-        title: '导出诊断包',
+        title: translate('diagnostics.saveTitle'),
         defaultPath: defaultFileName(instance.name),
         filters: [{ name: 'Zip', extensions: ['zip'] }],
       });
@@ -36,10 +37,10 @@ export function useDiagnosticsExport() {
 
       const target = selected.toLowerCase().endsWith('.zip') ? selected : `${selected}.zip`;
       await instanceApi.exportDiagnostics(instance.name, target);
-      notificationStore.success('诊断包已导出', target.split(/[\\/]/).pop() || target);
+      notificationStore.success(translate('diagnostics.exported'), target.split(/[\\/]/).pop() || target);
     } catch (error) {
       logError('Failed to export diagnostics', error, 'useDiagnosticsExport');
-      notificationStore.error('导出诊断包失败', getErrorMessage(error));
+      notificationStore.error(translate('diagnostics.exportFailed'), getErrorMessage(error));
     } finally {
       exportingInstance.value = null;
     }

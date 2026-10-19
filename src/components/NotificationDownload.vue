@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 const props = defineProps({
   version: {
@@ -94,11 +97,17 @@ function handleCancel() {
           size="x-small"
           variant="text"
           @click="handleCancel"
-          title="取消下载"
+          :title="t('downloadStatus.cancelDownload')"
         >
           <v-icon size="18">mdi-cancel</v-icon>
         </v-btn>
-        <v-btn icon size="x-small" variant="text" @click="hideNotification" title="隐藏通知">
+        <v-btn
+          icon
+          size="x-small"
+          variant="text"
+          @click="hideNotification"
+          :title="t('downloadStatus.hideNotification')"
+        >
           <v-icon size="18">mdi-close</v-icon>
         </v-btn>
       </v-card-title>
@@ -118,12 +127,18 @@ function handleCancel() {
 
         <div class="d-flex justify-space-between text-body-small mt-1 num-mono">
           <span>{{ formattedSpeed }}</span>
-          <span>剩余: {{ remainingTime }}</span>
+          <span>{{ t('downloadStatus.remaining') }}: {{ remainingTime }}</span>
         </div>
 
-        <div v-if="status === 'completed'" class="text-success text-body-small mt-1">下载完成</div>
-        <div v-else-if="status === 'error'" class="text-error text-body-small mt-1">下载失败</div>
-        <div v-else-if="status === 'cancelled'" class="text-warning text-body-small mt-1">下载已取消</div>
+        <div v-if="status === 'completed'" class="text-success text-body-small mt-1">
+          {{ t('downloadStatus.completed') }}
+        </div>
+        <div v-else-if="status === 'error'" class="text-error text-body-small mt-1">
+          {{ t('downloadStatus.failed') }}
+        </div>
+        <div v-else-if="status === 'cancelled'" class="text-warning text-body-small mt-1">
+          {{ t('downloadStatus.cancelled') }}
+        </div>
       </v-card-text>
     </v-card>
   </v-slide-y-transition>

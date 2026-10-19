@@ -16,7 +16,6 @@ export interface ThemePalette {
 export interface ThemePreset {
   /** 主题名后缀，与存储值一致：`light-${id}` / `dark-${id}` */
   id: string;
-  label: string;
   /** 种子色：既决定色相，也决定整体饱和度（灰种子出灰配色） */
   seed: string;
 }

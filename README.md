@@ -62,6 +62,17 @@ Ar1s Launcher manages Minecraft versions, mod loaders and isolated game instance
 - JVM memory presets, GC strategy and advanced JVM flags
 - Known-incompatible combinations (for example, old Forge builds on new Java versions) are blocked before launch instead of failing midway
 
+### Interface language
+
+- Chinese (Simplified) and English, switchable at any time in **Settings → Interface language**;
+  no restart needed
+- The choice is stored as `uiLanguage` in the config file, so it survives reinstalls of the frontend
+  and is shared by every launcher window
+- The first launch follows the OS language, falling back to Chinese
+- The launcher UI language is independent of the in-game language, which is still set separately
+- Vuetify's own component strings (pagination, empty selects, date pickers) are translated through
+  the same catalog, so no built-in English leaks into the Chinese UI
+
 ### Reliability
 
 - Crash diagnosis: log patterns are classified and rendered as a copyable plain-text report
@@ -71,11 +82,11 @@ Ar1s Launcher manages Minecraft versions, mod loaders and isolated game instance
 
 ## Tech stack
 
-| Layer | Technologies |
-| --- | --- |
+| Layer    | Technologies                                                                          |
+| -------- | ------------------------------------------------------------------------------------- |
 | Frontend | Vue 3.5 (Composition API), Vuetify 4.2, TypeScript 6.0, Pinia 4, Vue Router 5, Vite 8 |
-| Backend | Rust 1.95+, Tauri 2.12, Tokio, Reqwest, Serde |
-| Tooling | pnpm, Cargo, vue-tsc, Vitest |
+| Backend  | Rust 1.95+, Tauri 2.12, Tokio, Reqwest, Serde                                         |
+| Tooling  | pnpm, Cargo, vue-tsc, Vitest                                                          |
 
 ## Requirements
 
@@ -119,7 +130,8 @@ ar1s_launcher/
 ├─ src/                     # Vue 3 frontend
 │  ├─ components/           # UI components (add-instance, instance, settings, ...)
 │  ├─ composables/          # reusable composition functions
-│  ├─ stores/               # Pinia stores (download, launcher, notifications, settings)
+│  ├─ i18n/                 # vue-i18n setup and locale catalogs (zh-CN, en-US)
+│  ├─ stores/               # Pinia stores (download, launcher, notifications, settings, uiLanguage)
 │  ├─ views/                # routed pages (home, download, add instance, modpack install, settings)
 │  ├─ services/             # Tauri command wrappers and API clients
 │  ├─ types/                # TypeScript type definitions
@@ -172,22 +184,22 @@ Browse releases and snapshots, filter by type, choose a source (official or BMCL
 
 ### Settings
 
-General (game directory, download source, threads, proxy), account, Java, memory, window, and advanced JVM options.
+General (game directory, download source, threads, proxy, interface language, in-game language), account, Java, memory, window, and advanced JVM options.
 
 ## Supported mod loaders
 
-| Loader | Status | Notes |
-| --- | --- | --- |
-| Forge | Supported | The most widely used loader |
-| Fabric | Supported | Lightweight loader |
-| Quilt | Supported | Fabric fork |
-| NeoForge | Supported | Modern Forge fork |
+| Loader   | Status    | Notes                       |
+| -------- | --------- | --------------------------- |
+| Forge    | Supported | The most widely used loader |
+| Fabric   | Supported | Lightweight loader          |
+| Quilt    | Supported | Fabric fork                 |
+| NeoForge | Supported | Modern Forge fork           |
 
 ## Supported modpack platforms
 
-| Platform | Status | Notes |
-| --- | --- | --- |
-| Modrinth | Supported | Open modpack platform |
+| Platform   | Status         | Notes                          |
+| ---------- | -------------- | ------------------------------ |
+| Modrinth   | Supported      | Open modpack platform          |
 | CurseForge | In development | Requires CurseForge API access |
 
 ## Third-party services and content
@@ -223,7 +235,7 @@ Please follow the existing code style, add comments where the intent is not obvi
 
 ## Security
 
-Please report vulnerabilities privately through GitHub's *Report a vulnerability*
+Please report vulnerabilities privately through GitHub's _Report a vulnerability_
 rather than in a public issue. [SECURITY.md](SECURITY.md) documents the secrets
 policy: API keys are never committed, never compiled into the binary, and never
 exposed to the frontend.
@@ -248,7 +260,7 @@ Thanks to [M-Crowe](https://github.com/m-crowe) for testing and for parts of the
 - [x] Mod installation and updates (search, dependency resolution, SHA-1 based update checks)
 - [x] Resource pack management (local management, Modrinth installs, update checks)
 - [x] Shader pack management (local management, Modrinth installs, update checks)
-- [ ] Internationalization
+- [x] Internationalization (Chinese and English UI, switchable at runtime)
 
 ## Disclaimer
 

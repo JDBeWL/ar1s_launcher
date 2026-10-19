@@ -4,6 +4,7 @@
  */
 import { ref, computed, watch } from 'vue';
 import { api } from '../services';
+import { translate } from '../i18n';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settings';
 import { useDebounceFn } from './useDebounce';
@@ -49,7 +50,7 @@ export function useInstanceCreation() {
   const modLoaderTypes = computed<{ title: string; value: ModLoaderType; disabled: boolean }[]>(() => {
     const loaders = availableLoaders.value;
     return [
-      { title: '无', value: 'None' as ModLoaderType, disabled: false },
+      { title: translate('customInstall.loaderNone'), value: 'None' as ModLoaderType, disabled: false },
       { title: 'Forge', value: 'Forge' as ModLoaderType, disabled: !loaders?.forge },
       { title: 'Fabric', value: 'Fabric' as ModLoaderType, disabled: !loaders?.fabric },
       { title: 'Quilt', value: 'Quilt' as ModLoaderType, disabled: !loaders?.quilt },
@@ -190,7 +191,7 @@ export function useInstanceCreation() {
       return true;
     } catch (error) {
       logError('Failed to validate instance name', error, 'useInstanceCreation');
-      instanceNameError.value = '验证失败';
+      instanceNameError.value = translate('customInstall.validateFailed');
       return false;
     }
   }
@@ -216,11 +217,14 @@ export function useInstanceCreation() {
       progressValue.value = data.percent;
       progressIndeterminate.value = false;
       const speed = data.speed >= 1024 ? `${(data.speed / 1024).toFixed(1)} MB/s` : `${data.speed.toFixed(0)} KB/s`;
-      progressText.value = data.speed > 0 ? `补齐游戏文件 · ${speed}` : '补齐游戏文件...';
+      progressText.value =
+        data.speed > 0
+          ? translate('customInstall.completingWithSpeed', { speed })
+          : translate('customInstall.completingFiles');
     } else if (data.status === 'completed') {
       progressValue.value = 100;
       progressIndeterminate.value = false;
-      progressText.value = '补齐完成';
+      progressText.value = translate('customInstall.completingDone');
     }
   });
 
@@ -228,19 +232,22 @@ export function useInstanceCreation() {
     const notificationStore = useNotificationStore();
 
     if (!selectedVersion.value) {
-      notificationStore.warning('请先选择一个Minecraft版本');
+      notificationStore.warning(translate('customInstall.selectVersionFirstToast'));
       return;
     }
 
     const finalInstanceName = instanceName.value || defaultInstanceName.value;
     if (!finalInstanceName) {
-      notificationStore.warning('实例名称不能为空');
+      notificationStore.warning(translate('customInstall.nameRequired'));
       return;
     }
 
     const isValid = await validateInstanceName(finalInstanceName);
     if (!isValid) {
-      notificationStore.warning('实例名称无效', instanceNameError.value || '请检查实例名称');
+      notificationStore.warning(
+        translate('customInstall.nameInvalid'),
+        instanceNameError.value || translate('customInstall.nameInvalidHint'),
+      );
       return;
     }
 
@@ -248,7 +255,7 @@ export function useInstanceCreation() {
     showProgress.value = true;
     progressValue.value = 0;
     progressIndeterminate.value = true;
-    progressText.value = '准备安装...';
+    progressText.value = translate('customInstall.preparingInstall');
 
     await installProgressSub.subscribe();
 
@@ -305,7 +312,7 @@ export function useInstanceCreation() {
       await api.instance.createInstance(finalInstanceName, selectedVersion.value.id, payload.loader);
 
       progressValue.value = 0;
-      progressText.value = '校验文件...';
+      progressText.value = translate('customInstall.validatingFiles');
       progressIndeterminate.value = true;
 
       let validationFailed = false;
@@ -322,7 +329,7 @@ export function useInstanceCreation() {
       if (missingFileCount > 0) {
         progressValue.value = 0;
         progressIndeterminate.value = true;
-        progressText.value = '补齐游戏文件...';
+        progressText.value = translate('customInstall.completingFiles');
         await downloadProgressSub.subscribe();
         try {
           const mirror = settingsStore.downloadMirror === 'bmcl' ? 'bmcl' : undefined;
@@ -330,7 +337,10 @@ export function useInstanceCreation() {
         } catch (error) {
           completionFailed = true;
           logError('Failed to complete instance files', error, 'useInstanceCreation');
-          notificationStore.warning('实例已创建', '游戏文件未补齐，首次启动前会提示修复');
+          notificationStore.warning(
+            translate('customInstall.createdIncomplete'),
+            translate('customInstall.createdIncompleteHint'),
+          );
         } finally {
           downloadProgressSub.unsubscribe();
         }
@@ -338,10 +348,10 @@ export function useInstanceCreation() {
 
       if (!completionFailed) {
         notificationStore.success(
-          '创建成功',
+          translate('customInstall.createSuccess'),
           validationFailed
-            ? `实例 '${finalInstanceName}' 已创建；文件校验未完成，首次启动前会再检查`
-            : `实例 '${finalInstanceName}' 已创建`,
+            ? translate('customInstall.createdUnvalidated', { name: finalInstanceName })
+            : translate('customInstall.createdValidated', { name: finalInstanceName }),
         );
       }
 
@@ -349,14 +359,14 @@ export function useInstanceCreation() {
       installing.value = false;
     } catch (error) {
       logError('Failed to create instance', error, 'useInstanceCreation');
-      progressText.value = '安装失败！';
+      progressText.value = translate('customInstall.installFailedText');
       progressIndeterminate.value = false;
       installing.value = false;
 
       await new Promise((resolve) => setTimeout(resolve, 1000));
       showProgress.value = false;
 
-      notificationStore.error('创建实例失败', getErrorMessage(error), true);
+      notificationStore.error(translate('customInstall.createFailed'), getErrorMessage(error), true);
     } finally {
       installProgressSub.unsubscribe();
     }

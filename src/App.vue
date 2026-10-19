@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { Window } from '@tauri-apps/api/window';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { ref, watch, onMounted, onUnmounted } from 'vue';
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useTheme, useDisplay } from 'vuetify';
 import { useLauncherStore } from './stores/launcherStore';
 import { useDownloadStore } from './stores/downloadStore';
 import { useAuthStore } from './stores/authStore';
 import { useSettingsStore } from './stores/settings';
+import { useUiLanguageStore } from './stores/uiLanguage';
 import { getThemePalette, getTheme, isValidThemePalette } from './utils/storage';
 import { configApi } from './services';
 import { logError } from './utils/logger';
@@ -113,7 +115,7 @@ async function loadThemeFromConfig() {
     if (mode === 'dark' || mode === 'light') isDarkMode.value = mode === 'dark';
     if (palette && isValidThemePalette(palette)) themePalette.value = palette;
   } catch (err) {
-    logError('加载主题设置失败', err, 'App');
+    logError('Failed to load theme settings', err, 'App');
   }
 }
 
@@ -124,7 +126,7 @@ async function persistTheme() {
       configApi.saveConfigKey('themePalette', themePalette.value),
     ]);
   } catch (err) {
-    logError('保存主题设置失败', err, 'App');
+    logError('Failed to save theme settings', err, 'App');
   }
 }
 
@@ -145,20 +147,26 @@ function handlePaletteChange(event: Event) {
 
 const launcherStore = useLauncherStore();
 const downloadStore = useDownloadStore();
+const uiLanguageStore = useUiLanguageStore();
+const { t } = useI18n();
 
 const shortcutHelpVisible = ref(false);
-const shortcuts = [
-  { keys: 'Ctrl + ,', description: '打开设置' },
-  { keys: 'Ctrl + D', description: '打开下载' },
-  { keys: 'Ctrl + N', description: '添加实例' },
-  { keys: 'Ctrl + I', description: '实例列表' },
-  { keys: 'Ctrl + /', description: '快捷键帮助' },
-];
+// 描述随语言切换实时变化，不能存成静态数组
+const shortcuts = computed(() => [
+  { keys: 'Ctrl + ,', description: t('shell.shortcutSettings') },
+  { keys: 'Ctrl + D', description: t('shell.shortcutDownload') },
+  { keys: 'Ctrl + N', description: t('shell.shortcutAddInstance') },
+  { keys: 'Ctrl + I', description: t('shell.shortcutInstanceList') },
+  { keys: 'Ctrl + /', description: t('shell.shortcutHelp') },
+]);
 
 onMounted(async () => {
   // 主题放最前面，配置文件读到的是真值，localStorage 只用来抢首屏
   await loadThemeFromConfig();
   applyTheme();
+
+  // 界面语言与主题同理：先按缓存/系统语言渲染，再以配置文件为准
+  await uiLanguageStore.load();
 
   await launcherStore.subscribe();
   downloadStore.init();
@@ -188,36 +196,41 @@ onUnmounted(() => {
   <v-app>
     <v-navigation-drawer :rail="rail" :mobile-breakpoint="0" rail-width="64" width="220" color="surface-container">
       <v-list nav class="nav-list">
-        <v-list-item prepend-icon="mdi-minecraft" title="启动" to="/" class="nav-item mb-1">
-          <v-tooltip activator="parent" location="right" :disabled="!rail">启动</v-tooltip>
+        <v-list-item prepend-icon="mdi-minecraft" :title="t('nav.launch')" to="/" class="nav-item mb-1">
+          <v-tooltip activator="parent" location="right" :disabled="!rail">{{ t('nav.launch') }}</v-tooltip>
         </v-list-item>
-        <v-list-item prepend-icon="mdi-download" title="下载" to="/download" class="nav-item mb-1">
+        <v-list-item prepend-icon="mdi-download" :title="t('nav.download')" to="/download" class="nav-item mb-1">
           <v-tooltip activator="parent" location="right" :disabled="!rail">
-            下载 <kbd class="shortcut-key">Ctrl+D</kbd>
+            {{ t('nav.download') }} <kbd class="shortcut-key">Ctrl+D</kbd>
           </v-tooltip>
         </v-list-item>
-        <v-list-item prepend-icon="mdi-plus-circle-outline" title="添加实例" to="/add-instance" class="nav-item mb-1">
+        <v-list-item
+          prepend-icon="mdi-plus-circle-outline"
+          :title="t('nav.addInstance')"
+          to="/add-instance"
+          class="nav-item mb-1"
+        >
           <v-tooltip activator="parent" location="right" :disabled="!rail">
-            添加实例 <kbd class="shortcut-key">Ctrl+N</kbd>
+            {{ t('nav.addInstance') }} <kbd class="shortcut-key">Ctrl+N</kbd>
           </v-tooltip>
         </v-list-item>
         <v-list-item
           prepend-icon="mdi-folder-multiple-outline"
-          title="实例列表"
+          :title="t('nav.instanceList')"
           to="/instance-manager"
           class="nav-item"
         >
           <v-tooltip activator="parent" location="right" :disabled="!rail">
-            实例列表 <kbd class="shortcut-key">Ctrl+I</kbd>
+            {{ t('nav.instanceList') }} <kbd class="shortcut-key">Ctrl+I</kbd>
           </v-tooltip>
         </v-list-item>
       </v-list>
 
       <template v-slot:append>
         <v-list nav class="nav-list">
-          <v-list-item prepend-icon="mdi-cog-outline" title="设置" to="/settings" class="nav-item">
+          <v-list-item prepend-icon="mdi-cog-outline" :title="t('nav.settings')" to="/settings" class="nav-item">
             <v-tooltip activator="parent" location="right" :disabled="!rail">
-              设置 <kbd class="shortcut-key">Ctrl+,</kbd>
+              {{ t('nav.settings') }} <kbd class="shortcut-key">Ctrl+,</kbd>
             </v-tooltip>
           </v-list-item>
         </v-list>
@@ -226,7 +239,7 @@ onUnmounted(() => {
 
     <v-app-bar class="titlebar" data-tauri-drag-region elevation="0" color="surface">
       <template v-slot:prepend>
-        <v-app-bar-nav-icon aria-label="切换侧边栏" @click="toggleRail" data-tauri-no-drag />
+        <v-app-bar-nav-icon :aria-label="t('nav.toggleSidebar')" @click="toggleRail" data-tauri-no-drag />
       </template>
       <v-app-bar-title class="font-weight-bold">Ar1s Launcher</v-app-bar-title>
       <v-spacer />
@@ -234,20 +247,20 @@ onUnmounted(() => {
       <v-btn
         icon
         data-tauri-no-drag
-        :aria-label="isDarkMode ? '切换到浅色模式' : '切换到深色模式'"
+        :aria-label="isDarkMode ? t('shell.lightMode') : t('shell.darkMode')"
         @click="toggleTheme"
         class="theme-toggle-btn mr-1"
         variant="text"
       >
         <v-icon>{{ isDarkMode ? 'mdi-weather-sunny' : 'mdi-weather-night' }}</v-icon>
         <v-tooltip activator="parent" location="bottom">
-          {{ isDarkMode ? '切换到浅色模式' : '切换到深色模式' }}
+          {{ isDarkMode ? t('shell.lightMode') : t('shell.darkMode') }}
         </v-tooltip>
       </v-btn>
 
       <v-btn
         icon
-        aria-label="最小化窗口"
+        :aria-label="t('shell.minimize')"
         data-tauri-no-drag
         @click="windowControls.minimize()"
         variant="text"
@@ -257,7 +270,7 @@ onUnmounted(() => {
       </v-btn>
       <v-btn
         icon
-        :aria-label="isMaximized ? '还原窗口' : '最大化窗口'"
+        :aria-label="isMaximized ? t('shell.restore') : t('shell.maximize')"
         data-tauri-no-drag
         @click="windowControls.toggleMaximize()"
         variant="text"
@@ -267,7 +280,7 @@ onUnmounted(() => {
       </v-btn>
       <v-btn
         icon
-        aria-label="关闭窗口"
+        :aria-label="t('shell.closeWindow')"
         data-tauri-no-drag
         @click="windowControls.close()"
         variant="text"
@@ -290,7 +303,7 @@ onUnmounted(() => {
     <v-dialog v-model="shortcutHelpVisible" max-width="380">
       <v-card color="surface-container-high">
         <v-card-text class="pa-5">
-          <div class="text-title-large font-weight-bold mb-4">快捷键</div>
+          <div class="text-title-large font-weight-bold mb-4">{{ t('shell.shortcutsTitle') }}</div>
           <div class="shortcut-list">
             <div v-for="s in shortcuts" :key="s.keys" class="shortcut-row">
               <span class="text-body-medium">{{ s.description }}</span>
@@ -300,7 +313,7 @@ onUnmounted(() => {
         </v-card-text>
         <v-card-actions class="pa-4 pt-0">
           <v-spacer />
-          <v-btn variant="text" @click="shortcutHelpVisible = false">关闭</v-btn>
+          <v-btn variant="text" @click="shortcutHelpVisible = false">{{ t('common.close') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

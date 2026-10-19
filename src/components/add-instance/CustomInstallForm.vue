@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { onMounted, computed } from 'vue';
-import { useInstanceCreation } from '../../composables/useInstanceCreation';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
+import { useInstanceCreation } from '../../composables/useInstanceCreation';
 import { getLoaderIcon } from '../../utils/format';
 import type { ForgeVersion, LoaderVersionInfo } from '../../types/events';
 
 const router = useRouter();
+const { t } = useI18n();
 
 const {
   loadingVersions,
@@ -58,7 +60,11 @@ function getLoaderVersionText(item: ForgeVersion | LoaderVersionInfo | null | un
       return item.version;
     }
     const stableText =
-      'stable' in item && item.stable === true ? ' (稳定)' : 'stable' in item && item.stable === false ? ' (测试)' : '';
+      'stable' in item && item.stable === true
+        ? t('customInstall.stableSuffix')
+        : 'stable' in item && item.stable === false
+          ? t('customInstall.betaSuffix')
+          : '';
     return item.version + stableText;
   }
   return String(item);
@@ -83,7 +89,7 @@ onMounted(() => {
         <div class="d-flex align-center justify-space-between mb-4">
           <div class="d-flex align-center">
             <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-minecraft</v-icon>
-            <span class="text-title-medium">游戏版本</span>
+            <span class="text-title-medium">{{ t('customInstall.gameVersionTitle') }}</span>
           </div>
           <v-btn-toggle
             v-model="versionTypeFilter"
@@ -95,9 +101,9 @@ onMounted(() => {
             variant="text"
             color="primary"
           >
-            <v-btn value="release">正式版</v-btn>
-            <v-btn value="snapshot">快照</v-btn>
-            <v-btn value="all">全部</v-btn>
+            <v-btn value="release">{{ t('customInstall.release') }}</v-btn>
+            <v-btn value="snapshot">{{ t('customInstall.snapshot') }}</v-btn>
+            <v-btn value="all">{{ t('customInstall.all') }}</v-btn>
           </v-btn-toggle>
         </div>
 
@@ -108,7 +114,7 @@ onMounted(() => {
               :items="filteredVersions"
               item-title="id"
               item-value="id"
-              label="Minecraft 版本"
+              :label="t('customInstall.versionLabel')"
               density="comfortable"
               variant="outlined"
               hide-details
@@ -121,7 +127,7 @@ onMounted(() => {
                 <v-list-item v-bind="props">
                   <template #append>
                     <v-chip size="x-small" :color="item.type === 'release' ? 'success' : 'warning'" variant="tonal">
-                      {{ item.type === 'release' ? '正式版' : '快照' }}
+                      {{ item.type === 'release' ? t('customInstall.release') : t('customInstall.snapshot') }}
                     </v-chip>
                   </template>
                 </v-list-item>
@@ -129,7 +135,7 @@ onMounted(() => {
               <template #no-data>
                 <v-list-item>
                   <v-list-item-title class="text-on-surface-variant">
-                    {{ loadingVersions ? '加载中...' : '没有找到版本' }}
+                    {{ loadingVersions ? t('customInstall.loading') : t('customInstall.noVersionFound') }}
                   </v-list-item-title>
                 </v-list-item>
               </template>
@@ -138,7 +144,7 @@ onMounted(() => {
           <v-col cols="12" sm="4">
             <v-text-field
               v-model="searchVersion"
-              label="搜索版本"
+              :label="t('customInstall.searchLabel')"
               density="comfortable"
               variant="outlined"
               hide-details
@@ -157,8 +163,10 @@ onMounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-puzzle</v-icon>
-          <span class="text-title-medium">Mod 加载器</span>
-          <v-chip size="x-small" class="ml-2" color="secondary" variant="tonal">可选</v-chip>
+          <span class="text-title-medium">{{ t('customInstall.loaderTitle') }}</span>
+          <v-chip size="x-small" class="ml-2" color="secondary" variant="tonal">
+            {{ t('customInstall.optional') }}
+          </v-chip>
           <v-spacer />
           <v-fade-transition>
             <v-progress-circular v-if="loadingAvailableLoaders" indeterminate size="16" width="2" color="primary" />
@@ -185,7 +193,7 @@ onMounted(() => {
             <v-icon start size="16">{{ getLoaderIcon(loader.value, 'select') }}</v-icon>
             {{ loader.title }}
             <v-tooltip v-if="loader.disabled && selectedVersion" activator="parent" location="top">
-              该版本不支持 {{ loader.title }}
+              {{ t('customInstall.loaderUnsupported', { loader: loader.title }) }}
             </v-tooltip>
           </v-btn>
         </v-btn-toggle>
@@ -197,8 +205,8 @@ onMounted(() => {
               :items="modLoaderVersions"
               :item-title="getLoaderVersionText"
               item-value="version"
-              label="加载器版本"
-              :placeholder="`选择 ${selectedModLoaderType} 版本`"
+              :label="t('customInstall.loaderVersionLabel')"
+              :placeholder="t('customInstall.loaderVersionPlaceholder', { loader: selectedModLoaderType })"
               density="comfortable"
               variant="outlined"
               :disabled="loadingModLoaderVersions"
@@ -225,7 +233,7 @@ onMounted(() => {
                       color="success"
                       variant="tonal"
                     >
-                      稳定
+                      {{ t('customInstall.stable') }}
                     </v-chip>
                     <v-chip
                       v-else-if="hasStableProperty(item) && item.stable === false"
@@ -233,7 +241,7 @@ onMounted(() => {
                       color="warning"
                       variant="tonal"
                     >
-                      测试
+                      {{ t('customInstall.beta') }}
                     </v-chip>
                   </template>
                 </v-list-item>
@@ -241,7 +249,7 @@ onMounted(() => {
               <template #no-data>
                 <v-list-item>
                   <v-list-item-title class="text-on-surface-variant">
-                    {{ loadingModLoaderVersions ? '加载中...' : '没有可用版本' }}
+                    {{ loadingModLoaderVersions ? t('customInstall.loading') : t('customInstall.noLoaderVersion') }}
                   </v-list-item-title>
                 </v-list-item>
               </template>
@@ -250,7 +258,7 @@ onMounted(() => {
         </v-expand-transition>
 
         <v-alert v-if="!selectedVersion" type="info" variant="tonal" density="compact" class="mt-2">
-          请先选择游戏版本以查看可用的加载器
+          {{ t('customInstall.selectVersionFirst') }}
         </v-alert>
       </v-card-text>
     </v-card>
@@ -259,12 +267,12 @@ onMounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-rename</v-icon>
-          <span class="text-title-medium">实例名称</span>
+          <span class="text-title-medium">{{ t('customInstall.nameTitle') }}</span>
         </div>
 
         <v-text-field
           v-model="instanceName"
-          label="实例名称"
+          :label="t('customInstall.nameLabel')"
           :placeholder="defaultInstanceName || undefined"
           :error-messages="instanceNameError || undefined"
           density="comfortable"
@@ -283,7 +291,9 @@ onMounted(() => {
         </v-text-field>
 
         <div class="text-body-small text-on-surface-variant mt-2">
-          留空将使用 <span class="font-weight-medium">{{ defaultInstanceName || '版本号' }}</span> 作为实例名称
+          {{ t('customInstall.nameHintPrefix') }}
+          <span class="font-weight-medium">{{ defaultInstanceName || t('customInstall.versionIdFallback') }}</span>
+          {{ t('customInstall.nameHintSuffix') }}
         </div>
       </v-card-text>
     </v-card>
@@ -322,7 +332,9 @@ onMounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center justify-space-between">
           <div>
-            <div class="text-body-medium text-on-primary-container opacity-70">即将创建</div>
+            <div class="text-body-medium text-on-primary-container opacity-70">
+              {{ t('customInstall.aboutToCreate') }}
+            </div>
             <div class="text-body-large font-weight-medium text-on-primary-container">
               {{ effectiveInstanceName }}
             </div>
@@ -350,7 +362,7 @@ onMounted(() => {
             @click="handleCreate"
           >
             <v-icon start>mdi-download</v-icon>
-            创建实例
+            {{ t('customInstall.createInstance') }}
           </v-btn>
         </div>
       </v-card-text>
@@ -359,7 +371,7 @@ onMounted(() => {
     <div v-else-if="!showProgress" class="d-flex justify-end">
       <v-btn color="primary" size="large" disabled>
         <v-icon start>mdi-download</v-icon>
-        创建实例
+        {{ t('customInstall.createInstance') }}
       </v-btn>
     </div>
   </div>

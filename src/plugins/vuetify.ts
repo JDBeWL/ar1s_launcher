@@ -7,8 +7,11 @@
 import 'vuetify/styles';
 import '@mdi/font/css/materialdesignicons.css';
 import { createVuetify } from 'vuetify';
+import { createVueI18nAdapter } from 'vuetify/locale/adapters/vue-i18n';
+import { useI18n } from 'vue-i18n';
 import { buildTheme } from '../theme/md3';
 import { DEFAULT_THEME_PRESET, THEME_PRESETS } from '../theme/presets';
+import { i18n } from '../i18n';
 
 // 加载器品牌色与告警色阶的容器色不随主题方案变化，集中定义后注入每个主题
 const toneLight = {
@@ -65,6 +68,11 @@ const vuetify = createVuetify({
     themes: {
       ...buildThemes(),
     },
+  },
+  // 组件内置文案（分页、选择框空状态、日期面板）直接复用 vue-i18n 的消息树，
+  // 这样切换界面语言时它们跟着一起变，不用另外维护一份
+  locale: {
+    adapter: createVueI18nAdapter({ i18n, useI18n }),
   },
   defaults: {
     VBtn: { rounded: 'xl', fontWeight: 500 },

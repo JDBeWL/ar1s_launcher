@@ -1,0 +1,35 @@
+/** 下载页 */
+export default {
+  download: {
+    searchLabel: '搜索版本号',
+    typeRelease: '正式版',
+    typeSnapshot: '快照',
+    typeAll: '全部',
+    sortLabel: '排序方式',
+    sortNewest: '最新优先',
+    sortOldest: '最旧优先',
+    reloadList: '重新获取版本列表',
+    unknownReleaseDate: '发布日期未知',
+    fetchFailed: '版本列表获取失败',
+    fetchFailedHint: '检查网络连接后重试',
+    reload: '重新加载',
+    emptyTitle: '没有找到匹配的版本',
+    emptyHint: '尝试调整搜索条件',
+    installed: '已安装',
+    download: '下载',
+    shownCount: '已显示 {shown} / {total} 个版本',
+    totalCount: '共 {total} 个版本',
+  },
+
+  downloadStatus: {
+    title: '下载失败',
+    unknownError: '下载过程中发生未知错误',
+    cancelDownload: '取消下载',
+    hideNotification: '隐藏通知',
+    completed: '下载完成',
+    failed: '下载失败',
+    cancelled: '下载已取消',
+    remaining: '剩余',
+    downloadingPercent: '下载中 {percent}%',
+  },
+};

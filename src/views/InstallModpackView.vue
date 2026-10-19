@@ -6,7 +6,9 @@
         <div class="flex-grow-1">
           <div class="d-flex align-center">
             <span class="text-title-large">{{ title }}</span>
-            <v-chip v-if="installing" color="primary" variant="tonal" size="small" class="ml-2"> 安装中 </v-chip>
+            <v-chip v-if="installing" color="primary" variant="tonal" size="small" class="ml-2">
+              {{ t('installModpack.installing') }}
+            </v-chip>
           </div>
           <div class="text-body-small text-on-surface-variant">Modrinth · {{ projectId }}</div>
         </div>
@@ -49,17 +51,17 @@
 
               <div v-if="validatingFiles" class="d-flex align-center mt-3 text-body-small text-on-surface-variant">
                 <v-progress-circular indeterminate size="14" width="2" class="mr-2" />
-                正在校验游戏文件…
+                {{ t('installModpack.validating') }}
               </div>
 
               <template v-else-if="postInstallChecked && missingFileCount > 0">
                 <v-alert v-if="!completionError" type="info" variant="tonal" density="comfortable" class="mt-3">
-                  <template #title>正在补齐游戏文件</template>
-                  安装已完成，检测到 {{ missingFileCount }} 个游戏文件缺失，正在自动补齐；补齐后即可直接启动。
+                  <template #title>{{ t('installModpack.completingTitle') }}</template>
+                  {{ t('installModpack.completingHint', { count: missingFileCount }, missingFileCount) }}
                 </v-alert>
                 <v-alert v-else type="warning" variant="tonal" density="comfortable" class="mt-3">
-                  <template #title>自动补齐未完成</template>
-                  还有 {{ missingFileCount }} 个文件缺失。可以重试补齐，或稍后启动时继续。
+                  <template #title>{{ t('installModpack.completingFailedTitle') }}</template>
+                  {{ t('installModpack.completingFailedHint', { count: missingFileCount }, missingFileCount) }}
                 </v-alert>
 
                 <div v-if="completingFiles" class="mt-3">
@@ -68,7 +70,7 @@
                       {{ formatBytes(versionDownload.bytes_downloaded) }} /
                       {{ formatBytes(versionDownload.total_bytes) }}
                     </span>
-                    <span v-else>准备补齐…</span>
+                    <span v-else>{{ t('installModpack.preparingCompletion') }}</span>
                     <span v-if="versionDownload">
                       {{ formatSpeed(versionDownload.speed) }} · {{ versionDownload.percent }}%
                     </span>
@@ -89,13 +91,18 @@
               <template v-else-if="filesStage">
                 <div class="d-flex flex-wrap align-center ga-2 mt-3">
                   <v-chip size="x-small" color="primary" variant="tonal" prepend-icon="mdi-download">
-                    下载中 {{ activeFiles.length }}
+                    {{ t('installModpack.downloadingCount', { count: activeFiles.length }) }}
                   </v-chip>
                   <v-chip v-if="queuedFileCount > 0" size="x-small" variant="tonal">
-                    排队 {{ queuedFileCount }}
+                    {{ t('installModpack.queuedCount', { count: queuedFileCount }) }}
                   </v-chip>
                   <v-chip v-if="fileProgress" size="x-small" color="success" variant="tonal">
-                    完成 {{ fileProgress.completed_files }}/{{ fileProgress.total_files }}
+                    {{
+                      t('installModpack.completedCount', {
+                        completed: fileProgress.completed_files,
+                        total: fileProgress.total_files,
+                      })
+                    }}
                   </v-chip>
                   <v-spacer />
                   <span
@@ -150,7 +157,7 @@
                     class="text-body-small text-on-surface-variant d-flex align-center pa-2"
                   >
                     <v-progress-circular indeterminate size="14" width="2" class="mr-2" />
-                    正在调度下一批文件…
+                    {{ t('installModpack.schedulingNext') }}
                   </div>
                 </div>
               </template>
@@ -172,7 +179,7 @@
                   class="mt-1"
                 />
                 <div v-if="versionDownloadDone" class="text-body-small text-on-surface-variant mt-2">
-                  游戏核心已就绪，正在安装加载器…
+                  {{ t('installModpack.gameReady') }}
                 </div>
               </template>
 
@@ -188,11 +195,13 @@
                     @click="stopCompletion"
                   >
                     <v-icon start size="16">mdi-close</v-icon>
-                    停止补齐
+                    {{ t('installModpack.stopCompletion') }}
                   </v-btn>
                   <template v-else-if="completionError">
-                    <v-btn variant="text" @click="finishLater">稍后启动</v-btn>
-                    <v-btn color="primary" variant="flat" @click="completeMissingFiles">重试补齐</v-btn>
+                    <v-btn variant="text" @click="finishLater">{{ t('installModpack.finishLater') }}</v-btn>
+                    <v-btn color="primary" variant="flat" @click="completeMissingFiles">
+                      {{ t('installModpack.retryCompletion') }}
+                    </v-btn>
                   </template>
                 </template>
                 <v-btn
@@ -205,7 +214,7 @@
                   @click="cancelInstall"
                 >
                   <v-icon start size="16">mdi-close</v-icon>
-                  取消
+                  {{ t('installModpack.cancel') }}
                 </v-btn>
               </div>
             </v-card-text>
@@ -226,15 +235,15 @@
 
         <template v-else-if="!installing">
           <v-alert v-if="modpackVersions.length === 0" type="warning" variant="tonal" class="mb-4">
-            <template #title>无可用版本</template>
-            该整合包暂无可安装的版本，请返回重新选择
+            <template #title>{{ t('installModpack.noVersionsTitle') }}</template>
+            {{ t('installModpack.noVersionsHint') }}
           </v-alert>
 
           <template v-else>
             <div class="config-section mb-4">
               <div class="text-title-small text-on-surface-variant mb-3">
                 <v-icon size="18" class="mr-1">mdi-tune</v-icon>
-                版本配置
+                {{ t('installModpack.versionConfig') }}
               </div>
 
               <v-row density="compact">
@@ -242,7 +251,7 @@
                   <v-select
                     v-model="selectedLoader"
                     :items="loaderOptions"
-                    label="加载器"
+                    :label="t('installModpack.loaderLabel')"
                     density="comfortable"
                     variant="outlined"
                     hide-details
@@ -258,7 +267,7 @@
                   <v-select
                     v-model="selectedGameVersion"
                     :items="filteredGameVersions"
-                    label="游戏版本"
+                    :label="t('installModpack.gameVersionLabel')"
                     density="comfortable"
                     variant="outlined"
                     :disabled="!selectedLoader"
@@ -278,7 +287,7 @@
                     :items="filteredModpackVersions"
                     item-title="displayName"
                     item-value="id"
-                    label="整合包版本"
+                    :label="t('installModpack.modpackVersionLabel')"
                     density="comfortable"
                     variant="outlined"
                     :disabled="!selectedLoader"
@@ -305,12 +314,12 @@
             <div class="config-section mb-4">
               <div class="text-title-small text-on-surface-variant mb-3">
                 <v-icon size="18" class="mr-1">mdi-folder-cog</v-icon>
-                实例配置
+                {{ t('installModpack.instanceConfig') }}
               </div>
 
               <v-text-field
                 v-model="instanceName"
-                label="实例名称"
+                :label="t('installModpack.instanceNameLabel')"
                 :placeholder="title"
                 density="comfortable"
                 variant="outlined"
@@ -336,7 +345,7 @@
                 </template>
               </v-text-field>
 
-              <div class="text-body-small text-on-surface-variant mt-2">留空将使用整合包名称作为实例名称</div>
+              <div class="text-body-small text-on-surface-variant mt-2">{{ t('installModpack.instanceNameHint') }}</div>
             </div>
 
             <v-expand-transition>
@@ -346,7 +355,7 @@
                     <div>
                       <div class="text-body-medium font-weight-medium">{{ selectedVersionInfo.name }}</div>
                       <div class="text-body-small text-on-surface-variant">
-                        版本号: {{ selectedVersionInfo.version_number }}
+                        {{ t('installModpack.versionNumber', { version: selectedVersionInfo.version_number }) }}
                       </div>
                     </div>
                     <div class="d-flex ga-1">
@@ -368,7 +377,7 @@
         </template>
 
         <div class="d-flex justify-end ga-2 mt-4">
-          <v-btn v-if="!installing" variant="text" @click="goBack"> 取消 </v-btn>
+          <v-btn v-if="!installing" variant="text" @click="goBack">{{ t('installModpack.cancel') }}</v-btn>
           <v-btn
             v-if="!installing"
             color="primary"
@@ -377,7 +386,7 @@
             @click="install"
           >
             <v-icon start>mdi-download</v-icon>
-            安装
+            {{ t('installModpack.install') }}
           </v-btn>
         </div>
       </v-card-text>
@@ -388,6 +397,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useMultiEventSubscription } from '../composables/useEventSubscription';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useSettingsStore } from '../stores/settings';
@@ -406,6 +416,7 @@ const route = useRoute();
 const router = useRouter();
 const notificationStore = useNotificationStore();
 const settingsStore = useSettingsStore();
+const { t } = useI18n();
 
 const projectId = String(route.query.projectId || '');
 const title = String(route.query.title || '');
@@ -420,7 +431,7 @@ const installing = ref(false);
 const cancelling = ref(false);
 const installProgress = ref<InstallProgressPayload>({
   progress: 0,
-  message: '准备安装...',
+  message: '',
   indeterminate: false,
 });
 const fileProgress = ref<ModpackFilesProgress | null>(null);
@@ -457,12 +468,15 @@ const etaText = computed(() => {
   const seconds = Math.ceil((progress.total_bytes - progress.downloaded_bytes) / progress.speed);
   if (!Number.isFinite(seconds) || seconds <= 0) return '';
   if (seconds >= 3600) {
-    return `剩余 ${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+    return t('installModpack.remainingHm', {
+      hours: Math.floor(seconds / 3600),
+      minutes: Math.floor((seconds % 3600) / 60),
+    });
   }
   if (seconds >= 60) {
-    return `剩余 ${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    return t('installModpack.remainingMs', { minutes: Math.floor(seconds / 60), seconds: seconds % 60 });
   }
-  return `剩余 ${seconds}s`;
+  return t('installModpack.remainingS', { seconds });
 });
 
 const installSubscriptions = useMultiEventSubscription();
@@ -511,7 +525,7 @@ async function checkInstanceName(name: string) {
     const result = await instanceApi.checkInstanceNameAvailable(name);
     instanceNameError.value = result.is_valid ? null : result.error_message;
   } catch (e) {
-    logError('检查实例名称失败', e, 'InstallModpackView');
+    logError('Failed to check instance name', e, 'InstallModpackView');
   } finally {
     checkingInstanceName.value = false;
   }
@@ -528,7 +542,7 @@ const canInstall = computed(() => {
 
 onBeforeRouteLeave(() => {
   if (installing.value && !cancelling.value) {
-    notificationStore.warning('安装进行中', '请先取消安装或等待安装完成');
+    notificationStore.warning(t('installModpack.installInProgress'), t('installModpack.installInProgressHint'));
     return false;
   }
   return true;
@@ -536,7 +550,7 @@ onBeforeRouteLeave(() => {
 
 function goBack() {
   if (installing.value && !cancelling.value) {
-    notificationStore.warning('安装进行中', '请先取消安装或等待安装完成');
+    notificationStore.warning(t('installModpack.installInProgress'), t('installModpack.installInProgressHint'));
     return;
   }
   router.back();
@@ -547,9 +561,9 @@ async function cancelInstall() {
   cancelling.value = true;
   try {
     await modpackApi.cancelModpackInstall();
-    notificationStore.info('正在取消', '安装将在当前步骤完成后取消');
+    notificationStore.info(t('installModpack.cancelling'), t('installModpack.cancellingHint'));
   } catch (e) {
-    logError('取消安装失败', e, 'InstallModpackView');
+    logError('Failed to cancel install', e, 'InstallModpackView');
   }
 }
 
@@ -621,8 +635,8 @@ async function loadVersions() {
       onLoaderChange();
     }
   } catch (e) {
-    logError('加载整合包版本失败', e, 'InstallModpackView');
-    notificationStore.error('加载失败', '无法获取整合包版本信息');
+    logError('Failed to load modpack versions', e, 'InstallModpackView');
+    notificationStore.error(t('installModpack.loadFailed'), t('installModpack.loadFailedHint'));
   } finally {
     loadingVersions.value = false;
   }
@@ -632,7 +646,7 @@ async function install() {
   if (!projectId || !selectedVersionId.value || !canInstall.value) return;
 
   installing.value = true;
-  installProgress.value = { progress: 0, message: '准备安装...', indeterminate: false };
+  installProgress.value = { progress: 0, message: t('installModpack.prepareInstall'), indeterminate: false };
   fileProgress.value = null;
   versionDownload.value = null;
   versionDownloadDone.value = false;
@@ -653,7 +667,7 @@ async function install() {
       install_path: '',
     });
 
-    installProgress.value = { progress: 100, message: '整合包安装完成！', indeterminate: false };
+    installProgress.value = { progress: 100, message: t('installModpack.installDone'), indeterminate: false };
     validatingFiles.value = true;
     let validationFailed = false;
     try {
@@ -661,7 +675,7 @@ async function install() {
       missingFileCount.value = missing.length;
     } catch (e) {
       validationFailed = true;
-      logError('校验安装文件失败', e, 'InstallModpackView');
+      logError('Failed to validate installed files', e, 'InstallModpackView');
     } finally {
       validatingFiles.value = false;
       postInstallChecked.value = true;
@@ -670,8 +684,8 @@ async function install() {
     if (missingFileCount.value === 0) {
       finishInstall(
         validationFailed
-          ? `${effectiveInstanceName.value} 已安装完成；文件校验未完成，首次启动前会再检查`
-          : `${effectiveInstanceName.value} 已安装完成，文件校验通过`,
+          ? t('installModpack.installDoneUnvalidated', { name: effectiveInstanceName.value })
+          : t('installModpack.installDoneValidated', { name: effectiveInstanceName.value }),
       );
       return;
     }
@@ -681,10 +695,10 @@ async function install() {
     void completeMissingFiles();
   } catch (e) {
     if (getErrorCode(e) === 'cancelled') {
-      notificationStore.info('已取消', '整合包安装已取消');
+      notificationStore.info(t('installModpack.cancelledTitle'), t('installModpack.installCancelled'));
     } else {
-      logError('安装整合包失败', e, 'InstallModpackView');
-      notificationStore.error('安装失败', getErrorMessage(e), true);
+      logError('Failed to install modpack', e, 'InstallModpackView');
+      notificationStore.error(t('installModpack.installFailed'), getErrorMessage(e), true);
     }
   } finally {
     cancelling.value = false;
@@ -701,20 +715,20 @@ async function completeMissingFiles() {
   completingFiles.value = true;
   completionError.value = null;
   versionDownload.value = null;
-  installProgress.value = { progress: 100, message: '正在补齐游戏文件...', indeterminate: true };
+  installProgress.value = { progress: 100, message: t('installModpack.completingFiles'), indeterminate: true };
 
   try {
     const mirror = settingsStore.downloadMirror === 'bmcl' ? 'bmcl' : undefined;
     await versionApi.downloadVersion(effectiveInstanceName.value, mirror);
-    finishInstall(`${effectiveInstanceName.value} 已安装完成，游戏文件已补齐`);
+    finishInstall(t('installModpack.installDoneCompleted', { name: effectiveInstanceName.value }));
   } catch (e) {
-    installProgress.value = { progress: 100, message: '游戏文件未补齐', indeterminate: false };
+    installProgress.value = { progress: 100, message: t('installModpack.filesNotCompleted'), indeterminate: false };
     if (getErrorCode(e) === 'cancelled') {
-      completionError.value = '已停止补齐，可以重试，或稍后启动时继续补齐';
+      completionError.value = t('installModpack.completionStopped');
     } else {
-      logError('补齐游戏文件失败', e, 'InstallModpackView');
+      logError('Failed to complete game files', e, 'InstallModpackView');
       completionError.value = getErrorMessage(e);
-      notificationStore.error('补齐失败', getErrorMessage(e), true);
+      notificationStore.error(t('installModpack.completionFailed'), getErrorMessage(e), true);
     }
   } finally {
     completingFiles.value = false;
@@ -727,23 +741,23 @@ async function stopCompletion() {
   cancelling.value = true;
   try {
     await versionApi.cancelDownload();
-    notificationStore.info('正在停止', '当前文件完成后停止补齐');
+    notificationStore.info(t('installModpack.stopping'), t('installModpack.stoppingHint'));
   } catch (e) {
-    logError('停止补齐失败', e, 'InstallModpackView');
+    logError('Failed to stop completion', e, 'InstallModpackView');
     cancelling.value = false;
   }
 }
 
 function finishInstall(message: string) {
-  notificationStore.success('安装成功', message);
+  notificationStore.success(t('installModpack.installSuccess'), message);
   closeInstallPanel();
   router.push('/instance-manager');
 }
 
 function finishLater() {
   notificationStore.warning(
-    '安装完成',
-    `${effectiveInstanceName.value} 已安装完成；游戏文件未补齐，首次启动时会继续补齐`,
+    t('installModpack.installFinished'),
+    t('installModpack.finishLaterHint', { name: effectiveInstanceName.value }),
   );
   closeInstallPanel();
   router.push('/instance-manager');

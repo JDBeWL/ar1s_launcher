@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useCrashStore } from '../stores/crashStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { useGameLaunch } from '../composables/useGameLaunch';
@@ -9,6 +10,7 @@ import type { CrashFinding } from '../types/events';
 const crash = useCrashStore();
 const notifications = useNotificationStore();
 const { relaunchWithJava } = useGameLaunch();
+const { t } = useI18n();
 
 const showExcerpt = ref(false);
 const relaunching = ref(false);
@@ -20,15 +22,15 @@ const excerpt = computed(() => diagnosis.value?.excerpt ?? []);
 
 /** 这个弹窗也会接住运行期崩溃，标题不能一律写“启动失败” */
 const title = computed(() => {
-  if (diagnosis.value?.recognized) return '游戏崩溃 · 已定位到可疑环节';
+  if (diagnosis.value?.recognized) return t('crash.titleRecognized');
   const hasJavaHint = findings.value.some((finding) => finding.kind === 'javaVersion');
-  return hasJavaHint ? '游戏崩溃 · 线索指向 Java 版本' : '游戏崩溃 · 未识别出已知特征';
+  return hasJavaHint ? t('crash.titleJavaHint') : t('crash.titleUnknown');
 });
 
 const rawLineCount = computed(() => diagnosis.value?.rawOutput.split('\n').length ?? 0);
 
 function roleLabel(role: CrashFinding['role']) {
-  return role === 'root' ? '根因' : '表象';
+  return role === 'root' ? t('crash.roleRoot') : t('crash.roleSymptom');
 }
 
 /** 表象压成中性灰，避免和真正的根因抢注意力 */
@@ -41,9 +43,9 @@ async function copyReport() {
   if (!diagnosis.value) return;
 
   if (await copyText(diagnosis.value.reportText)) {
-    notifications.success('已复制诊断报告', '结论、证据行和原始输出都在里面，可直接贴给上游');
+    notifications.success(t('crash.copySuccess'), t('crash.copySuccessHint'));
   } else {
-    notifications.error('复制失败，请在弹窗里手动选中文字');
+    notifications.error(t('crash.copyFailed'));
   }
 }
 
@@ -68,7 +70,9 @@ async function relaunch() {
       <template #title>
         <div class="d-flex align-center ga-2">
           <span class="text-error">{{ title }}</span>
-          <v-chip size="x-small" variant="tonal" class="flex-shrink-0">退出码 {{ diagnosis.exitCode }}</v-chip>
+          <v-chip size="x-small" variant="tonal" class="flex-shrink-0">
+            {{ t('crash.exitCode', { code: diagnosis.exitCode }) }}
+          </v-chip>
         </div>
       </template>
 
@@ -89,7 +93,7 @@ async function relaunch() {
           </div>
 
           <div v-if="finding.culprits.length" class="mt-1">
-            <span class="text-caption">{{ finding.culpritLabel }}：</span>
+            <span class="text-caption">{{ t('crash.culpritLabel', { label: finding.culpritLabel }) }}</span>
             <code v-for="culprit in finding.culprits" :key="culprit" class="chip-code">{{ culprit }}</code>
           </div>
 
@@ -106,7 +110,7 @@ async function relaunch() {
 
         <v-divider class="my-4" />
 
-        <div class="text-subtitle-2 mb-2">环境</div>
+        <div class="text-subtitle-2 mb-2">{{ t('crash.environment') }}</div>
         <div v-for="line in context" :key="line.label" class="context-row">
           <span class="context-label">{{ line.label }}</span>
           <span class="context-value">{{ line.value }}</span>
@@ -120,7 +124,7 @@ async function relaunch() {
             :prepend-icon="showExcerpt ? 'mdi-chevron-up' : 'mdi-chevron-down'"
             @click="showExcerpt = !showExcerpt"
           >
-            命中位置上下文（第 {{ excerpt[0].lineNo }}-{{ excerpt[excerpt.length - 1].lineNo }} 行）
+            {{ t('crash.excerptToggle', { from: excerpt[0].lineNo, to: excerpt[excerpt.length - 1].lineNo }) }}
           </v-btn>
           <div v-if="showExcerpt" class="raw-block">
             <div v-for="line in excerpt" :key="line.lineNo" class="log-line">
@@ -137,7 +141,7 @@ async function relaunch() {
           :prepend-icon="crash.showRaw ? 'mdi-chevron-up' : 'mdi-chevron-down'"
           @click="crash.toggleRaw()"
         >
-          原始输出（{{ rawLineCount }} 行）
+          {{ t('crash.rawToggle', { count: rawLineCount }) }}
         </v-btn>
         <pre v-if="crash.showRaw" class="raw-block raw-pre">{{ diagnosis.rawOutput }}</pre>
       </v-card-text>
@@ -145,9 +149,9 @@ async function relaunch() {
       <v-divider />
 
       <v-card-actions class="pa-4">
-        <v-btn variant="text" prepend-icon="mdi-content-copy" @click="copyReport">复制诊断报告</v-btn>
+        <v-btn variant="text" prepend-icon="mdi-content-copy" @click="copyReport">{{ t('crash.copyReport') }}</v-btn>
         <v-spacer />
-        <v-btn variant="text" @click="crash.close()">关闭</v-btn>
+        <v-btn variant="text" @click="crash.close()">{{ t('crash.close') }}</v-btn>
         <v-btn
           v-if="diagnosis.suggestedJava"
           color="primary"
@@ -156,7 +160,7 @@ async function relaunch() {
           :loading="relaunching"
           @click="relaunch"
         >
-          用 Java {{ diagnosis.suggestedJava.version }} 重新启动
+          {{ t('crash.relaunchWithJava', { version: diagnosis.suggestedJava.version }) }}
         </v-btn>
       </v-card-actions>
     </v-card>

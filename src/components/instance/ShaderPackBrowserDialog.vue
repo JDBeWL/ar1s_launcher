@@ -5,6 +5,7 @@
  * 后端把这两个条件按「任一命中」处理。装好后默认顺手启用，省一次点击。
  */
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { shaderPackApi } from '../../services';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { useDebounceFn } from '../../composables/useDebounce';
@@ -24,6 +25,7 @@ const emit = defineEmits<{
 }>();
 
 const notificationStore = useNotificationStore();
+const { t } = useI18n();
 
 const query = ref('');
 const results = ref<ModrinthModpack[]>([]);
@@ -54,7 +56,7 @@ async function search() {
     results.value = result.hits || [];
     totalHits.value = result.total_hits || 0;
   } catch (e) {
-    logError('搜索光影包失败', e, 'ShaderPackBrowserDialog');
+    logError('Failed to search shader packs', e, 'ShaderPackBrowserDialog');
     error.value = getErrorMessage(e);
     results.value = [];
     totalHits.value = 0;
@@ -97,20 +99,29 @@ async function install(pack: ModrinthModpack) {
     if (activateAfterInstall.value) {
       try {
         await shaderPackApi.selectShaderPack(props.instanceName, installed.fileName);
-        notificationStore.success('安装并启用', `${installed.name}（${installed.versionNumber}）`);
+        notificationStore.success(
+          t('shaderPackBrowser.installAndActivate'),
+          t('shaderPackBrowser.installAndActivateHint', {
+            name: installed.name,
+            version: installed.versionNumber,
+          }),
+        );
       } catch (e) {
         // 包已经装好，只是没能写进游戏配置，别把整个安装判成失败
-        logError('安装后启用光影失败', e, 'ShaderPackBrowserDialog');
-        notificationStore.warning('已安装但未启用', getErrorMessage(e));
+        logError('Failed to enable shader pack after install', e, 'ShaderPackBrowserDialog');
+        notificationStore.warning(t('shaderPackBrowser.installedNotActivated'), getErrorMessage(e));
       }
     } else {
-      notificationStore.success('安装成功', `${installed.name} 已放入 shaderpacks`);
+      notificationStore.success(
+        t('shaderPackBrowser.installSuccess'),
+        t('shaderPackBrowser.installSuccessHint', { name: installed.name }),
+      );
     }
 
     emit('installed');
   } catch (e) {
-    logError('安装光影包失败', e, 'ShaderPackBrowserDialog');
-    notificationStore.error('安装失败', getErrorMessage(e), true);
+    logError('Failed to install shader pack', e, 'ShaderPackBrowserDialog');
+    notificationStore.error(t('shaderPackBrowser.installFailed'), getErrorMessage(e), true);
   } finally {
     installing.value = null;
   }
@@ -147,13 +158,19 @@ function iconUrl(url: string | undefined): string {
       <v-card-title class="d-flex align-center pa-4 pb-2">
         <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-shimmer</v-icon>
         <div class="flex-grow-1">
-          <div class="text-title-medium font-weight-bold">安装光影包</div>
+          <div class="text-title-medium font-weight-bold">{{ t('shaderPackBrowser.title') }}</div>
           <div class="text-body-small text-on-surface-variant">
             {{ instanceName }}
             <template v-if="gameVersion"> · {{ gameVersion }}</template>
           </div>
         </div>
-        <v-btn icon size="small" variant="text" aria-label="关闭" @click="emit('update:modelValue', false)">
+        <v-btn
+          icon
+          size="small"
+          variant="text"
+          :aria-label="t('shaderPackBrowser.close')"
+          @click="emit('update:modelValue', false)"
+        >
           <v-icon size="18">mdi-close</v-icon>
         </v-btn>
       </v-card-title>
@@ -163,8 +180,8 @@ function iconUrl(url: string | undefined): string {
           v-model="query"
           density="comfortable"
           variant="outlined"
-          label="搜索光影包"
-          placeholder="输入名称，例如 Complementary"
+          :label="t('shaderPackBrowser.searchLabel')"
+          :placeholder="t('shaderPackBrowser.searchPlaceholder')"
           hide-details
           clearable
         >
@@ -175,7 +192,7 @@ function iconUrl(url: string | undefined): string {
 
         <v-switch
           v-model="activateAfterInstall"
-          label="安装后立即启用"
+          :label="t('shaderPackBrowser.activateAfterInstall')"
           hide-details
           inset
           density="compact"
@@ -193,12 +210,12 @@ function iconUrl(url: string | undefined): string {
 
         <div v-else-if="error" class="text-center pa-8">
           <div class="text-body-medium text-error mb-3">{{ error }}</div>
-          <v-btn size="small" variant="tonal" color="primary" @click="search">重试</v-btn>
+          <v-btn size="small" variant="tonal" color="primary" @click="search">{{ t('shaderPackBrowser.retry') }}</v-btn>
         </div>
 
         <div v-else-if="results.length === 0" class="text-center pa-10 text-on-surface-variant">
           <v-icon size="36" class="mb-2">mdi-shimmer</v-icon>
-          <div class="text-body-medium">没有找到适配当前版本的光影包</div>
+          <div class="text-body-medium">{{ t('shaderPackBrowser.empty') }}</div>
         </div>
 
         <v-list v-else lines="two" density="compact">
@@ -234,7 +251,9 @@ function iconUrl(url: string | undefined): string {
                   :disabled="installing !== null || installedSlugs.has(pack.slug)"
                   @click="install(pack)"
                 >
-                  {{ installedSlugs.has(pack.slug) ? '已安装' : '安装' }}
+                  {{
+                    installedSlugs.has(pack.slug) ? t('shaderPackBrowser.installed') : t('shaderPackBrowser.install')
+                  }}
                 </v-btn>
               </div>
             </template>
@@ -244,7 +263,9 @@ function iconUrl(url: string | undefined): string {
 
       <v-divider v-if="totalPages > 1" />
       <v-card-actions v-if="totalPages > 1" class="pa-2">
-        <span class="text-body-small text-on-surface-variant ml-2">共 {{ totalHits }} 个光影包</span>
+        <span class="text-body-small text-on-surface-variant ml-2">
+          {{ t('shaderPackBrowser.totalHits', { count: totalHits }, totalHits) }}
+        </span>
         <v-spacer />
         <v-pagination v-model="page" :length="totalPages" :total-visible="5" density="compact" color="primary" />
       </v-card-actions>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import PlayerHead from '../../components/PlayerHead.vue';
 import { useAuthStore } from '../../stores/authStore';
@@ -8,6 +9,7 @@ import { logError } from '../../utils/logger';
 import { getErrorMessage, getErrorCode } from '../../utils/format';
 
 const authStore = useAuthStore();
+const { t } = useI18n();
 const loginLoading = ref(false);
 const refreshLoading = ref(false);
 const loginDialog = ref(false);
@@ -60,6 +62,7 @@ async function startMicrosoftLogin() {
     } catch (err) {
       authCodeWaiting.value = false;
       const msg = getErrorMessage(err);
+      // 后端拒绝授权的文案固定是中文，这里按关键字静默，不弹错误
       if (getErrorCode(err) !== 'cancelled' && !msg.includes('拒绝了授权') && !msg.includes('被拒绝')) {
         loginError.value = msg;
       }
@@ -95,6 +98,7 @@ async function startDeviceCodeLogin() {
     } catch (err) {
       loginDialog.value = false;
       const msg = getErrorMessage(err);
+      // 同上：用户拒绝或设备码过期时不该再弹一次错误
       if (getErrorCode(err) !== 'cancelled' && !msg.includes('拒绝了授权') && !msg.includes('已过期')) {
         loginError.value = msg;
       }
@@ -145,7 +149,7 @@ onMounted(async () => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-shield-check-outline</v-icon>
-          <span class="text-title-medium">认证模式</span>
+          <span class="text-title-medium">{{ t('settings.auth.modeTitle') }}</span>
         </div>
 
         <v-btn-toggle
@@ -162,15 +166,15 @@ onMounted(async () => {
         >
           <v-btn value="offline">
             <v-icon start size="18">mdi-wifi-off</v-icon>
-            离线模式
+            {{ t('settings.auth.offline') }}
           </v-btn>
           <v-btn value="microsoft">
             <v-icon start size="18">mdi-microsoft</v-icon>
-            正版登录
+            {{ t('settings.auth.microsoft') }}
           </v-btn>
         </v-btn-toggle>
 
-        <p class="text-body-small text-on-surface-variant mt-2 mb-0">离线模式无需验证，正版登录使用 Microsoft 账户</p>
+        <p class="text-body-small text-on-surface-variant mt-2 mb-0">{{ t('settings.auth.modeHint') }}</p>
       </v-card-text>
     </v-card>
 
@@ -178,14 +182,14 @@ onMounted(async () => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-account-outline</v-icon>
-          <span class="text-title-medium">玩家名称</span>
+          <span class="text-title-medium">{{ t('settings.auth.playerNameTitle') }}</span>
         </div>
         <v-text-field
           v-model="authStore.username"
-          label="玩家名称"
+          :label="t('settings.auth.playerNameLabel')"
           density="comfortable"
           variant="outlined"
-          placeholder="输入游戏名称"
+          :placeholder="t('settings.auth.playerNamePlaceholder')"
           autocomplete="off"
           hide-details
         >
@@ -193,7 +197,7 @@ onMounted(async () => {
             <v-icon size="18" color="on-surface-variant">mdi-account</v-icon>
           </template>
         </v-text-field>
-        <div class="text-body-small text-on-surface-variant mt-2">离线模式下此名称将作为游戏内的玩家名</div>
+        <div class="text-body-small text-on-surface-variant mt-2">{{ t('settings.auth.playerNameHint') }}</div>
       </v-card-text>
     </v-card>
 
@@ -201,7 +205,7 @@ onMounted(async () => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-microsoft</v-icon>
-          <span class="text-title-medium">Microsoft 账户</span>
+          <span class="text-title-medium">{{ t('settings.auth.microsoftTitle') }}</span>
         </div>
 
         <div v-if="authStore.msLoggedIn">
@@ -214,11 +218,11 @@ onMounted(async () => {
                 </v-avatar>
                 <div class="flex-grow-1">
                   <div class="text-body-large font-weight-medium">{{ authStore.msUsername }}</div>
-                  <div class="text-body-small text-on-surface-variant">正版账户已登录</div>
+                  <div class="text-body-small text-on-surface-variant">{{ t('settings.auth.loggedIn') }}</div>
                 </div>
                 <v-btn size="small" variant="outlined" color="error" @click="logoutMicrosoft">
                   <v-icon start size="16">mdi-logout</v-icon>
-                  登出
+                  {{ t('settings.auth.logout') }}
                 </v-btn>
                 <v-btn
                   size="small"
@@ -229,7 +233,7 @@ onMounted(async () => {
                   @click="refreshMicrosoftAuth"
                 >
                   <v-icon start size="16">mdi-refresh</v-icon>
-                  刷新
+                  {{ t('settings.auth.refresh') }}
                 </v-btn>
               </div>
             </v-card-text>
@@ -238,11 +242,11 @@ onMounted(async () => {
         <div v-else>
           <v-btn block variant="outlined" color="primary" :loading="loginLoading" @click="startMicrosoftLogin">
             <v-icon start size="20">mdi-microsoft</v-icon>
-            使用 Microsoft 账户登录
+            {{ t('settings.auth.loginButton') }}
           </v-btn>
           <div class="d-flex align-center my-2" style="white-space: nowrap">
             <v-divider class="flex-grow-1" />
-            <span class="text-body-small text-on-surface-variant px-3">或者</span>
+            <span class="text-body-small text-on-surface-variant px-3">{{ t('settings.auth.or') }}</span>
             <v-divider class="flex-grow-1" />
           </div>
           <v-btn
@@ -254,12 +258,12 @@ onMounted(async () => {
             @click="startDeviceCodeLogin"
           >
             <v-icon start size="16">mdi-form-textbox</v-icon>
-            使用安全代码登录
+            {{ t('settings.auth.deviceCodeLogin') }}
           </v-btn>
           <div v-if="loginError" class="text-body-small text-error mt-2">
             {{ loginError }}
           </div>
-          <div class="text-body-small text-on-surface-variant mt-2">登录后可使用正版皮肤和在线多人游戏</div>
+          <div class="text-body-small text-on-surface-variant mt-2">{{ t('settings.auth.loginHint') }}</div>
         </div>
       </v-card-text>
     </v-card>
@@ -271,22 +275,24 @@ onMounted(async () => {
             <v-avatar size="56" color="primary" class="mb-3">
               <v-icon size="28" color="on-primary">mdi-microsoft</v-icon>
             </v-avatar>
-            <div class="text-title-large font-weight-bold">正在登录</div>
+            <div class="text-title-large font-weight-bold">{{ t('settings.auth.loggingIn') }}</div>
           </div>
 
           <v-card color="surface-container" variant="flat" class="mb-4">
             <v-card-text class="pa-4">
               <div class="text-body-medium text-on-surface-variant">
-                请在浏览器中完成 Microsoft 账户登录，完成后将自动返回启动器
+                {{ t('settings.auth.browserHint') }}
               </div>
             </v-card-text>
           </v-card>
 
           <div class="text-center">
             <v-progress-circular indeterminate size="32" color="primary" class="mr-2" />
-            <span class="text-body-medium text-on-surface-variant">等待浏览器登录中...</span>
+            <span class="text-body-medium text-on-surface-variant">{{ t('settings.auth.waitingBrowser') }}</span>
           </div>
-          <v-btn block variant="text" color="on-surface-variant" class="mt-4" @click="cancelLogin"> 取消登录 </v-btn>
+          <v-btn block variant="text" color="on-surface-variant" class="mt-4" @click="cancelLogin">
+            {{ t('settings.auth.cancelLogin') }}
+          </v-btn>
         </v-card-text>
       </v-card>
     </v-dialog>
@@ -298,22 +304,24 @@ onMounted(async () => {
             <v-avatar size="56" color="primary" class="mb-3">
               <v-icon size="28" color="on-primary">mdi-microsoft</v-icon>
             </v-avatar>
-            <div class="text-title-large font-weight-bold">登录 Microsoft 账户</div>
+            <div class="text-title-large font-weight-bold">{{ t('settings.auth.deviceCodeTitle') }}</div>
           </div>
 
           <v-card color="surface-container" variant="flat" class="mb-4">
             <v-card-text class="pa-4">
-              <div class="text-body-medium text-on-surface-variant mb-2">请按以下步骤操作：</div>
+              <div class="text-body-medium text-on-surface-variant mb-2">
+                {{ t('settings.auth.deviceCodeSteps') }}
+              </div>
               <ol class="text-body-medium pl-4">
-                <li class="mb-1">在浏览器中打开下方链接</li>
-                <li class="mb-1">输入下方安全代码</li>
-                <li>按照提示完成登录</li>
+                <li class="mb-1">{{ t('settings.auth.deviceCodeStep1') }}</li>
+                <li class="mb-1">{{ t('settings.auth.deviceCodeStep2') }}</li>
+                <li>{{ t('settings.auth.deviceCodeStep3') }}</li>
               </ol>
             </v-card-text>
           </v-card>
 
           <div class="mb-3">
-            <div class="text-body-small text-on-surface-variant mb-1">验证链接</div>
+            <div class="text-body-small text-on-surface-variant mb-1">{{ t('settings.auth.verificationUri') }}</div>
             <div class="d-flex align-center">
               <v-chip
                 :text="verificationUri"
@@ -328,7 +336,7 @@ onMounted(async () => {
           </div>
 
           <div class="mb-4">
-            <div class="text-body-small text-on-surface-variant mb-1">安全代码</div>
+            <div class="text-body-small text-on-surface-variant mb-1">{{ t('settings.auth.userCode') }}</div>
             <div class="d-flex align-center">
               <v-chip
                 :text="userCode"
@@ -346,9 +354,11 @@ onMounted(async () => {
 
           <div class="text-center">
             <v-progress-circular indeterminate size="32" color="primary" class="mr-2" />
-            <span class="text-body-medium text-on-surface-variant">等待登录中...</span>
+            <span class="text-body-medium text-on-surface-variant">{{ t('settings.auth.waitingLogin') }}</span>
           </div>
-          <v-btn block variant="text" color="on-surface-variant" class="mt-4" @click="cancelLogin"> 取消登录 </v-btn>
+          <v-btn block variant="text" color="on-surface-variant" class="mt-4" @click="cancelLogin">
+            {{ t('settings.auth.cancelLogin') }}
+          </v-btn>
         </v-card-text>
       </v-card>
     </v-dialog>

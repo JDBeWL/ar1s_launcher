@@ -3,6 +3,7 @@
  * 统一错误形状与超时：后端拒绝的 { code, message } 转成 LauncherCommandError，卡死的命令不会让界面无限等待
  */
 import { invoke } from '@tauri-apps/api/core';
+import { translate } from '../i18n';
 import { logWarn } from '../utils/logger';
 
 export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
@@ -62,8 +63,9 @@ function extractCode(error: unknown): string | null {
 }
 
 function extractMessage(error: unknown): string {
-  if (error instanceof Error) return error.message || '未知错误';
-  if (typeof error === 'string') return error.trim() || '未知错误';
+  const fallback = translate('errors.globalUnknown');
+  if (error instanceof Error) return error.message || fallback;
+  if (typeof error === 'string') return error.trim() || fallback;
   if (error && typeof error === 'object') {
     const record = error as Record<string, unknown>;
     if (typeof record.message === 'string' && record.message.trim()) return record.message;
@@ -71,10 +73,10 @@ function extractMessage(error: unknown): string {
     try {
       return JSON.stringify(error);
     } catch {
-      return '未知错误';
+      return fallback;
     }
   }
-  return error == null ? '未知错误' : String(error);
+  return error == null ? fallback : String(error);
 }
 
 export function normalizeCommandError(command: string, error: unknown): LauncherCommandError {
@@ -107,7 +109,10 @@ export async function invokeCommand<T>(
           new LauncherCommandError(
             command,
             'timeout',
-            `后端命令 ${command} 超过 ${Math.ceil(timeoutMs / 1000)} 秒未响应，请重试`,
+            translate('errors.commandTimeout', {
+              command,
+              seconds: Math.ceil(timeoutMs / 1000),
+            }),
             { timeoutMs },
           ),
         );
@@ -118,7 +123,7 @@ export async function invokeCommand<T>(
   } catch (error) {
     const normalized = normalizeCommandError(command, error);
     if (!normalized.cancelled) {
-      logWarn(`命令调用失败: ${command}`, normalized, 'Invoke');
+      logWarn(translate('errors.commandFailed', { command }), normalized, 'Invoke');
     }
     throw normalized;
   } finally {

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useSettingsStore } from '../../stores/settings';
 import { configApi } from '../../services';
 import { logError } from '../../utils/logger';
 
 const settingsStore = useSettingsStore();
+const { t } = useI18n();
 const memoryWarning = ref('');
 
 const autoMemoryEnabled = computed(() => settingsStore.autoMemoryEnabled);
@@ -28,8 +30,8 @@ const projectedColor = computed(() => {
 });
 const projectedWarning = computed(() => {
   if (settingsStore.totalMemoryMB <= 0) return '';
-  if (projectedPercent.value > 100) return '预计占用会超过物理内存，可能导致系统卡顿或游戏崩溃';
-  if (projectedPercent.value >= 90) return '启动后预计占用接近系统上限，建议降低分配或关闭其他程序';
+  if (projectedPercent.value > 100) return t('settings.memory.warningOverLimit');
+  if (projectedPercent.value >= 90) return t('settings.memory.warningNearLimit');
   return '';
 });
 
@@ -100,23 +102,23 @@ onUnmounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-chart-donut</v-icon>
-          <span class="text-title-medium">内存概览</span>
+          <span class="text-title-medium">{{ t('settings.memory.overviewTitle') }}</span>
         </div>
 
         <v-row align="center">
           <v-col cols="12" sm="4">
             <div class="memory-stat text-center pa-4">
               <div class="text-headline-medium font-weight-bold text-primary num-mono">{{ totalMemoryGB }}</div>
-              <div class="text-body-medium text-on-surface-variant">系统总内存 (GB)</div>
+              <div class="text-body-medium text-on-surface-variant">{{ t('settings.memory.systemTotal') }}</div>
             </div>
           </v-col>
           <v-col cols="12" sm="4">
             <div class="memory-stat text-center pa-4">
               <div class="text-headline-medium font-weight-bold text-secondary num-mono">
-                {{ autoMemoryEnabled ? '自动' : maxMemoryGB }}
+                {{ autoMemoryEnabled ? t('settings.memory.autoLabel') : maxMemoryGB }}
               </div>
               <div class="text-body-medium text-on-surface-variant">
-                {{ autoMemoryEnabled ? '启动时按实例计算' : '分配给游戏 (GB)' }}
+                {{ autoMemoryEnabled ? t('settings.memory.autoComputed') : t('settings.memory.allocated') }}
               </div>
             </div>
           </v-col>
@@ -126,7 +128,7 @@ onUnmounted(() => {
                 {{ autoMemoryEnabled ? '—' : memoryPercentage + '%' }}
               </div>
               <div class="text-body-medium text-on-surface-variant">
-                {{ autoMemoryEnabled ? '启动时计算' : '占用比例' }}
+                {{ autoMemoryEnabled ? t('settings.memory.autoComputedShort') : t('settings.memory.usageRatio') }}
               </div>
             </div>
           </v-col>
@@ -139,11 +141,11 @@ onUnmounted(() => {
         <div class="d-flex align-center justify-space-between mb-1">
           <div class="d-flex align-center">
             <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-auto-fix</v-icon>
-            <span class="text-title-medium">自动内存管理</span>
+            <span class="text-title-medium">{{ t('settings.memory.autoTitle') }}</span>
           </div>
           <v-switch
             :model-value="autoMemoryEnabled"
-            aria-label="自动内存管理"
+            :aria-label="t('settings.memory.autoTitle')"
             hide-details
             inset
             density="compact"
@@ -152,15 +154,14 @@ onUnmounted(() => {
           />
         </div>
         <p class="text-body-medium text-on-surface-variant mb-0">
-          默认目标 4 GB，按实例规模抬高；最多使用当前可用内存的 75%，范围 2–16 GB
+          {{ t('settings.memory.autoHint') }}
         </p>
 
         <v-expand-transition>
           <div v-if="autoMemoryEnabled" class="mt-4">
             <v-alert color="primary-container" density="compact">
               <span class="text-on-primary-container text-body-medium">
-                启动时动态计算 -Xmx/-Xms：默认 4 GB，最少 2 GB、最多 16 GB，上限为当前可用内存的 75%；32 位 Java 硬上限
-                1.5 GB。每张实例卡片会显示预计分配值，手动设置值关闭自动后继续使用。
+                {{ t('settings.memory.autoDetail') }}
               </span>
             </v-alert>
           </div>
@@ -172,27 +173,41 @@ onUnmounted(() => {
       <v-card-text class="pa-4">
         <div class="d-flex align-center mb-4">
           <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-tune-vertical</v-icon>
-          <span class="text-title-medium">手动设置</span>
+          <span class="text-title-medium">{{ t('settings.memory.manualTitle') }}</span>
         </div>
 
         <div class="memory-usage mb-5">
           <div class="d-flex justify-space-between align-center text-body-small mb-1">
-            <span class="text-on-surface-variant">系统当前占用</span>
+            <span class="text-on-surface-variant">{{ t('settings.memory.systemUsage') }}</span>
             <span class="num-mono">
-              {{ usedMemoryGB }} / {{ totalMemoryGB }} GB（{{ Math.round(settingsStore.memoryUsagePercent) }}%）
+              {{
+                t('settings.memory.usageOf', {
+                  used: usedMemoryGB,
+                  total: totalMemoryGB,
+                  percent: Math.round(settingsStore.memoryUsagePercent),
+                })
+              }}
             </span>
           </div>
           <div class="d-flex justify-space-between align-center text-body-small mb-1">
-            <span class="text-on-surface-variant">当前可用内存</span>
+            <span class="text-on-surface-variant">{{ t('settings.memory.availableMemory') }}</span>
             <span class="num-mono">{{ availableMemoryGB }} GB</span>
           </div>
           <div class="d-flex justify-space-between align-center text-body-small mb-1">
-            <span class="text-on-surface-variant">游戏预计占用</span>
+            <span class="text-on-surface-variant">{{ t('settings.memory.gameUsage') }}</span>
             <span class="num-mono">{{ maxMemoryGB }} GB</span>
           </div>
           <div class="d-flex justify-space-between align-center text-body-small">
-            <span class="text-on-surface-variant">启动后预计系统占用</span>
-            <span class="num-mono">{{ projectedUsedGB }} / {{ totalMemoryGB }} GB（{{ projectedPercent }}%）</span>
+            <span class="text-on-surface-variant">{{ t('settings.memory.projectedUsage') }}</span>
+            <span class="num-mono">
+              {{
+                t('settings.memory.usageOf', {
+                  used: projectedUsedGB,
+                  total: totalMemoryGB,
+                  percent: projectedPercent,
+                })
+              }}
+            </span>
           </div>
           <v-progress-linear
             :model-value="projectedBarPercent"
@@ -206,7 +221,7 @@ onUnmounted(() => {
         </div>
 
         <div class="mb-5">
-          <div class="text-body-medium text-on-surface-variant mb-3">快捷预设</div>
+          <div class="text-body-medium text-on-surface-variant mb-3">{{ t('settings.memory.presetsTitle') }}</div>
           <div class="d-flex flex-wrap ga-2">
             <v-chip
               v-for="preset in [2048, 4096, 6144, 8192]"
@@ -223,12 +238,12 @@ onUnmounted(() => {
 
         <div class="mb-4">
           <div class="d-flex align-center justify-space-between mb-2">
-            <span class="text-body-medium">自定义内存</span>
+            <span class="text-body-medium">{{ t('settings.memory.customMemory') }}</span>
             <v-text-field
               v-model.number="settingsStore.maxMemory"
               type="number"
               density="compact"
-              aria-label="自定义内存大小（MB）"
+              :aria-label="t('settings.memory.customMemoryAria')"
               suffix="MB"
               hide-details
               hide-spin-buttons
@@ -269,13 +284,15 @@ onUnmounted(() => {
         <v-icon size="20" color="on-secondary-container">mdi-information-outline</v-icon>
       </template>
       <template #title>
-        <span class="text-body-medium font-weight-medium text-on-secondary-container">内存分配建议</span>
+        <span class="text-body-medium font-weight-medium text-on-secondary-container">
+          {{ t('settings.memory.tipsTitle') }}
+        </span>
       </template>
       <ul class="text-body-small pl-4 mb-0 mt-1 text-on-secondary-container">
-        <li>原版游戏: 2-4 GB</li>
-        <li>轻量整合包: 4-6 GB</li>
-        <li>大型整合包: 6-8 GB</li>
-        <li>自动模式默认按 4 GB 目标分配，大型整合包会按需求抬高；最多使用当前可用内存的 75%（上限 16 GB）</li>
+        <li>{{ t('settings.memory.tip1') }}</li>
+        <li>{{ t('settings.memory.tip2') }}</li>
+        <li>{{ t('settings.memory.tip3') }}</li>
+        <li>{{ t('settings.memory.tip4') }}</li>
       </ul>
     </v-alert>
   </div>

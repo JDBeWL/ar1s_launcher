@@ -1,0 +1,35 @@
+/** Download page */
+export default {
+  download: {
+    searchLabel: 'Search version',
+    typeRelease: 'Release',
+    typeSnapshot: 'Snapshot',
+    typeAll: 'All',
+    sortLabel: 'Sort by',
+    sortNewest: 'Newest first',
+    sortOldest: 'Oldest first',
+    reloadList: 'Reload version list',
+    unknownReleaseDate: 'Unknown release date',
+    fetchFailed: 'Failed to load the version list',
+    fetchFailedHint: 'Check your network connection and retry',
+    reload: 'Reload',
+    emptyTitle: 'No matching versions',
+    emptyHint: 'Try adjusting the search filters',
+    installed: 'Installed',
+    download: 'Download',
+    shownCount: 'Showing {shown} of {total} versions',
+    totalCount: '{total} version | {total} versions',
+  },
+
+  downloadStatus: {
+    title: 'Download failed',
+    unknownError: 'An unknown error occurred during the download',
+    cancelDownload: 'Cancel download',
+    hideNotification: 'Hide notification',
+    completed: 'Download complete',
+    failed: 'Download failed',
+    cancelled: 'Download cancelled',
+    remaining: 'Remaining',
+    downloadingPercent: 'Downloading {percent}%',
+  },
+};

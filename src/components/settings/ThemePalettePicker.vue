@@ -6,18 +6,21 @@
  * 深色模式的浅色调主色偏粉白，十颗摆一起分不出色相。
  */
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { buildTheme } from '../../theme/md3';
 import { THEME_PRESETS } from '../../theme/presets';
 
 const props = defineProps<{ modelValue: string }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 
+const { t } = useI18n();
+
 const swatches = computed(() =>
   THEME_PRESETS.map((preset) => {
     const colors = buildTheme(preset.seed).light;
     return {
       id: preset.id,
-      label: preset.label,
+      label: t(`theme.presets.${preset.id}`),
       primary: colors.primary,
       onPrimary: colors['on-primary'],
     };
@@ -26,7 +29,7 @@ const swatches = computed(() =>
 </script>
 
 <template>
-  <div class="palette-grid" role="radiogroup" aria-label="主题色方案">
+  <div class="palette-grid" role="radiogroup" :aria-label="t('theme.paletteAria')">
     <button
       v-for="swatch in swatches"
       :key="swatch.id"
