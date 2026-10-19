@@ -150,10 +150,10 @@ pub struct GameConfig {
     pub ui_language: Option<String>,
     #[serde(default)]
     pub auth_type: AuthType,
-    /// Microsoft access_token (仅后端使用)
+    /// Microsoft access_token，与其余设置同存 ar1s.json（落盘前会收紧文件权限）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ms_access_token: Option<String>,
-    /// Microsoft refresh_token (仅后端使用)
+    /// Microsoft refresh_token，与其余设置同存 ar1s.json
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ms_refresh_token: Option<String>,
     /// 正版 token 过期时间 (Unix 时间戳秒)

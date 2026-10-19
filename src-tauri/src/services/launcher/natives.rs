@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 pub fn extract_natives(
     version_json: &serde_json::Value,
+    game_dir: &Path,
     version_dir: &Path,
     libraries_base_dir: &Path,
     current_os: &str,
@@ -20,11 +21,12 @@ pub fn extract_natives(
         format!("Natives目录: {}", natives_dir.display()),
     );
 
-    // 同一实例多开时只能有一个进程在解压；否则第二个进程会读到写了一半的文件
-    let _natives_lock = crate::utils::file_lock::acquire(
-        &version_dir.join(".natives.lock"),
-        std::time::Duration::from_secs(30),
-    )?;
+    // 同一实例多开时只能有一个进程在解压，否则第二个进程会读到写了一半的文件。
+    // 锁不能放在实例目录里：Windows 上目录内有打开的文件就重命名不了，
+    // 会挡住删除/重命名实例，所以统一放到游戏目录的锁目录
+    let lock_path = crate::services::instance::lock_dir(game_dir).join("natives.lock");
+    let _natives_lock =
+        crate::utils::file_lock::acquire(&lock_path, std::time::Duration::from_secs(30))?;
 
     if natives_dir.exists() {
         if fs::read_dir(&natives_dir)

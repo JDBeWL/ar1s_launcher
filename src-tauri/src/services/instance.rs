@@ -37,15 +37,26 @@ fn get_dirs() -> Result<(PathBuf, PathBuf), LauncherError> {
     Ok((game_dir, versions_dir))
 }
 
+/// 所有跨进程锁都放在游戏目录下的 `.ar1s/`，不再散落在 `.download_state/` 和版本目录里
+pub(crate) fn lock_dir(game_dir: &Path) -> PathBuf {
+    game_dir.join(".ar1s")
+}
+
 /// 实例目录的创建/删除/重命名/整合包安装跨进程串行；嵌套下载另用 download.lock
 pub(crate) async fn acquire_instance_lock(
     game_dir: &Path,
 ) -> Result<crate::utils::file_lock::FileLock, LauncherError> {
     crate::utils::file_lock::acquire_async(
-        &game_dir.join(".download_state/instances.lock"),
+        &lock_dir(game_dir).join("instances.lock"),
         INSTANCE_LOCK_TIMEOUT,
     )
     .await
+}
+
+/// 运行锁不能放进实例目录：Windows 上目录里有打开的文件就重命名不了，
+/// 而删除/重命名实例必须先拿到这把锁，会自己把自己锁死
+fn run_lock_path(game_dir: &Path, instance_name: &str) -> PathBuf {
+    lock_dir(game_dir).join(format!("run-{}.lock", instance_name))
 }
 
 /// 游戏进程运行期间由监控线程持有；共享锁允许同一实例同时启动多次
@@ -54,7 +65,7 @@ pub(crate) async fn acquire_run_shared_lock(
     instance_name: &str,
 ) -> Result<crate::utils::file_lock::FileLock, LauncherError> {
     crate::utils::file_lock::acquire_shared_async(
-        &game_dir.join(format!(".download_state/run-{}.lock", instance_name)),
+        &run_lock_path(game_dir, instance_name),
         INSTANCE_LOCK_TIMEOUT,
     )
     .await
@@ -66,10 +77,85 @@ pub(crate) async fn acquire_run_lock(
     instance_name: &str,
 ) -> Result<crate::utils::file_lock::FileLock, LauncherError> {
     crate::utils::file_lock::acquire_async(
-        &game_dir.join(format!(".download_state/run-{}.lock", instance_name)),
+        &run_lock_path(game_dir, instance_name),
         INSTANCE_LOCK_TIMEOUT,
     )
     .await
+}
+
+/// 锁文件由内核在最后一个持有者释放时删除，正常情况下不会残留。
+/// 这里只兜底清理旧版本或异常中断留下的空壳：抢到独占锁 = 确实没人持有，
+/// 随即释放让内核删掉；抢不到说明实例可能真在运行，必须原样保留。
+///
+/// 不能直接 `remove_file`：共享锁允许 FILE_SHARE_DELETE，直接删会把正在运行的游戏
+/// 的锁文件删掉，新来的排他锁就会误判"没有实例在跑"
+pub fn prune_stale_run_locks(game_dir: &Path, versions_dir: &Path) {
+    let Ok(entries) = fs::read_dir(lock_dir(game_dir)) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(instance) = name
+            .strip_prefix("run-")
+            .and_then(|rest| rest.strip_suffix(".lock"))
+        else {
+            continue;
+        };
+        // 实例目录还在就说明可能真在运行，交给持有者自己清理
+        if versions_dir.join(instance).is_dir() {
+            continue;
+        }
+        if crate::utils::file_lock::remove_if_unused(&entry.path()) {
+            info!("清理残留的运行锁: {}", name);
+        }
+    }
+}
+
+/// 旧版本把下载状态和锁放在 `.download_state/`、natives 锁放在版本目录里。
+/// 状态文件关系到断点续传，必须搬过来；旧锁文件直接删（进程退出后本来就没有意义）
+pub fn migrate_legacy_state(game_dir: &Path, versions_dir: &Path) {
+    let lock_root = lock_dir(game_dir);
+    let legacy_state = game_dir.join(".download_state");
+
+    if legacy_state.is_dir() {
+        let new_state = lock_root.join("download_state");
+        if let Err(e) = fs::create_dir_all(&new_state) {
+            warn!("创建下载状态目录失败: {}", e);
+        } else if let Ok(entries) = fs::read_dir(&legacy_state) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name();
+                // 只搬续传状态，旧锁文件留着没有用
+                let is_lock = path.extension().is_some_and(|ext| ext == "lock");
+                let target = new_state.join(&name);
+                if !is_lock && path.is_file() && !target.exists() {
+                    let _ = fs::rename(&path, &target);
+                }
+            }
+        }
+        // 只剩空目录或旧锁文件时整个删掉
+        let _ = fs::remove_dir_all(&legacy_state);
+    }
+
+    // 每个实例目录下的 .natives.lock 也搬到统一锁目录
+    if let Ok(entries) = fs::read_dir(versions_dir) {
+        for entry in entries.flatten() {
+            let stale = entry.path().join(".natives.lock");
+            if stale.exists() {
+                let _ = fs::remove_file(&stale);
+            }
+        }
+    }
+}
+
+/// 已经启动过一次就不再重复扫描；迁移只在启动时做一次
+pub fn migrate_legacy_state_once(game_dir: &Path, versions_dir: &Path) {
+    static MIGRATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if MIGRATED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    migrate_legacy_state(game_dir, versions_dir);
 }
 
 pub fn check_instance_name_available(name: &str) -> InstanceNameValidation {
@@ -271,9 +357,12 @@ pub async fn create_instance(
 }
 
 pub async fn get_instances() -> Result<Vec<InstanceInfo>, LauncherError> {
-    let (_, versions_dir) = get_dirs()?;
+    let (game_dir, versions_dir) = get_dirs()?;
     // 关闭隔离时所有实例共用根目录的 mods，计数要按共享目录来
     let isolated = config::is_version_isolated();
+
+    // 顺手清掉已删除实例留下的运行锁，避免锁文件越攒越多
+    prune_stale_run_locks(&game_dir, &versions_dir);
 
     // 目录遍历加 JSON 解析耗时，放阻塞线程池执行
     let instances =
@@ -991,7 +1080,7 @@ pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError>
         )));
     }
 
-    let _run_lock = acquire_run_lock(&game_dir, &instance_name)
+    let run_lock = acquire_run_lock(&game_dir, &instance_name)
         .await
         .map_err(|e| match e {
             LauncherError::Busy(_) => LauncherError::Custom(format!(
@@ -1005,6 +1094,7 @@ pub async fn delete_instance(instance_name: String) -> Result<(), LauncherError>
         .map_err(|e| LauncherError::Custom(format!("删除实例失败: {}", e)))?;
 
     let _ = config::remove_instance_last_played(&instance_name);
+    drop(run_lock);
 
     info!("实例 {} 已删除", instance_name);
     Ok(())
@@ -1031,7 +1121,7 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
         )));
     }
 
-    let _run_lock = acquire_run_lock(&game_dir, &old_name)
+    let run_lock = acquire_run_lock(&game_dir, &old_name)
         .await
         .map_err(|e| match e {
             LauncherError::Busy(_) => LauncherError::Custom(format!(
@@ -1079,6 +1169,9 @@ pub async fn rename_instance(old_name: String, new_name: String) -> Result<(), L
         let meta = serde_json::json!({ "minecraft": mc });
         fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
     }
+
+    // 运行锁固定一个文件，改名后不需要再清理旧名字的锁
+    drop(run_lock);
 
     Ok(())
 }
@@ -1296,8 +1389,98 @@ fn merge_forge_instance_json(
 
 #[cfg(test)]
 mod tests {
-    use super::{get_instances_sync, parse_mods_toml_name};
+    use super::{get_instances_sync, lock_dir, parse_mods_toml_name, prune_stale_run_locks};
     use std::fs;
+
+    /// 锁必须放在实例目录之外，否则 Windows 上目录内有打开的文件就无法重命名/删除实例
+    #[test]
+    fn test_run_locks_live_outside_instance_dirs() {
+        let game = tempfile::TempDir::new().unwrap();
+        let versions = game.path().join("versions");
+        let instance = versions.join("1.20.1");
+        fs::create_dir_all(&instance).unwrap();
+
+        let lock_root = lock_dir(game.path());
+        assert_eq!(lock_root, game.path().join(".ar1s"));
+        assert!(!lock_root.starts_with(&versions));
+        assert!(!instance.join(".natives.lock").exists());
+    }
+
+    #[test]
+    fn test_prune_removes_run_locks_of_deleted_instances_only() {
+        let game = tempfile::TempDir::new().unwrap();
+        let versions = game.path().join("versions");
+        fs::create_dir_all(versions.join("still-here")).unwrap();
+
+        let lock_root = lock_dir(game.path());
+        fs::create_dir_all(&lock_root).unwrap();
+        fs::write(lock_root.join("run-still-here.lock"), b"").unwrap();
+        fs::write(lock_root.join("run-gone.lock"), b"").unwrap();
+        // 别的锁不受影响
+        fs::write(lock_root.join("instances.lock"), b"").unwrap();
+
+        prune_stale_run_locks(game.path(), &versions);
+
+        assert!(lock_root.join("run-still-here.lock").exists());
+        assert!(!lock_root.join("run-gone.lock").exists());
+        assert!(lock_root.join("instances.lock").exists());
+    }
+
+    /// 有游戏进程持有共享锁时，清理逻辑绝不能把它的锁文件删掉
+    #[test]
+    fn test_prune_never_removes_a_held_run_lock() {
+        let game = tempfile::TempDir::new().unwrap();
+        let versions = game.path().join("versions");
+        fs::create_dir_all(&versions).unwrap();
+        let lock_root = lock_dir(game.path());
+        fs::create_dir_all(&lock_root).unwrap();
+
+        let path = lock_root.join("run-orphan.lock");
+        let held =
+            crate::utils::file_lock::acquire_shared(&path, std::time::Duration::from_millis(50))
+                .expect("持有共享锁");
+
+        // 实例目录不存在，但锁仍被持有：不能删
+        prune_stale_run_locks(game.path(), &versions);
+        assert!(path.exists(), "正在运行的实例的锁不能被清掉");
+
+        drop(held);
+        assert!(!path.exists(), "持有者释放后文件自动消失");
+    }
+
+    #[test]
+    fn test_prune_is_a_noop_without_lock_dir() {
+        let game = tempfile::TempDir::new().unwrap();
+        let versions = game.path().join("versions");
+        fs::create_dir_all(&versions).unwrap();
+
+        // 目录还不存在时不能 panic
+        prune_stale_run_locks(game.path(), &versions);
+    }
+
+    #[test]
+    fn test_migrate_moves_resume_state_and_drops_old_locks() {
+        let game = tempfile::TempDir::new().unwrap();
+        let versions = game.path().join("versions");
+        let instance = versions.join("1.20.1");
+        fs::create_dir_all(&instance).unwrap();
+        fs::write(instance.join(".natives.lock"), b"").unwrap();
+
+        let legacy = game.path().join(".download_state");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("1.20.1.json"), r#"{"completed_files":{}}"#).unwrap();
+        fs::write(legacy.join("download.lock"), b"").unwrap();
+        fs::write(legacy.join("run-1.20.1.lock"), b"").unwrap();
+
+        super::migrate_legacy_state(game.path(), &versions);
+
+        // 续传状态要搬过去，否则已经下好的文件会重下
+        let migrated = lock_dir(game.path()).join("download_state/1.20.1.json");
+        assert!(migrated.exists());
+        // 旧目录和旧锁文件都不该留下
+        assert!(!legacy.exists());
+        assert!(!instance.join(".natives.lock").exists());
+    }
 
     /// 关闭隔离后，实例卡片上的模组数必须来自共享根目录，
     /// 而不是实例目录里那些根本不会被加载的旧文件

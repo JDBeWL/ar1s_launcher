@@ -219,6 +219,7 @@ pub async fn launch_minecraft(
 
     let natives_dir = natives::extract_natives(
         &version_json,
+        &game_dir,
         &version_dir,
         &libraries_base_dir,
         current_os,

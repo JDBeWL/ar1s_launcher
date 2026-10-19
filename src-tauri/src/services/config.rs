@@ -1,8 +1,13 @@
 //! 配置文件读写模块
 //!
 //! 绿色版布局：配置固定放在 exe 同级目录。多实例下所有读改写走跨进程文件锁，
-//! 读取用 mtime/长度做缓存失效；写入走临时文件 rename，解析失败时备份 .bak 再重建默认配置
+//! 读取用 mtime/长度做缓存失效；写入走临时文件 rename，解析失败时备份 .bak 再重建默认配置。
+//!
+//! 正版 token 与其余设置一起存进 ar1s.json，不再单开凭据文件；因为文件里可能有密钥，
+//! 落盘前会收紧权限（Unix 0600、Windows 收紧 DACL）。旧版本的 credentials.json
+//! 会在第一次读取时并入配置，写回成功后删除
 
+use serde::Deserialize;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,7 +17,6 @@ use tauri::Emitter;
 
 use crate::errors::LauncherError;
 use crate::models::{GameConfig, GameDirInfo};
-use crate::services::credentials;
 use crate::services::memory::get_memory_warning_message;
 use crate::utils::file_lock;
 
@@ -33,15 +37,9 @@ struct FileStamp {
     len: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CacheStamp {
-    config: FileStamp,
-    credentials: FileStamp,
-}
-
 struct CachedConfig {
     config: Arc<GameConfig>,
-    stamp: CacheStamp,
+    stamp: FileStamp,
 }
 
 fn exe_dir_or_dot() -> PathBuf {
@@ -117,11 +115,8 @@ fn file_stamp(path: &Path) -> FileStamp {
     }
 }
 
-fn current_cache_stamp() -> CacheStamp {
-    CacheStamp {
-        config: file_stamp(&storage().join("ar1s.json")),
-        credentials: file_stamp(&credentials_path()),
-    }
+fn current_cache_stamp() -> FileStamp {
+    file_stamp(&config_path())
 }
 
 fn cache_config(config: Arc<GameConfig>) {
@@ -133,6 +128,7 @@ fn cache_config(config: Arc<GameConfig>) {
 
 pub fn preload_config() -> Result<(), LauncherError> {
     log::info!("预加载配置文件...");
+    cleanup_legacy_lock_files();
     let _ = load_config()?;
     log::info!("配置文件预加载完成");
     Ok(())
@@ -199,30 +195,63 @@ struct LoadedConfig {
     needs_save: bool,
 }
 
-fn hydrate_tokens(config: &mut GameConfig) {
-    match credentials::load() {
-        // 凭据文件比配置文件新：刷新 token 轮换过以后不能再用旧值覆盖
-        Ok(Some(stored)) => {
-            if stored.access_token.is_some() {
-                config.ms_access_token = stored.access_token;
-            }
-            if stored.refresh_token.is_some() {
-                config.ms_refresh_token = stored.refresh_token;
-            }
-            if stored.expires_at.is_some() {
-                config.ms_expires_at = stored.expires_at;
-            }
-        }
-        Ok(None) => {}
-        Err(e) => log::warn!("读取凭据文件失败，继续使用配置文件: {}", e),
+/// 旧版本把 token 存在单独的 credentials.json 里；这里只做一次迁移读取
+#[derive(Debug, Default, Deserialize)]
+struct LegacyCredentials {
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    expires_at: Option<i64>,
+}
+
+impl LegacyCredentials {
+    fn is_empty(&self) -> bool {
+        self.access_token.is_none() && self.refresh_token.is_none()
     }
 }
 
+fn load_legacy_credentials(path: &Path) -> Option<LegacyCredentials> {
+    let content = fs::read_to_string(path).ok()?;
+    match serde_json::from_str::<LegacyCredentials>(&content) {
+        Ok(credentials) => Some(credentials),
+        Err(e) => {
+            // 损坏就丢掉，不能让一个旧文件卡住启动；里面顶多是已经失效的 token
+            log::warn!("旧的凭据文件无法解析，已忽略: {}", e);
+            None
+        }
+    }
+}
+
+/// 把旧凭据文件里的 token 并进配置；返回是否需要写回（写回成功后旧文件会被删除）
+fn merge_legacy_credentials_from(path: &Path, config: &mut GameConfig) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let Some(legacy) = load_legacy_credentials(path) else {
+        // 解析不了就没法合并，但仍要写回一次把坏文件清掉
+        return true;
+    };
+    // 配置文件里已经有 token 就以配置为准，避免用更旧的值覆盖
+    if !legacy.is_empty() && !has_tokens(config) {
+        config.ms_access_token = legacy.access_token;
+        config.ms_refresh_token = legacy.refresh_token;
+        config.ms_expires_at = legacy.expires_at;
+        log::info!("已将旧的凭据文件合并进 ar1s.json");
+    }
+    true
+}
+
 fn read_config() -> Result<LoadedConfig, LauncherError> {
-    let config_path = get_config_path()?;
+    read_config_from(storage())
+}
+
+fn read_config_from(root: &Path) -> Result<LoadedConfig, LauncherError> {
+    let config_path = root.join("ar1s.json");
     if !config_path.exists() {
         let mut config = create_default_config(true)?;
-        hydrate_tokens(&mut config);
+        merge_legacy_credentials_from(&root.join("credentials.json"), &mut config);
         return Ok(LoadedConfig {
             config,
             needs_save: true,
@@ -233,12 +262,12 @@ fn read_config() -> Result<LoadedConfig, LauncherError> {
     // 配置损坏时备份为 .bak 并重建默认配置，不向上报错
     match serde_json::from_str::<GameConfig>(&content) {
         Ok(mut config) => {
-            // 旧版本会把 token 留在 ar1s.json 里；写回时由 config_for_disk 清掉
-            let had_plaintext_tokens = has_tokens(&config);
-            hydrate_tokens(&mut config);
+            // 旧版本把 token 放在单独的凭据文件里，读进来后由写回逻辑并进 ar1s.json
+            let migrated =
+                merge_legacy_credentials_from(&root.join("credentials.json"), &mut config);
             Ok(LoadedConfig {
                 config,
-                needs_save: had_plaintext_tokens,
+                needs_save: migrated,
             })
         }
         Err(_) => {
@@ -246,7 +275,7 @@ fn read_config() -> Result<LoadedConfig, LauncherError> {
             let _ = fs::copy(&config_path, &backup_path);
             log::warn!("配置文件损坏，已备份并重建默认配置");
             let mut config = create_default_config(false)?;
-            hydrate_tokens(&mut config);
+            merge_legacy_credentials_from(&root.join("credentials.json"), &mut config);
             Ok(LoadedConfig {
                 config,
                 needs_save: true,
@@ -327,16 +356,36 @@ fn create_default_config(is_first_run: bool) -> Result<GameConfig, LauncherError
 
 use crate::services::java::auto_detect_java;
 
-/// 全量保存配置快照；没有 token 时不会清空 credentials.json。
-/// 登录/登出等 token 变更走 update_config
+/// 全量保存配置快照；登录/登出等 token 变更也走 update_config
 pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
     let _guard = lock_config()?;
     let _file_lock = file_lock::acquire(&config_lock_path(), CONFIG_LOCK_TIMEOUT)?;
-    // 没有 token 不代表登出，别清掉另一实例刚写入的 credentials.json
-    let write_credentials = has_tokens(config);
-    save_config_internal(config, write_credentials)?;
-    cache_config(Arc::new(config.clone()));
+
+    // token 现在和设置同处一个文件，全量写回会把调用方手里那份可能已经过期的
+    // token 盖回去。锁内重读一次，磁盘上已经有 token 就以磁盘为准：
+    // 登出这类真正要改 token 的操作走 update_config，不经过这里
+    let mut config = config.clone();
+    if let Some(current) = read_tokens_from_disk()
+        && has_tokens(&current)
+    {
+        config.ms_access_token = current.ms_access_token;
+        config.ms_refresh_token = current.ms_refresh_token;
+        config.ms_expires_at = current.ms_expires_at;
+    }
+
+    save_config_internal(&config)?;
+    cache_config(Arc::new(config));
     Ok(())
+}
+
+/// 只取磁盘上已有的 token；文件不存在或损坏时返回 None，不触发默认配置的构造
+fn read_tokens_from_disk() -> Option<GameConfig> {
+    read_tokens_from_disk_at(storage())
+}
+
+fn read_tokens_from_disk_at(root: &Path) -> Option<GameConfig> {
+    let content = fs::read_to_string(root.join("ar1s.json")).ok()?;
+    serde_json::from_str::<GameConfig>(&content).ok()
 }
 
 /// 所有读改写都走这里：跨进程锁 + 重读磁盘，避免两个实例用旧快照互相覆盖
@@ -349,52 +398,22 @@ where
 
     let loaded = read_config()?;
     let mut config = loaded.config;
-    let before = TokenSnapshot::from(&config);
     let result = update(&mut config)?;
-    let after = TokenSnapshot::from(&config);
 
-    // 只有 token 改动（或凭据文件缺失）才碰 credentials.json；
-    // 否则另一个实例刚轮换的 token 会被本进程的旧快照覆盖
-    let credentials_missing = has_tokens(&config) && matches!(credentials::load(), Ok(None));
-    let write_credentials = before != after || credentials_missing;
-
-    save_config_internal(&config, write_credentials)?;
+    save_config_internal(&config)?;
     cache_config(Arc::new(config));
     Ok(result)
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct TokenSnapshot {
-    access_token: Option<String>,
-    refresh_token: Option<String>,
-    expires_at: Option<i64>,
-}
-
-impl From<&GameConfig> for TokenSnapshot {
-    fn from(config: &GameConfig) -> Self {
-        Self {
-            access_token: config.ms_access_token.clone(),
-            refresh_token: config.ms_refresh_token.clone(),
-            expires_at: config.ms_expires_at,
-        }
-    }
 }
 
 fn has_tokens(config: &GameConfig) -> bool {
     config.ms_access_token.is_some() || config.ms_refresh_token.is_some()
 }
 
-/// ar1s.json 永远不落 access/refresh token；密钥只在 credentials.json
-fn config_for_disk(config: &GameConfig) -> GameConfig {
-    let mut disk_config = config.clone();
-    disk_config.ms_access_token = None;
-    disk_config.ms_refresh_token = None;
-    disk_config
-}
-
 /// 诊断包里的配置快照：token、账户标识与代理 URL 都不能带出去
 pub(crate) fn config_for_diagnostics(config: &GameConfig) -> GameConfig {
-    let mut snapshot = config_for_disk(config);
+    let mut snapshot = config.clone();
+    snapshot.ms_access_token = None;
+    snapshot.ms_refresh_token = None;
     snapshot.username = None;
     snapshot.uuid = None;
     snapshot.skin_url = None;
@@ -406,31 +425,40 @@ pub(crate) fn config_for_diagnostics(config: &GameConfig) -> GameConfig {
     snapshot
 }
 
-fn save_config_internal(config: &GameConfig, write_credentials: bool) -> Result<(), LauncherError> {
-    if write_credentials {
-        if has_tokens(config) {
-            credentials::save(&credentials::Credentials {
-                access_token: config.ms_access_token.clone(),
-                refresh_token: config.ms_refresh_token.clone(),
-                expires_at: config.ms_expires_at,
-            })?;
-        } else {
-            credentials::clear()?;
-        }
-    }
+fn save_config_internal(config: &GameConfig) -> Result<(), LauncherError> {
+    save_config_to(storage(), config)
+}
 
-    let config_path = get_config_path()?;
+/// 写配置并收紧权限；写完顺手删掉已经合并过的旧凭据文件
+fn save_config_to(root: &Path, config: &GameConfig) -> Result<(), LauncherError> {
+    let config_path = root.join("ar1s.json");
     let dir = config_path
         .parent()
         .ok_or_else(|| LauncherError::Custom("配置文件没有父目录".to_string()))?;
     fs::create_dir_all(dir)?;
-    let json = serde_json::to_string_pretty(&config_for_disk(config))?;
+    let json = serde_json::to_string_pretty(config)?;
 
     // 直接覆写会在崩溃时留下截断的 ar1s.json，先写临时文件再 rename
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     tmp.write_all(json.as_bytes())?;
     tmp.flush()?;
+
+    // 文件里有 token，权限在 rename 之前设好，避免落盘瞬间是可读的
+    if let Err(e) = crate::utils::secure_file::set_owner_only(tmp.path()) {
+        log::warn!("设置配置文件权限失败: {}", e);
+    }
+
     tmp.persist(&config_path).map_err(|e| e.error)?;
+    crate::utils::secure_file::restrict_to_current_user(&config_path);
+
+    // 旧的凭据文件已经并进配置，写完再删，失败也不影响本次启动
+    let legacy = root.join("credentials.json");
+    if legacy.exists() {
+        match fs::remove_file(&legacy) {
+            Ok(()) => log::info!("旧的凭据文件已合并并删除"),
+            Err(e) => log::warn!("删除旧的凭据文件失败: {}", e),
+        }
+    }
     Ok(())
 }
 
@@ -442,20 +470,36 @@ static EXE_DIR: std::sync::LazyLock<Result<PathBuf, String>> = std::sync::LazyLo
         .ok_or_else(|| "无法获取可执行文件目录".to_string())
 });
 
-fn get_config_path() -> Result<PathBuf, LauncherError> {
-    Ok(storage().join("ar1s.json"))
+/// 兼容旧版本留下的函数名；实际路径就是 exe 同级的 ar1s.json
+fn config_path() -> PathBuf {
+    storage().join("ar1s.json")
 }
 
-pub(crate) fn credentials_path() -> PathBuf {
-    storage().join("credentials.json")
-}
-
+/// 配置写入锁：临界区只有一次读改写，等不久
 fn config_lock_path() -> PathBuf {
     storage().join(".ar1s-config.lock")
 }
 
+/// token 刷新锁要跨网络请求持有，不能和配置写锁共用同一个文件：
+/// 刷新流程内部还会调用 update_config，同进程二次加锁会自己把自己挡住
+fn auth_lock_path() -> PathBuf {
+    storage().join(".ar1s-auth.lock")
+}
+
+/// 启动时清掉旧版本遗留、且当前没人持有的锁文件。
+/// 新实现靠内核在最后一个持有者释放时删除，不需要这个兜底；
+/// 这里只是为了让升级过的目录不留下历史垃圾
+pub fn cleanup_legacy_lock_files() {
+    for name in [".ar1s-config.lock", ".ar1s-auth.lock"] {
+        let path = storage().join(name);
+        if crate::utils::file_lock::remove_if_unused(&path) {
+            log::debug!("已清理残留锁文件: {}", name);
+        }
+    }
+}
+
 pub(crate) async fn acquire_auth_lock() -> Result<file_lock::FileLock, LauncherError> {
-    file_lock::acquire_async(&storage().join(".ar1s-auth.lock"), AUTH_LOCK_TIMEOUT).await
+    file_lock::acquire_async(&auth_lock_path(), AUTH_LOCK_TIMEOUT).await
 }
 
 /// token 刷新拿到跨进程锁后强制重读，确认别的实例有没有刚轮换过
@@ -812,10 +856,7 @@ pub fn remove_custom_java_path(path: &str) -> Result<(), LauncherError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ConfigKey, TokenSnapshot, config_for_disk, default_game_dir, file_stamp,
-        validate_download_threads,
-    };
+    use super::{ConfigKey, default_game_dir, file_stamp, validate_download_threads};
     use std::fs;
     use std::path::PathBuf;
 
@@ -833,8 +874,9 @@ mod tests {
         assert!(validate_download_threads(257).is_err());
     }
 
+    /// 配置文件里现在带 token，落盘后必须能原样读回来
     #[test]
-    fn test_config_for_disk_never_contains_tokens() {
+    fn test_config_file_keeps_tokens_in_one_file() {
         let config = crate::models::GameConfig {
             ms_access_token: Some("access".to_string()),
             ms_refresh_token: Some("refresh".to_string()),
@@ -842,11 +884,42 @@ mod tests {
             ..Default::default()
         };
 
-        let disk = config_for_disk(&config);
+        let json = serde_json::to_string_pretty(&config).unwrap();
+        let restored: crate::models::GameConfig = serde_json::from_str(&json).unwrap();
 
-        assert!(disk.ms_access_token.is_none());
-        assert!(disk.ms_refresh_token.is_none());
-        assert_eq!(disk.ms_expires_at, Some(123));
+        assert_eq!(restored.ms_access_token.as_deref(), Some("access"));
+        assert_eq!(restored.ms_refresh_token.as_deref(), Some("refresh"));
+        assert_eq!(restored.ms_expires_at, Some(123));
+    }
+
+    /// 诊断快照必须把 token 和账户标识抹掉，代理地址只留占位
+    #[test]
+    fn test_config_for_diagnostics_never_contains_secrets() {
+        let config = crate::models::GameConfig {
+            ms_access_token: Some("access".to_string()),
+            ms_refresh_token: Some("refresh".to_string()),
+            ms_expires_at: Some(123),
+            username: Some("Steve".to_string()),
+            uuid: Some("uuid".to_string()),
+            skin_url: Some("https://skins.example/x".to_string()),
+            proxy_url: Some("http://user:pass@proxy.example".to_string()),
+            ..Default::default()
+        };
+
+        let snapshot = super::config_for_diagnostics(&config);
+
+        assert!(snapshot.ms_access_token.is_none());
+        assert!(snapshot.ms_refresh_token.is_none());
+        assert!(snapshot.ms_expires_at.is_none());
+        assert!(snapshot.username.is_none());
+        assert!(snapshot.uuid.is_none());
+        assert!(snapshot.skin_url.is_none());
+        assert_eq!(snapshot.proxy_url.as_deref(), Some("***"));
+
+        let raw = serde_json::to_string(&snapshot).unwrap();
+        assert!(!raw.contains("access"));
+        assert!(!raw.contains("refresh"));
+        assert!(!raw.contains("user:pass"));
     }
 
     #[test]
@@ -880,20 +953,179 @@ mod tests {
         assert!(key.set_value(&mut config, String::new()).is_err());
     }
 
+    /// 旧版 credentials.json 只有这三个字段，缺省字段必须能容忍
     #[test]
-    fn test_token_snapshot_ignores_non_token_fields() {
-        let config = crate::models::GameConfig {
-            ms_access_token: Some("access".to_string()),
-            ms_refresh_token: Some("refresh".to_string()),
-            ms_expires_at: Some(123),
+    fn test_legacy_credentials_parsing() {
+        let legacy: super::LegacyCredentials =
+            serde_json::from_str(r#"{"access_token":"a","refresh_token":"r","expires_at":9}"#)
+                .unwrap();
+        assert!(!legacy.is_empty());
+        assert_eq!(legacy.access_token.as_deref(), Some("a"));
+        assert_eq!(legacy.expires_at, Some(9));
+
+        let partial: super::LegacyCredentials = serde_json::from_str("{}").unwrap();
+        assert!(partial.is_empty());
+        assert!(super::LegacyCredentials::default().is_empty());
+    }
+
+    #[test]
+    fn test_legacy_credentials_are_merged_into_config() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("credentials.json");
+        fs::write(
+            &path,
+            r#"{"access_token":"old-access","refresh_token":"old-refresh","expires_at":42}"#,
+        )
+        .unwrap();
+
+        let mut config = crate::models::GameConfig::default();
+        assert!(super::merge_legacy_credentials_from(&path, &mut config));
+        assert_eq!(config.ms_access_token.as_deref(), Some("old-access"));
+        assert_eq!(config.ms_refresh_token.as_deref(), Some("old-refresh"));
+        assert_eq!(config.ms_expires_at, Some(42));
+    }
+
+    /// 配置里已经有 token 时不能被更旧的凭据文件覆盖，否则刷新过的 token 会倒退
+    #[test]
+    fn test_legacy_credentials_never_override_newer_tokens() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("credentials.json");
+        fs::write(&path, r#"{"access_token":"old","refresh_token":"old"}"#).unwrap();
+
+        let mut config = crate::models::GameConfig {
+            ms_access_token: Some("new-access".to_string()),
+            ms_refresh_token: Some("new-refresh".to_string()),
             ..Default::default()
         };
-        let before = TokenSnapshot::from(&config);
+        assert!(super::merge_legacy_credentials_from(&path, &mut config));
+        assert_eq!(config.ms_access_token.as_deref(), Some("new-access"));
+        assert_eq!(config.ms_refresh_token.as_deref(), Some("new-refresh"));
+    }
 
-        let mut changed = config.clone();
-        changed.game_dir = "D:/other".to_string();
-        changed.max_memory = 8192;
+    #[test]
+    fn test_corrupt_legacy_credentials_are_ignored_but_still_removable() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("credentials.json");
+        fs::write(&path, b"not json").unwrap();
 
-        assert_eq!(before, TokenSnapshot::from(&changed));
+        let mut config = crate::models::GameConfig::default();
+        // 返回 true 才会触发一次写回，写回成功后坏文件被删掉
+        assert!(super::merge_legacy_credentials_from(&path, &mut config));
+        assert!(config.ms_access_token.is_none());
+    }
+
+    #[test]
+    fn test_missing_legacy_credentials_need_no_write_back() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut config = crate::models::GameConfig::default();
+        assert!(!super::merge_legacy_credentials_from(
+            &dir.path().join("credentials.json"),
+            &mut config
+        ));
+    }
+
+    /// 端到端：旧版只写了 credentials.json，第一次读配置要把 token 并进 ar1s.json 并删掉旧文件
+    #[test]
+    fn test_legacy_credentials_are_folded_into_ar1s_json_on_first_read() {
+        let root = tempfile::TempDir::new().unwrap();
+        let storage = root.path();
+        fs::write(
+            storage.join("credentials.json"),
+            r#"{"access_token":"acc","refresh_token":"ref","expires_at":77}"#,
+        )
+        .unwrap();
+        fs::write(
+            storage.join("ar1s.json"),
+            r#"{"game_dir":"D:/mc","auth_type":"microsoft"}"#,
+        )
+        .unwrap();
+
+        let loaded = super::read_config_from(storage).unwrap();
+        assert!(loaded.needs_save, "有旧凭据时应当触发一次写回");
+        assert_eq!(loaded.config.ms_access_token.as_deref(), Some("acc"));
+        assert_eq!(loaded.config.ms_refresh_token.as_deref(), Some("ref"));
+
+        super::save_config_to(storage, &loaded.config).unwrap();
+
+        // 旧文件消失，token 落在 ar1s.json 里
+        assert!(!storage.join("credentials.json").exists());
+        let raw = fs::read_to_string(storage.join("ar1s.json")).unwrap();
+        assert!(raw.contains("acc"));
+        assert!(raw.contains("ref"));
+
+        // 再读一次不该再触发写回
+        let again = super::read_config_from(storage).unwrap();
+        assert!(!again.needs_save);
+        assert_eq!(again.config.ms_access_token.as_deref(), Some("acc"));
+    }
+
+    /// 登出后 token 为空也必须真的写进文件，否则下次启动会把旧 token 读回来
+    #[test]
+    fn test_logout_clears_tokens_from_disk() {
+        let root = tempfile::TempDir::new().unwrap();
+        let storage = root.path();
+        let mut config = crate::models::GameConfig {
+            game_dir: "D:/mc".to_string(),
+            ms_access_token: Some("acc".to_string()),
+            ms_refresh_token: Some("ref".to_string()),
+            ..Default::default()
+        };
+        super::save_config_to(storage, &config).unwrap();
+
+        config.ms_access_token = None;
+        config.ms_refresh_token = None;
+        super::save_config_to(storage, &config).unwrap();
+
+        let loaded = super::read_config_from(storage).unwrap();
+        assert!(loaded.config.ms_access_token.is_none());
+        assert!(loaded.config.ms_refresh_token.is_none());
+    }
+
+    /// token 与设置同文件后，全量写回不能把另一实例刚轮换的 token 盖回旧值
+    #[test]
+    fn test_stale_snapshot_does_not_clobber_rotated_tokens() {
+        let root = tempfile::TempDir::new().unwrap();
+        let storage = root.path();
+
+        // 磁盘上已经是最新的 token（另一个实例刚刷新过）
+        let rotated = crate::models::GameConfig {
+            game_dir: "D:/mc".to_string(),
+            ms_access_token: Some("fresh-access".to_string()),
+            ms_refresh_token: Some("fresh-refresh".to_string()),
+            ms_expires_at: Some(999),
+            ..Default::default()
+        };
+        super::save_config_to(storage, &rotated).unwrap();
+
+        // 本进程手里还是旧快照，只想改个内存设置
+        let stale = crate::models::GameConfig {
+            game_dir: "D:/mc".to_string(),
+            max_memory: 8192,
+            ms_access_token: Some("stale-access".to_string()),
+            ms_refresh_token: Some("stale-refresh".to_string()),
+            ms_expires_at: Some(111),
+            ..Default::default()
+        };
+
+        let mut merged = stale.clone();
+        if let Some(current) = super::read_tokens_from_disk_at(storage)
+            && super::has_tokens(&current)
+        {
+            merged.ms_access_token = current.ms_access_token;
+            merged.ms_refresh_token = current.ms_refresh_token;
+            merged.ms_expires_at = current.ms_expires_at;
+        }
+        super::save_config_to(storage, &merged).unwrap();
+
+        let loaded = super::read_config_from(storage).unwrap();
+        assert_eq!(
+            loaded.config.ms_access_token.as_deref(),
+            Some("fresh-access")
+        );
+        assert_eq!(
+            loaded.config.ms_refresh_token.as_deref(),
+            Some("fresh-refresh")
+        );
+        assert_eq!(loaded.config.max_memory, 8192, "非 token 字段仍要生效");
     }
 }

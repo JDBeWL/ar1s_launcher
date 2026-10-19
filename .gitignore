@@ -12,6 +12,13 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Launcher runtime state
+ar1s.json
+ar1s.json.bak
+credentials.json
+.ar1s/
+.download_state/
+
 node_modules
 dist
 dist-ssr

@@ -325,7 +325,7 @@ pub async fn refresh_microsoft_auth() -> Result<MicrosoftLoginResult, LauncherEr
 pub async fn logout_microsoft() -> Result<(), LauncherError> {
     let _ = microsoft_auth::revoke_microsoft_token().await;
 
-    // 清凭据也走 update_config：与另一实例的刷新在同一把配置锁下串行，
+    // 清 token 也走 update_config：与另一实例的刷新在同一把配置锁下串行，
     // 避免刚清完又被刷新写回 token
     update_config(|config| {
         config.auth_type = AuthType::Offline;

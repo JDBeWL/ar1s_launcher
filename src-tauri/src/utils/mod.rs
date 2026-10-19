@@ -7,3 +7,4 @@ pub mod file_utils;
 pub mod library;
 pub mod logger;
 pub mod minecraft;
+pub mod secure_file;

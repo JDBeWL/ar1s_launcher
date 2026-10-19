@@ -32,7 +32,7 @@ pub async fn install_neoforge(
 
     // 和版本下载共用游戏目录锁，避免多实例同时写共享 libraries/
     let _download_lock = crate::utils::file_lock::acquire_async(
-        &game_dir.join(".download_state/download.lock"),
+        &crate::services::instance::lock_dir(game_dir).join("download.lock"),
         std::time::Duration::from_secs(2),
     )
     .await?;

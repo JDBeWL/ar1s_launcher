@@ -1,7 +1,10 @@
 //! 诊断包导出
 //!
 //! 只收集排障需要的文件：启动器/实例日志、crash-reports、版本 JSON、模组文件名、
-//! Java 与系统信息。凭据、存档、模组本体和模组配置一律不进包。
+//! Java 与系统信息。token、存档、模组本体和模组配置一律不进包。
+//!
+//! token 现在与其余设置同存 ar1s.json，所以进包的配置快照走 `config_for_diagnostics`
+//! 逐字段脱敏，而不是靠"凭据文件本来就不收集"
 
 use crate::errors::LauncherError;
 use crate::models::GameConfig;
@@ -440,7 +443,7 @@ fn readme_text(ctx: &BundleContext<'_>) -> String {
          导出时间: {}\n\
          实例: {}\n\n\
          包含: 启动器日志、实例 latest.log、历史日志、crash-reports、hs_err、版本 JSON、模组文件名、Java 与系统信息。\n\
-         已排除: credentials.json、存档、模组本体、资源包、光影包、options.txt 与模组配置。\n\
+         已排除: 存档、模组本体、资源包、光影包、options.txt 与模组配置。\n\
          配置中的 token、用户名、UUID、皮肤 URL 和代理 URL 已移除或打码。\n\
          游戏日志、crash-reports 与系统信息保留原文，可能包含玩家名、服务器地址和本机路径。\n",
         chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
@@ -497,7 +500,6 @@ mod tests {
             fs::create_dir_all(storage.join("logs")).unwrap();
             fs::write(storage.join("logs/ar1s_1.log"), "launcher log 1").unwrap();
             fs::write(storage.join("logs/ar1s_2.log"), "launcher log 2").unwrap();
-            fs::write(storage.join("credentials.json"), "SECRET-CREDENTIALS").unwrap();
 
             fs::create_dir_all(instance.join("mods")).unwrap();
             fs::write(instance.join("mods/a.jar"), "jar").unwrap();
@@ -564,7 +566,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bundle_contains_diagnostics_but_no_credentials_or_saves() {
+    fn test_bundle_contains_diagnostics_but_no_secrets_or_saves() {
         let fixture = Fixture::new();
         let config = fixture.config();
         let candidates = fixture.java_candidates();
@@ -595,10 +597,6 @@ mod tests {
                 .any(|name| name.starts_with("launcher-logs/ar1s_")),
             "启动器日志应进包: {:?}",
             entries.keys()
-        );
-        assert!(
-            !entries.keys().any(|name| name.contains("credentials")),
-            "凭据绝不能进包"
         );
         assert!(
             !entries.keys().any(|name| name.contains("saves/")),

@@ -133,6 +133,15 @@ pub fn run() {
                 log::error!("配置预加载失败: {}", e);
             }
 
+            // 旧版本的下载状态与锁散落在别处，迁移一次即可，之后都走 .ar1s/
+            if let Ok(config) = services::config::load_config() {
+                let game_dir = std::path::PathBuf::from(&config.game_dir);
+                services::instance::migrate_legacy_state_once(
+                    &game_dir,
+                    &game_dir.join("versions"),
+                );
+            }
+
             // 预热 Java 检测缓存，放后台跑以免阻塞启动
             tauri::async_runtime::spawn(async {
                 log::info!("后台预热 Java 检测缓存...");

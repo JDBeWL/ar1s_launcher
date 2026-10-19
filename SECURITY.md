@@ -8,7 +8,7 @@ builds are not maintained.
 ## Reporting a vulnerability
 
 Please **do not open a public issue**. Use GitHub's private vulnerability
-reporting (repository → *Security* → *Report a vulnerability*). Include the
+reporting (repository → _Security_ → _Report a vulnerability_). Include the
 affected version, reproduction steps and any log excerpt that helps. You can
 expect an initial response within about a week.
 
@@ -27,6 +27,10 @@ following rules apply to every contribution:
   the webview never receives a key.
 - **User-supplied keys stay local.** Keys entered in Settings are stored outside
   the repository, in the user's own profile, and are never uploaded anywhere.
+- **Stored tokens live in one restricted file.** The Microsoft token is written
+  into `ar1s.json` alongside the other settings, and that file is restricted to
+  the current user on every save (0600 on Unix, a tightened DACL on Windows).
+  Diagnostic bundles always strip the token fields.
 - **Environment variables are a development convenience only.** `CURSEFORGE_API_KEY`
   (see `.env.example`) is read as a fallback in debug builds and is ignored in
   release builds.

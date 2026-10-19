@@ -71,7 +71,7 @@ pub async fn install_forge(
 
     // Forge/NeoForge 直接写共享的 libraries/，和版本下载共用一把游戏目录锁
     let _download_lock = crate::utils::file_lock::acquire_async(
-        &game_dir.join(".download_state/download.lock"),
+        &crate::services::instance::lock_dir(game_dir).join("download.lock"),
         Duration::from_secs(2),
     )
     .await?;

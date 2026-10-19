@@ -530,7 +530,10 @@ fn parse_version(version: &Value) -> Result<ModrinthModpackVersion, LauncherErro
             .ok_or_else(|| LauncherError::Custom("缺少id字段".to_string()))?
             .to_string(),
         // 单版本接口一定会给 project_id；旧数据缺失时留空，不影响安装
-        project_id: version["project_id"].as_str().unwrap_or_default().to_string(),
+        project_id: version["project_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         name: version["name"]
             .as_str()
             .ok_or_else(|| LauncherError::Custom("缺少name字段".to_string()))?

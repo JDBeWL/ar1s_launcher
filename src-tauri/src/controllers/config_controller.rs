@@ -19,7 +19,7 @@ where
 #[tauri::command]
 pub fn get_config() -> Result<GameConfig, LauncherError> {
     let mut config = (*config::load_config()?).clone();
-    // token 只给后端用；界面要登录态就查 get_auth_status
+    // token 与配置同存一个文件，但界面不需要；要登录态就查 get_auth_status
     config.ms_access_token = None;
     config.ms_refresh_token = None;
     Ok(config)

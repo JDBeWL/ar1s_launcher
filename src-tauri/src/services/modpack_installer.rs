@@ -262,7 +262,7 @@ impl ModpackInstaller {
 
         // 与实例创建/删除/重命名共用一把锁；失败清理会删实例目录，不能和另一实例互相踩
         let _install_lock = crate::utils::file_lock::acquire_async(
-            &game_dir.join(".download_state/instances.lock"),
+            &crate::services::instance::lock_dir(&game_dir).join("instances.lock"),
             std::time::Duration::from_secs(2),
         )
         .await?;

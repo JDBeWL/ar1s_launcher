@@ -1,6 +1,6 @@
 //! 批量下载调度
 //!
-//! 按配置线程数限并发，跳过 .download_state 里已完成项，退避重试并响应取消
+//! 按配置线程数限并发，跳过 .ar1s/download_state 里已完成项，退避重试并响应取消
 
 use super::file::download_file;
 use super::http::get_http_client;
@@ -58,14 +58,15 @@ pub async fn download_all_files(
 
     // 状态文件放在游戏目录下，避免被其他程序访问
     let game_dir = std::path::PathBuf::from(&config.game_dir);
-    let state_dir = game_dir.join(".download_state");
+    let lock_dir = crate::services::instance::lock_dir(&game_dir);
+    let state_dir = lock_dir.join("download_state");
     std::fs::create_dir_all(&state_dir)?;
     let state_file = state_dir.join(format!("{}.json", version_id));
 
     // 共享 assets/libraries 的目标路径是全局的，按版本加锁挡不住两个版本写同一个 .part；
     // 同一游戏目录同一时间只允许一个下载任务
     let _download_lock = crate::utils::file_lock::acquire_async(
-        &state_dir.join("download.lock"),
+        &lock_dir.join("download.lock"),
         std::time::Duration::from_secs(2),
     )
     .await?;

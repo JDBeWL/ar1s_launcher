@@ -138,7 +138,11 @@ pub fn sha1_file(path: &std::path::Path) -> Result<String, LauncherError> {
         }
         hasher.update(&buf[..read]);
     }
-    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }
 
 /// maven 的 .sha1 文件常见格式是「hash  filename」或只有 hash

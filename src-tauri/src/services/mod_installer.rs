@@ -60,8 +60,7 @@ pub struct ModInstaller {
     modrinth: modrinth::ModrinthService,
 }
 
-static INSTALLER: std::sync::LazyLock<ModInstaller> =
-    std::sync::LazyLock::new(ModInstaller::new);
+static INSTALLER: std::sync::LazyLock<ModInstaller> = std::sync::LazyLock::new(ModInstaller::new);
 
 pub fn get_installer() -> &'static ModInstaller {
     &INSTALLER
