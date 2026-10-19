@@ -1,10 +1,8 @@
 //! 光影包管理
 //!
 //! 扫描实例的 `shaderpacks` 目录，并把「当前用哪个光影」写回游戏自己的配置：
-//! Iris / Oculus 读 `config/iris.properties`（或 `oculus.properties`）里的 `shaderPack`
-//! 与 `enableShaders`，OptiFine 读游戏根目录的 `optionsshaders.txt`。
-//! 光影包没有模组那样的 `.disabled` 约定，选中哪个只由这两份配置决定，
-//! 所以启动器不能自己另存一份状态。
+//! Iris / Oculus 的 `config/iris.properties`（或 `oculus.properties`）与 OptiFine 的 `optionsshaders.txt`。
+//! 光影包没有模组那样的 `.disabled` 约定，选中状态只由这两份配置决定，启动器不能另存一份。
 
 use crate::errors::LauncherError;
 use crate::services::{config, launcher};

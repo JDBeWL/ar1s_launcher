@@ -383,7 +383,6 @@ pub async fn launch_minecraft(
         emit("log-warning", format!("内存设置警告: {}", e));
     }
 
-    // 生成 JVM 参数：默认只有 G1GC 优化，其余按用户在高级选项里的开关追加
     let mut final_args = optimize_jvm_memory_args(memory_mb, java_version, &config.jvm_advanced);
 
     final_args.extend([

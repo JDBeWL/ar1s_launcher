@@ -15,8 +15,7 @@ use tauri::{Emitter, Window};
 
 /// 只补这份版本 JSON 自己声明的库（不递归父版本），供加载器装完后补齐
 ///
-/// Fabric/Quilt 的“安装”只是写一份 profile，库文件没人下，第一次启动就会提示缺文件；
-/// Forge/NeoForge 的安装器已经下过自己那批，这里按“文件已在位就跳过”空转
+/// Fabric/Quilt 的「安装」只写一份 profile、库文件没人下；Forge/NeoForge 已下过自己那批，这里按在位跳过
 pub async fn ensure_declared_libraries(
     version_json: &serde_json::Value,
     window: &Window,

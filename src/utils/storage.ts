@@ -9,7 +9,6 @@ const VALID_VIEW_MODES = new Set(['grid', 'list']);
 const VALID_SORT_BY = new Set(['lastPlayed', 'name', 'version']);
 
 export function isValidThemePalette(value: string): boolean {
-  // 白名单直接来自预设表
   return THEME_PRESET_IDS.has(value);
 }
 

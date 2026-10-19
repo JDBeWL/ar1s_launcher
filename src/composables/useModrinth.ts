@@ -91,12 +91,10 @@ export function useModrinth() {
 
   const debouncedSearch = useDebounceFn(searchModpacksInternal, 300);
 
-  // 立即搜索（用于分页、筛选器变化等）
   async function searchModpacks() {
     await searchModpacksInternal();
   }
 
-  // 防抖搜索（用于输入框输入）
   function searchModpacksDebounced() {
     debouncedSearch.call();
   }

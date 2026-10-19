@@ -47,7 +47,6 @@ const formattedSpeed = computed(() => {
 const remainingTime = computed(() => {
   // 速度为 0 时无法计算剩余时间
   if (props.speed === 0) return '--';
-  // 还没有下载数据或已完成时不显示剩余时间
   if (props.total === 0) return '--';
 
   const remainingBytes = props.total - props.progress;

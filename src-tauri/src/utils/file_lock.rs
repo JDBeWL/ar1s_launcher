@@ -1,12 +1,8 @@
 //! 跨进程文件锁
 //!
-//! 锁文件在最后一个持有者释放时由内核自动删除，进程被强杀也不会留下垃圾：
-//!
-//! - Windows：用 `FILE_FLAG_DELETE_ON_CLOSE` 加共享模式做互斥。独占锁用
-//!   `share_mode(0)`，共享锁用 `FILE_SHARE_READ | FILE_SHARE_DELETE`；最后一个句柄
-//!   关闭时系统删除文件，连 kill -9 都不需要额外清理
-//! - Unix：用 `flock`，拿到锁后校验路径仍指向同一个 inode（否则说明别人删了重建，
-//!   重试），释放时先 unlink 再关闭。校验这一步是删除安全的前提
+//! 锁文件由内核在最后一个持有者释放时删除，进程被强杀也不留垃圾。
+//! Windows：`FILE_FLAG_DELETE_ON_CLOSE` 加共享模式做互斥（独占 `share_mode(0)`，共享 READ|DELETE）。
+//! Unix：`flock`，加锁后必须确认路径仍指向同一个 inode，否则说明别人删了重建，要重来；释放时先 unlink 再关闭。
 
 use crate::errors::LauncherError;
 use std::fs::File;
@@ -276,11 +272,8 @@ pub fn acquire_shared(path: &Path, timeout: Duration) -> Result<FileLock, Launch
     acquire_with(path, timeout, true)
 }
 
-/// 清理一个没人持有的残留锁文件。
-///
-/// 锁文件本应由内核在最后一个持有者释放时删除，这个函数只用于旧版本遗留的、
-/// 或异常中断留下的空壳。判断依据是"能否独占获取"：抢得到就说明确实没人持有，
-/// 随即 drop 让内核删除；抢不到说明正被使用，必须原样保留。
+/// 只用于旧版本遗留或异常中断留下的空壳。判断依据是"能否独占获取"：
+/// 抢得到就说明确实没人持有，随即 drop 让内核删除；抢不到说明正被使用，必须原样保留。
 ///
 /// 返回 true 表示文件已被清掉（或本来就不存在）
 pub fn remove_if_unused(path: &Path) -> bool {

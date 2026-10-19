@@ -1,8 +1,7 @@
 <script setup lang="ts">
 /**
  * 实例详情页的资源包面板
- * 资源包的启用状态由游戏自己记在 options.txt 的 resourcePacks 列表里，
- * 所以这里的开关是改配置而不是改文件名，禁用后文件仍然留在 resourcepacks 目录
+ * 启用状态由游戏自己记在 options.txt 的 resourcePacks 列表里，所以这里的开关改的是配置而不是文件名。
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';

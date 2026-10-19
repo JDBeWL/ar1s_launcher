@@ -56,7 +56,6 @@ pub async fn download_all_files(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "unknown".to_string());
 
-    // 状态文件放在游戏目录下，避免被其他程序访问
     let game_dir = std::path::PathBuf::from(&config.game_dir);
     let lock_dir = crate::services::instance::lock_dir(&game_dir);
     let state_dir = lock_dir.join("download_state");

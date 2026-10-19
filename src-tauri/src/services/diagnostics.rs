@@ -1,10 +1,7 @@
 //! 诊断包导出
 //!
-//! 只收集排障需要的文件：启动器/实例日志、crash-reports、版本 JSON、模组文件名、
-//! Java 与系统信息。token、存档、模组本体和模组配置一律不进包。
-//!
-//! token 现在与其余设置同存 ar1s.json，所以进包的配置快照走 `config_for_diagnostics`
-//! 逐字段脱敏，而不是靠"凭据文件本来就不收集"
+//! 只收集排障需要的文件：启动器/实例日志、crash-reports、版本 JSON、模组文件名、Java 与系统信息。
+//! token 与设置同存 ar1s.json，所以进包的配置快照必须走 `config_for_diagnostics` 逐字段脱敏。
 
 use crate::errors::LauncherError;
 use crate::models::GameConfig;

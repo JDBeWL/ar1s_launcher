@@ -1,8 +1,7 @@
 //! 资源包管理
 //!
-//! 扫描实例的 `resourcepacks` 目录，读取 `pack.mcmeta` 与 `pack.png` 做展示，
-//! 启停则改写 `options.txt` 里的 `resourcePacks` 列表 —— 启用状态本来就只存在这一份数据里，
-//! 不像模组那样靠改文件名，所以启动器不能自己造一套状态。
+//! 扫描实例的 `resourcepacks` 目录，读取 `pack.mcmeta` 与 `pack.png` 做展示。
+//! 启用状态只存在 `options.txt` 的 `resourcePacks` 列表里，不像模组靠改文件名，所以启动器不能另造一套状态。
 
 use crate::errors::LauncherError;
 use crate::services::{config, launcher};

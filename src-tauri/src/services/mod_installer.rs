@@ -295,9 +295,8 @@ impl ModInstaller {
         };
         let final_path = context.mods_dir.join(&final_name);
 
-        // 旧文件先删：版本号没变、文件名相同时直接 rename 会失败
+        // 先删旧文件和同名残留（玩家手动复制过的）：文件名没变时直接 rename 会失败
         fs::remove_file(&old_path)?;
-        // 目标位置可能残留同名文件（比如手动复制过），先清掉再落盘
         if final_path.exists() {
             fs::remove_file(&final_path)?;
         }

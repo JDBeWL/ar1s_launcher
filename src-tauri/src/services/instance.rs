@@ -37,7 +37,7 @@ fn get_dirs() -> Result<(PathBuf, PathBuf), LauncherError> {
     Ok((game_dir, versions_dir))
 }
 
-/// 所有跨进程锁都放在游戏目录下的 `.ar1s/`，不再散落在 `.download_state/` 和版本目录里
+/// 所有跨进程锁都放在游戏目录下的 `.ar1s/`
 pub(crate) fn lock_dir(game_dir: &Path) -> PathBuf {
     game_dir.join(".ar1s")
 }
@@ -83,9 +83,7 @@ pub(crate) async fn acquire_run_lock(
     .await
 }
 
-/// 锁文件由内核在最后一个持有者释放时删除，正常情况下不会残留。
-/// 这里只兜底清理旧版本或异常中断留下的空壳：抢到独占锁 = 确实没人持有，
-/// 随即释放让内核删掉；抢不到说明实例可能真在运行，必须原样保留。
+/// 只兜底清理旧版本或异常中断留下的空壳，判断依据见 `remove_if_unused`
 ///
 /// 不能直接 `remove_file`：共享锁允许 FILE_SHARE_DELETE，直接删会把正在运行的游戏
 /// 的锁文件删掉，新来的排他锁就会误判"没有实例在跑"
@@ -287,7 +285,6 @@ pub async fn create_instance(
         }
 
         // 装完就得能直接启动：Fabric/Quilt 只写了一份 profile，库文件只能在这里补
-        // （Forge/NeoForge 的安装器已经下过自己那批，这里按“文件已在位”跳过）
         send_progress(65, "补全加载器文件...", true);
         match fs::read_to_string(&new_json_path)
             .ok()
@@ -1538,7 +1535,6 @@ mod tests {
         fs::create_dir_all(&lock_root).unwrap();
         fs::write(lock_root.join("run-still-here.lock"), b"").unwrap();
         fs::write(lock_root.join("run-gone.lock"), b"").unwrap();
-        // 别的锁不受影响
         fs::write(lock_root.join("instances.lock"), b"").unwrap();
 
         prune_stale_run_locks(game.path(), &versions);
@@ -1576,7 +1572,6 @@ mod tests {
         let versions = game.path().join("versions");
         fs::create_dir_all(&versions).unwrap();
 
-        // 目录还不存在时不能 panic
         prune_stale_run_locks(game.path(), &versions);
     }
 
@@ -1599,7 +1594,6 @@ mod tests {
         // 续传状态要搬过去，否则已经下好的文件会重下
         let migrated = lock_dir(game.path()).join("download_state/1.20.1.json");
         assert!(migrated.exists());
-        // 旧目录和旧锁文件都不该留下
         assert!(!legacy.exists());
         assert!(!instance.join(".natives.lock").exists());
     }

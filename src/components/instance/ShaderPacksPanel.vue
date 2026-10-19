@@ -1,9 +1,8 @@
 <script setup lang="ts">
 /**
  * 实例详情页的光影包面板
- * 光影包没有模组那种 .disabled 约定，选中哪个由游戏自己的配置决定：
- * Iris / Oculus 读 config/iris.properties，OptiFine 读 optionsshaders.txt。
- * 所以这里只改配置，不挪文件；同一时间只有一个包是启用的。
+ * 选中哪个包由游戏自己的配置决定（iris.properties / optionsshaders.txt），
+ * 所以这里只改配置、不挪文件；同一时间只有一个包是启用的。
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';

@@ -1,11 +1,9 @@
 //! 配置文件读写模块
 //!
-//! 绿色版布局：配置固定放在 exe 同级目录。多实例下所有读改写走跨进程文件锁，
-//! 读取用 mtime/长度做缓存失效；写入走临时文件 rename，解析失败时备份 .bak 再重建默认配置。
-//!
-//! 正版 token 与其余设置一起存进 ar1s.json，不再单开凭据文件；因为文件里可能有密钥，
-//! 落盘前会收紧权限（Unix 0600、Windows 收紧 DACL）。旧版本的 credentials.json
-//! 会在第一次读取时并入配置，写回成功后删除
+//! 绿色版布局：配置固定放在 exe 同级目录。所有读改写走跨进程文件锁，读取用 mtime/长度
+//! 失效缓存，写入走临时文件 rename，解析失败时备份 .bak 再重建默认配置。
+//! token 与其余设置同存 ar1s.json，所以落盘前要收紧权限（Unix 0600、Windows 收紧 DACL）；
+//! 旧版本的 credentials.json 在第一次读取时并入配置，写回成功后删除。
 
 use serde::Deserialize;
 use std::fs;
@@ -361,9 +359,8 @@ pub fn save_config(config: &GameConfig) -> Result<(), LauncherError> {
     let _guard = lock_config()?;
     let _file_lock = file_lock::acquire(&config_lock_path(), CONFIG_LOCK_TIMEOUT)?;
 
-    // token 现在和设置同处一个文件，全量写回会把调用方手里那份可能已经过期的
-    // token 盖回去。锁内重读一次，磁盘上已经有 token 就以磁盘为准：
-    // 登出这类真正要改 token 的操作走 update_config，不经过这里
+    // token 和设置同处一个文件，全量写回会把调用方手里可能过期的 token 盖回去：
+    // 锁内重读一次，磁盘上已经有 token 就以磁盘为准（真正改 token 的登录/登出走 update_config）
     let mut config = config.clone();
     if let Some(current) = read_tokens_from_disk()
         && has_tokens(&current)
@@ -486,9 +483,7 @@ fn auth_lock_path() -> PathBuf {
     storage().join(".ar1s-auth.lock")
 }
 
-/// 启动时清掉旧版本遗留、且当前没人持有的锁文件。
-/// 新实现靠内核在最后一个持有者释放时删除，不需要这个兜底；
-/// 这里只是为了让升级过的目录不留下历史垃圾
+/// 只为升级过的目录清掉历史垃圾；新锁由内核在最后一个持有者释放时删除
 pub fn cleanup_legacy_lock_files() {
     for name in [".ar1s-config.lock", ".ar1s-auth.lock"] {
         let path = storage().join(name);

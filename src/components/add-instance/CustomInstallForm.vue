@@ -47,7 +47,6 @@ const canCreate = computed(() => {
     selectedVersion.value &&
     !installing.value &&
     !instanceNameError.value &&
-    // 如果选择了加载器，必须选择版本
     (selectedModLoaderType.value === 'None' || selectedModLoaderVersion.value)
   );
 });
