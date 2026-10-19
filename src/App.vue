@@ -151,7 +151,7 @@ const shortcuts = [
   { keys: 'Ctrl + ,', description: '打开设置' },
   { keys: 'Ctrl + D', description: '打开下载' },
   { keys: 'Ctrl + N', description: '添加实例' },
-  { keys: 'Ctrl + I', description: '实例管理' },
+  { keys: 'Ctrl + I', description: '实例列表' },
   { keys: 'Ctrl + /', description: '快捷键帮助' },
 ];
 
@@ -203,12 +203,12 @@ onUnmounted(() => {
         </v-list-item>
         <v-list-item
           prepend-icon="mdi-folder-multiple-outline"
-          title="实例管理"
+          title="实例列表"
           to="/instance-manager"
           class="nav-item"
         >
           <v-tooltip activator="parent" location="right" :disabled="!rail">
-            实例管理 <kbd class="shortcut-key">Ctrl+I</kbd>
+            实例列表 <kbd class="shortcut-key">Ctrl+I</kbd>
           </v-tooltip>
         </v-list-item>
       </v-list>

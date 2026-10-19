@@ -258,7 +258,7 @@ onMounted(async () => {
                   <span class="text-title-medium">最近游玩</span>
                 </div>
                 <span class="text-body-small text-on-surface-variant mr-3">{{ instances.length }} 个实例</span>
-                <v-btn size="x-small" variant="text" to="/instance-manager"> 管理 </v-btn>
+                <v-btn size="x-small" variant="text" to="/instance-manager"> 实例列表 </v-btn>
               </v-card-text>
               <v-divider />
               <v-card-text class="pa-4 flex-grow-1">
@@ -299,10 +299,10 @@ onMounted(async () => {
                         <v-btn
                           size="x-small"
                           variant="text"
-                          :aria-label="`在实例管理中查看 ${instance.name}`"
-                          :to="{ path: '/instance-manager', query: { search: instance.name } }"
+                          :aria-label="`查看 ${instance.name} 的实例详情`"
+                          :to="{ name: 'instance-detail', params: { name: instance.name } }"
                         >
-                          查看
+                          详情
                         </v-btn>
                       </div>
                     </template>

@@ -1,360 +1,244 @@
+English | [简体中文](README.zh-CN.md)
+
 # Ar1s Launcher
 
-一个基于Tauri框架构建的现代化Minecraft启动器，使用Vuetify提供Material Design 3风格的用户界面。
+**A modern Minecraft launcher built with Tauri 2 and Vue 3, with a Material Design 3 interface.**
 
-![Version](https://img.shields.io/badge/version-0.7.1-blue)
+Ar1s Launcher manages Minecraft versions, mod loaders and isolated game instances in one desktop app, and installs modpacks without making the player assemble a game directory by hand.
+
+![Version](https://img.shields.io/badge/version-0.7.2-blue)
 ![Tauri](https://img.shields.io/badge/Tauri-2.12-orange)
 ![Vue](https://img.shields.io/badge/Vue-3.5-green)
 ![Rust](https://img.shields.io/badge/Rust-1.95+-red)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-## 功能特性
+> Status: early development. Windows is the tested platform; macOS and Linux builds are possible but untested. Bug reports are welcome.
 
-### 核心功能
+## Features
 
-- **多版本支持**: 支持Minecraft正式版、快照版等多种版本
-- **实例管理**: 独立的游戏实例系统，支持创建、重命名、删除实例
-- **Mod加载器支持**: 支持 Forge、Fabric、Quilt、NeoForge 四种主流加载器
-- **整合包安装**: 支持从 Modrinth 平台搜索和安装整合包（CurseForge 开发中）
-- **智能下载**: 支持官方源和BMCL镜像源，提供稳定的下载体验，使用fallback机制下载时自动切换源
-- **文件验证**: 自动检测缺失文件，确保游戏完整性，支持一键修复
-- **崩溃诊断**: 启动失败时按日志特征判断问题出在哪，输出可复制的纯文本报告
-- **正版登录**: 微软账号登录，支持设备代码轮询与浏览器回调两种方式，token 自动刷新
-- **离线模式**: 支持离线游戏启动，正版与离线身份可随时切换
+### Versions and instances
 
-### 实例系统
+- Browse and install Minecraft releases and snapshots
+- Independent instances with their own mods, configs, saves and resource packs (optional version isolation)
+- Create, rename, delete instances, or open an instance folder in one click
+- Forge, Fabric, Quilt and NeoForge installation, including the libraries each loader needs
 
-- **独立实例**: 每个游戏配置独立管理，互不干扰
-- **自定义安装**: 选择基础版本 + 加载器组合创建实例
-- **在线安装**: 直接从 Modrinth 搜索并安装整合包
-- **实例操作**: 支持启动、重命名、删除、打开文件夹等操作
+### Modpacks
 
-### 用户界面
+- Search and install modpacks from Modrinth
+- Filter by game version, loader and category
+- Concurrent mod downloads with per-file progress, cancellation and rollback on failure
+- CurseForge modpack support is in development (see [Roadmap](#roadmap))
 
-- **现代化设计**: 基于Material Design 3设计规范
-- **暗色/亮色主题**: 支持主题切换，提供舒适的视觉体验
-- **响应式布局**: 适配不同屏幕尺寸
-- **流畅动画**: 提供平滑的交互体验
-- **实时进度**: 下载和安装过程实时显示进度
+### Mods
 
-### 技术特性
+- Browse and install Modrinth mods directly into an instance, filtered by that
+  instance's Minecraft version and loader
+- Required dependencies are resolved and installed automatically
+- Update checks are content-based: local jars are identified by SHA-1, so renamed
+  files are still recognised, and batch-updating keeps disabled mods disabled
+- Enable, disable and delete mods without touching the files by hand
 
-- **跨平台**: 基于Tauri构建，支持Windows、macOS、Linux(但是还没有在macOS、Linux上测试过，如果有问题请提交issue)
-- **高性能**: Rust后端提供出色的性能表现(Rust高效我的代码不一定高效())
-- **安全性**: 本地数据存储，保护用户隐私
-- **日志系统**: 完善的日志记录和错误追踪
-- **内存优化**: 智能JVM内存参数配置，根据版本自动优化
+### Downloads
 
-## 技术栈
+- Official Mojang sources, with an optional BMCLAPI mirror for users in mainland China
+- Automatic fallback between sources
+- Configurable download threads and resume support
+- SHA-1 verification, file integrity checks and one-click repair of missing files
 
-### 前端技术
+### Accounts and launching
 
-- **Vue 3.5**: 现代化的前端框架，使用 Composition API
-- **Vuetify 4.2**: Material Design 3 组件库
-- **TypeScript 6.0**: 类型安全的JavaScript超集
-- **Pinia 4**: Vue 状态管理库
-- **Vue Router 5**: 前端路由管理
+- Microsoft account login (device code flow and authorization code flow with PKCE), with automatic token refresh
+- Offline mode, switchable at any time
+- Automatic Java detection and per-version matching, with a diagnostic report when no suitable runtime is found
+- JVM memory presets, GC strategy and advanced JVM flags
+- Known-incompatible combinations (for example, old Forge builds on new Java versions) are blocked before launch instead of failing midway
 
-### 后端技术
+### Reliability
 
-- **Rust 1.95+**: 系统级编程语言，提供高性能后端
-- **Tauri 2.12**: 跨平台桌面应用框架
-- **Tokio**: Rust异步运行时
-- **Reqwest**: HTTP 客户端
-- **Serde**: 序列化/反序列化框架
+- Crash diagnosis: log patterns are classified and rendered as a copyable plain-text report
+- Structured logging, one file per launch, last 30 kept
+- HTTP proxy support for all outbound requests
+- All data stays local; no account data leaves the machine except the requests required for authentication and downloads
 
-### 开发工具
+## Tech stack
 
-- **Vite 8**: 快速的前端构建工具
-- **Cargo**: Rust包管理器
-- **vue-tsc**: Vue TypeScript 编译器
+| Layer | Technologies |
+| --- | --- |
+| Frontend | Vue 3.5 (Composition API), Vuetify 4.2, TypeScript 6.0, Pinia 4, Vue Router 5, Vite 8 |
+| Backend | Rust 1.95+, Tauri 2.12, Tokio, Reqwest, Serde |
+| Tooling | pnpm, Cargo, vue-tsc, Vitest |
 
-## 安装与构建
-
-### 环境要求
+## Requirements
 
 - Node.js 22.12+
-- Rust 1.95+
-- Cargo
+- pnpm
+- Rust 1.95+ with Cargo
+- Tauri system dependencies for your platform (WebView2 on Windows)
 
-### 开发环境搭建
-
-1. **克隆项目**
+## Getting started
 
 ```bash
 git clone https://github.com/JDBeWL/ar1s_launcher.git
-cd Ar1s_Launcher
-```
-
-2. **安装前端依赖**
-
-```bash
+cd ar1s_launcher
 pnpm install
-```
-
-3. **安装Rust依赖**
-
-```bash
-cd src-tauri
-cargo build
-```
-
-4. **开发模式运行**
-
-```bash
 pnpm run tauri dev
 ```
 
-### 生产构建
+The first Rust build takes a few minutes. Subsequent builds are incremental.
+
+## Building
 
 ```bash
-# 构建前端
-pnpm run build
-
-# 构建Tauri应用
-pnpm run tauri build
+pnpm run build        # type-check and build the frontend
+pnpm run tauri build  # produce the desktop bundles
 ```
 
-配置、日志、登录凭据与默认的 `.minecraft` 都在 exe 同级目录，升级时替换 exe 即可。发布压缩包需同时带上 `LICENSE`。
+Useful checks:
 
-## 项目结构
-
-```
-Ar1s_Launcher/
-├── src/                          # 前端源代码
-│   ├── components/               # Vue组件
-│   │   ├── add-instance/         # 实例创建相关组件
-│   │   │   ├── CustomInstallForm.vue    # 自定义安装表单
-│   │   │   ├── ModpackCard.vue          # 整合包卡片
-│   │   │   └── ModrinthBrowser.vue      # Modrinth浏览器
-│   │   ├── instance/             # 实例管理组件
-│   │   │   └── InstanceCard.vue         # 实例卡片
-│   │   ├── settings/             # 设置相关组件
-│   │   │   ├── GeneralSettings.vue      # 通用设置
-│   │   │   ├── JavaSettings.vue         # Java设置
-│   │   │   └── MemorySettings.vue       # 内存设置
-│   │   ├── GlobalDownloadStatus.vue     # 全局下载状态
-│   │   ├── GlobalNotification.vue       # 全局通知
-│   │   └── NotificationDownload.vue     # 下载通知
-│   ├── composables/              # Vue组合式函数
-│   ├── stores/                   # Pinia状态管理
-│   │   ├── downloadStore.ts      # 下载状态
-│   │   ├── launcherStore.ts      # 启动器状态
-│   │   ├── notificationStore.ts  # 通知状态
-│   │   └── settings.ts           # 设置状态
-│   ├── views/                    # 页面视图
-│   │   ├── HomeView.vue          # 主页
-│   │   ├── DownloadView.vue      # 下载页面
-│   │   ├── AddInstanceView.vue   # 添加实例页面
-│   │   ├── InstanceManagerView.vue      # 实例管理页面
-│   │   ├── InstallModpackView.vue       # 整合包安装页面
-│   │   └── SettingsView.vue      # 设置页面
-│   ├── types/                    # TypeScript类型定义
-│   ├── router/                   # 路由配置
-│   └── plugins/                  # Vue插件
-├── src-tauri/                    # Tauri后端代码
-│   ├── src/                      # Rust源代码
-│   │   ├── controllers/          # API控制器
-│   │   │   ├── auth_controller.rs       # 认证控制器
-│   │   │   ├── config_controller.rs     # 配置控制器
-│   │   │   ├── download_controller.rs   # 下载控制器
-│   │   │   ├── instance_controller.rs   # 实例控制器
-│   │   │   ├── java_controller.rs       # Java控制器
-│   │   │   ├── diagnostics_controller.rs # 诊断控制器
-│   │   │   ├── loader_controller.rs     # 加载器控制器
-│   │   │   └── modpack_controller.rs    # 整合包控制器
-│   │   ├── models/               # 数据模型
-│   │   ├── services/             # 业务逻辑
-│   │   │   ├── download/         # 下载服务模块
-│   │   │   ├── launcher/         # 启动器服务模块
-│   │   │   ├── loaders/          # 加载器安装模块
-│   │   │   │   ├── fabric.rs     # Fabric安装
-│   │   │   │   ├── forge.rs      # Forge安装
-│   │   │   │   ├── quilt.rs      # Quilt安装
-│   │   │   │   └── neoforge.rs   # NeoForge安装
-│   │   │   ├── config.rs         # 配置服务
-│   │   │   ├── instance.rs       # 实例服务
-│   │   │   ├── java.rs           # Java检测服务
-│   │   │   ├── memory.rs         # 内存管理服务
-│   │   │   ├── modrinth.rs       # Modrinth API服务
-│   │   │   └── modpack_installer.rs     # 整合包安装服务
-│   │   ├── utils/                # 工具函数
-│   │   │   ├── file_utils.rs     # 文件操作工具
-│   │   │   └── logger.rs         # 日志工具
-│   │   └── errors/               # 错误处理
-│   ├── Cargo.toml                # Rust依赖配置
-│   └── tauri.conf.json           # Tauri配置
-└── public/                       # 公共资源
-    └── icons/                    # 应用图标
+```bash
+pnpm run type-check
+pnpm test
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-## 使用指南
+Configuration, logs, login credentials and the default `.minecraft` directory live next to the executable, so upgrading means replacing the executable. If you redistribute a build, include `LICENSE` with it.
 
-### 主页
+## Project structure
 
-- 选择已安装的游戏版本
-- 设置玩家名称
-- 切换离线 / 微软正版身份
-- 一键启动游戏
-- 快捷访问下载、添加实例、实例管理功能
+```
+ar1s_launcher/
+├─ src/                     # Vue 3 frontend
+│  ├─ components/           # UI components (add-instance, instance, settings, ...)
+│  ├─ composables/          # reusable composition functions
+│  ├─ stores/               # Pinia stores (download, launcher, notifications, settings)
+│  ├─ views/                # routed pages (home, download, add instance, modpack install, settings)
+│  ├─ services/             # Tauri command wrappers and API clients
+│  ├─ types/                # TypeScript type definitions
+│  ├─ router/               # route configuration
+│  └─ plugins/              # Vuetify and other plugins
+├─ src-tauri/               # Rust backend
+│  └─ src/
+│     ├─ controllers/       # #[tauri::command] entry points
+│     ├─ services/          # download, launcher, loaders, modpacks, config, Java, auth
+│     ├─ models/            # serializable data models
+│     ├─ utils/             # file and logging helpers
+│     └─ errors/            # unified error type
+└─ public/icons/            # application and UI assets
+```
 
-### 实例管理
+## Usage
 
-- 查看所有已创建的游戏实例
-- 显示实例的加载器类型和游戏版本
-- 支持启动、重命名、删除实例
-- 快速打开实例文件夹
+### Home
 
-### 添加实例
+Select an installed version, set a player name, choose offline or Microsoft identity, and launch. Shortcuts to downloads, instance creation and instance management sit on the same page.
 
-#### 自定义安装
+### Add instance
 
-1. 选择基础 Minecraft 版本
-2. 可选择安装 Mod 加载器（Forge/Fabric/Quilt/NeoForge）
-3. 选择加载器版本
-4. 输入实例名称并创建
+- **Custom install**: pick a Minecraft version, optionally a loader and loader version, name the instance, create it.
+- **Online install**: pick a modpack platform, search and filter, choose a pack version, install. Mods, overrides and the required loader are resolved automatically.
 
-#### 从互联网安装
+### Instance list
 
-1. 选择平台（目前支持 Modrinth）
-2. 搜索整合包，支持按游戏版本、加载器、分类筛选
-3. 选择整合包版本并安装
+Cards show the loader, game version, mod count and last launch time. The card menu
+offers launch, open folder, instance details, diagnostics export, rename and delete.
 
-### 下载页面
+### Instance detail
 
-- 浏览所有可用版本（正式版、快照版）
-- 支持搜索和筛选
-- 选择下载源（官方/BMCL镜像）
-- 实时下载进度显示
+Opening an instance goes to its own page instead of a dialog, with tabs for:
 
-### 设置页面
+- **Mods** — installed mods with enable/disable, delete, install from Modrinth
+  (dependencies included) and update checks
+- **Game settings** — instance summary, plus a link to the global settings
+- **Resource packs** — placeholder for the upcoming resource pack manager
 
-- **通用设置**: 游戏目录、下载源与线程数、网络代理
-- **账号设置**: 离线身份与微软正版登录
-- **Java设置**: Java路径配置、自动检测系统Java、按实例自动匹配版本
-- **内存设置**: JVM内存分配与自动内存
-- **窗口设置**: 启动窗口尺寸与全屏
-- **高级选项**: GC 策略、JVM 参数开关、Metaspace 上限
+### Downloads
 
-## 配置说明
+Browse releases and snapshots, filter by type, choose a source (official or BMCLAPI), and follow progress in real time.
 
-### 游戏目录
+### Settings
 
-默认使用 exe 同级目录下的 `.minecraft`，也支持在设置中自定义目录。
+General (game directory, download source, threads, proxy), account, Java, memory, window, and advanced JVM options.
 
-### Java环境
+## Supported mod loaders
 
-- 自动检测系统Java安装
-- 支持手动指定Java路径
-- 启动时按版本 JSON 声明的 javaVersion 与 mods 实测结果自动挑选，不满足判据时给出诊断报告
-- 旧版 Forge 等已知不兼容的组合会被硬拦，不让启动
+| Loader | Status | Notes |
+| --- | --- | --- |
+| Forge | Supported | The most widely used loader |
+| Fabric | Supported | Lightweight loader |
+| Quilt | Supported | Fabric fork |
+| NeoForge | Supported | Modern Forge fork |
 
-### 网络设置
+## Supported modpack platforms
 
-- 支持多线程下载
-- 可配置下载源（官方源/BMCL镜像源）
-- 网络连接状态监控
-- 自动 fallback 机制
+| Platform | Status | Notes |
+| --- | --- | --- |
+| Modrinth | Supported | Open modpack platform |
+| CurseForge | In development | Requires CurseForge API access |
 
-### 版本隔离
+## Third-party services and content
 
-- 支持版本隔离模式
-- 每个实例独立的游戏目录
-- 独立的存档、资源包、Mod管理
+- **Modrinth**: pack metadata and files come from the official Modrinth API and CDN.
+- **CurseForge** (planned): the launcher will use a user-supplied API key and call the official API. Files will always be downloaded from CurseForge's own CDN — nothing is re-hosted, mirrored or redistributed. Projects that have third-party distribution disabled will not be installed automatically; the launcher will explain why and link to the project page instead.
+- **Minecraft**: version manifests, libraries and assets are fetched from Mojang's official servers, with BMCLAPI as an optional mirror.
+- Metadata is used only to render the interface, is kept in memory or a short-lived local cache, and is never exposed as a public API or resold.
+- The launcher is free, contains no ads, and does not attempt to bypass any platform's client or author reward program.
 
-## 支持的加载器
+## Troubleshooting
 
-| 加载器   | 状态    | 说明                |
-| -------- | ------- | ------------------- |
-| Forge    | ✅ 支持 | 最流行的 Mod 加载器 |
-| Fabric   | ✅ 支持 | 轻量级 Mod 加载器   |
-| Quilt    | ✅ 支持 | Fabric 的分支       |
-| NeoForge | ✅ 支持 | Forge 的现代化分支  |
+**The game fails to launch** — read the diagnostic report in the failure dialog first. It classifies the log and states the likely cause. Then check the Java configuration (automatic matching is the default) and run the file integrity check.
 
-## 支持的整合包平台
+**Downloads are slow** — switch the download source under Settings → General, check the network, and adjust the thread count.
 
-| 平台       | 状态      | 说明             |
-| ---------- | --------- | ---------------- |
-| Modrinth   | ✅ 支持   | 开源整合包平台   |
-| CurseForge | 🚧 开发中 | 最大的整合包平台 |
+**A loader installation fails** — make sure the base version is fully downloaded, the network is reachable, and check `logs/` for the detailed error.
 
-## 问题排查
+**A modpack installation fails** — verify free disk space and network connectivity, then retry. Failed installs are rolled back, so a retry starts clean.
 
-### 常见问题
+**UI issues** — restart the app and update the system graphics driver.
 
-1. **游戏启动失败**
-   - 启动失败弹窗会按日志特征给出结论与可复制的诊断报告，先读它
-   - 检查Java环境配置（默认自动匹配，也可在设置里手动指定）
-   - 验证游戏文件完整性（启动时会自动检测并提示修复）
+Logs are written to `logs/` next to the executable.
 
-2. **下载速度慢**
-   - 尝试切换下载源（设置 → 通用设置 → 下载源）
-   - 检查网络连接
-   - 调整下载线程数
+## Contributing
 
-3. **界面显示异常**
-   - 清除应用缓存
-   - 重启应用
-   - 检查系统图形驱动
+1. Fork the repository.
+2. Create a branch: `git checkout -b feature/my-feature`.
+3. Commit your changes.
+4. Push the branch and open a pull request.
 
-4. **加载器安装失败**
-   - 确保网络连接正常
-   - 检查基础版本是否已正确下载
-   - 查看日志获取详细错误信息
+Please follow the existing code style, add comments where the intent is not obvious, and make sure `pnpm run type-check` and `pnpm test` pass. For bug reports, include reproduction steps and the relevant log excerpt.
 
-5. **整合包安装失败**
-   - 确保有足够的磁盘空间
-   - 检查网络连接
-   - 尝试重新安装
+## Security
 
-### 日志文件
+Please report vulnerabilities privately through GitHub's *Report a vulnerability*
+rather than in a public issue. [SECURITY.md](SECURITY.md) documents the secrets
+policy: API keys are never committed, never compiled into the binary, and never
+exposed to the frontend.
 
-日志文件位于 exe 同级目录的 `logs` 文件夹，每次启动一个文件，只保留最近 30 个。
+## License
 
-## 贡献指南
+MIT — see [LICENSE](LICENSE). Attribution and licenses for third-party assets and icons are recorded in the "Third-party notices" section of the same file.
 
-我们欢迎社区贡献！如果您想为项目做出贡献，请遵循以下步骤：
+## Acknowledgements
 
-1. Fork项目仓库
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建Pull Request
+- [Tauri](https://tauri.app/) — cross-platform application framework
+- [Vuetify](https://vuetifyjs.com/) — Material Design component library
+- [Material Design Icons](https://pictogrammers.com/library/mdi/) — icon font
+- [BMCLAPI](https://bmclapidoc.bangbang93.com/) — Minecraft download mirror
+- [Modrinth](https://modrinth.com/) — open modpack and mod platform
 
-### 开发规范
+Thanks to [M-Crowe](https://github.com/m-crowe) for testing and for parts of the non-MD3 UI design, and to [XuanYuSLF](https://github.com/XuanYuSLF) for the block icon assets in `public/icons` (`dirt_path`, `grass_block`, `snow_grass`).
 
-- 遵循现有的代码风格
-- 添加适当的注释和文档
-- 确保所有测试通过
-- 更新README文档（如需要）
+## Roadmap
 
-## 许可证
+- [ ] CurseForge modpack support
+- [x] Mod installation and updates (search, dependency resolution, SHA-1 based update checks)
+- [ ] Resource pack management
+- [ ] Shader pack management
+- [ ] Internationalization
 
-本项目采用MIT许可证 - 查看LICENSE文件了解详情。第三方素材与图标的署名、许可同样记录在LICENSE的Third-party notices一节。
+## Disclaimer
 
-## 致谢
-
-- [Tauri](https://tauri.app/) - 优秀的跨平台应用框架
-- [Vuetify](https://vuetifyjs.com/) - Material Design组件库
-- [Material Design Icons](https://pictogrammers.com/library/mdi/) - 界面图标字体
-- [BMCLAPI](https://bmclapidoc.bangbang93.com/) - Minecraft镜像下载服务
-- [Modrinth](https://modrinth.com/) - 开源整合包和Mod平台
-
-感谢[M-Crowe](https://github.com/m-crowe)的测试和部分非MD3 UI的设计。
-
-感谢[XuanYuSLF](https://github.com/XuanYuSLF)绘制的方块图标素材（`public/icons`下的 dirt_path、grass_block、snow_grass）。
-
-## 路线图
-
-- [ ] CurseForge 整合包支持
-- [ ] 模组安装与更新（列表、启停、删除已完成）
-- [ ] 资源包管理
-- [ ] 光影包管理
-- [ ] 多语言支持
-- [ ] 自动更新功能
-
-## 问题反馈
-
-请提交GitHub Issue，并描述清楚问题和复现步骤。
+Ar1s Launcher is an unofficial, community project. It is not an official Minecraft product, is not approved by or associated with Mojang or Microsoft, and is not affiliated with or endorsed by CurseForge, Overwolf or Modrinth. All trademarks belong to their respective owners.
 
 ---
 

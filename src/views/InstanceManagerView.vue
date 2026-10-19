@@ -1,23 +1,28 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import InstanceCard from '../components/instance/InstanceCard.vue';
 import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
 import { useNotificationStore } from '../stores/notificationStore';
-import { configApi, instanceApi } from '../services';
+import { getInstanceListCache, setInstanceListCache } from '../stores/instanceListCache';
+import { instanceApi } from '../services';
 import { useGameLaunch } from '../composables/useGameLaunch';
 import { useDiagnosticsExport } from '../composables/useDiagnosticsExport';
-import type { GameInstance, ModInfo } from '../types/events';
+import type { GameInstance } from '../types/events';
 import { formatLastPlayed, getErrorMessage } from '../utils/format';
 import { logError } from '../utils/logger';
 import { getInstanceViewMode, getInstanceSortBy } from '../utils/storage';
 
 const route = useRoute();
+const router = useRouter();
 const notificationStore = useNotificationStore();
 const { launchInstance: startInstance } = useGameLaunch();
 const { exportDiagnostics } = useDiagnosticsExport();
-const instances = ref<GameInstance[]>([]);
+
+const instances = ref<GameInstance[]>(getInstanceListCache());
 const loading = ref(false);
+const refreshing = ref(false);
+let lastLoadedAt = 0;
 const launchingInstanceId = ref<string | null>(null);
 const searchQuery = ref('');
 const viewMode = ref<'grid' | 'list'>(getInstanceViewMode());
@@ -28,16 +33,6 @@ const currentInstance = ref<GameInstance | null>(null);
 const deleteDialog = ref(false);
 const deleteConfirmName = ref('');
 const sortBy = ref(getInstanceSortBy());
-
-const modDialog = ref(false);
-const mods = ref<ModInfo[]>([]);
-const modsLoading = ref(false);
-const modsError = ref('');
-const modBusy = ref<string | null>(null);
-const modDeleteDialog = ref(false);
-const modToDelete = ref<ModInfo | null>(null);
-// 关闭版本隔离时模组在共享目录里，启停/删除会影响所有实例
-const versionIsolation = ref(true);
 
 const sortOptions = [
   { title: '最近游玩', value: 'lastPlayed' },
@@ -72,13 +67,22 @@ const filteredInstances = computed(() => {
 });
 
 async function loadInstances() {
-  loading.value = true;
+  if (refreshing.value) return;
+
+  refreshing.value = true;
+  // 只有列表为空时才铺骨架屏；有旧数据时静默刷新，避免每次进来都闪一下
+  if (instances.value.length === 0) {
+    loading.value = true;
+  }
   try {
     instances.value = await instanceApi.getInstances();
+    setInstanceListCache(instances.value);
+    lastLoadedAt = Date.now();
   } catch (error) {
     logError('Failed to load instances', error, 'InstanceManagerView');
   } finally {
     loading.value = false;
+    refreshing.value = false;
   }
 }
 
@@ -167,84 +171,17 @@ async function deleteInstance() {
   }
 }
 
-async function openModDialog(instance: GameInstance) {
-  currentInstance.value = instance;
-  mods.value = [];
-  modDialog.value = true;
-  await loadMods();
-}
-
-async function loadMods() {
-  if (!currentInstance.value) return;
-  modsLoading.value = true;
-  modsError.value = '';
-  try {
-    mods.value = await instanceApi.getMods(currentInstance.value.name);
-  } catch (error) {
-    logError('Failed to load mods', error, 'InstanceManagerView');
-    modsError.value = getErrorMessage(error);
-  } finally {
-    modsLoading.value = false;
-  }
-}
-
-async function toggleMod(mod: ModInfo) {
-  if (!currentInstance.value) return;
-  modBusy.value = mod.fileName;
-  try {
-    await instanceApi.setModEnabled(currentInstance.value.name, mod.fileName, !mod.enabled);
-    await loadMods();
-    await loadInstances();
-  } catch (error) {
-    logError('Failed to toggle mod', error, 'InstanceManagerView');
-    notificationStore.error('模组操作失败', getErrorMessage(error));
-  } finally {
-    modBusy.value = null;
-  }
-}
-
-function askDeleteMod(mod: ModInfo) {
-  modToDelete.value = mod;
-  modDeleteDialog.value = true;
-}
-
-async function deleteMod() {
-  if (!currentInstance.value || !modToDelete.value) return;
-  const fileName = modToDelete.value.fileName;
-  modBusy.value = fileName;
-  try {
-    await instanceApi.deleteMod(currentInstance.value.name, fileName);
-    modDeleteDialog.value = false;
-    modToDelete.value = null;
-    await loadMods();
-    await loadInstances();
-  } catch (error) {
-    logError('Failed to delete mod', error, 'InstanceManagerView');
-    notificationStore.error('删除模组失败', getErrorMessage(error));
-  } finally {
-    modBusy.value = null;
-  }
-}
-
-function formatModSize(bytes: number): string {
-  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+function openInstanceDetail(instance: GameInstance) {
+  router.push({ name: 'instance-detail', params: { name: instance.name } });
 }
 
 watch(viewMode, (v) => localStorage.setItem('instanceViewMode', v));
 watch(sortBy, (v) => localStorage.setItem('instanceSortBy', v));
 
-async function loadIsolationSetting() {
-  try {
-    const value = await configApi.loadConfigKey('versionIsolation');
-    if (value !== null) versionIsolation.value = value === 'true';
-  } catch (err) {
-    logError('Failed to load isolation setting', err, 'InstanceManagerView');
-  }
-}
-
 function handleWindowFocus() {
+  // 刚拉过就不再拉：切回窗口时列表原地更新，不整页重排
+  if (Date.now() - lastLoadedAt < 2000) return;
   void loadInstances();
-  void loadIsolationSetting();
 }
 
 onMounted(() => {
@@ -252,7 +189,6 @@ onMounted(() => {
   if (searchParam && typeof searchParam === 'string') {
     searchQuery.value = searchParam;
   }
-  void loadIsolationSetting();
   loadInstances();
   window.addEventListener('focus', handleWindowFocus);
 });
@@ -323,7 +259,7 @@ onUnmounted(() => {
           color="secondary"
           size="small"
           aria-label="刷新列表"
-          :loading="loading"
+          :loading="refreshing"
           @click="loadInstances"
         >
           <v-icon size="20">mdi-refresh</v-icon>
@@ -383,7 +319,7 @@ onUnmounted(() => {
           :launching="launchingInstanceId === instance.id"
           @launch="launchInstance"
           @open-folder="openInstanceFolder"
-          @manage-mods="openModDialog"
+          @open="openInstanceDetail"
           @export-diagnostics="exportDiagnostics"
           @rename="openRenameDialog"
           @delete="openDeleteDialog"
@@ -434,11 +370,11 @@ onUnmounted(() => {
                   </template>
                   <v-list-item-title class="text-body-medium">打开文件夹</v-list-item-title>
                 </v-list-item>
-                <v-list-item @click="openModDialog(instance)">
+                <v-list-item @click="openInstanceDetail(instance)">
                   <template #prepend>
-                    <v-icon size="18">mdi-puzzle-outline</v-icon>
+                    <v-icon size="18">mdi-view-dashboard-outline</v-icon>
                   </template>
-                  <v-list-item-title class="text-body-medium">Mod 管理</v-list-item-title>
+                  <v-list-item-title class="text-body-medium">实例详情</v-list-item-title>
                 </v-list-item>
                 <v-list-item @click="exportDiagnostics(instance)">
                   <template #prepend>
@@ -490,119 +426,6 @@ onUnmounted(() => {
           <v-spacer />
           <v-btn variant="text" @click="renameDialog = false">取消</v-btn>
           <v-btn color="primary" @click="renameInstance">确定</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <v-dialog v-model="modDialog" max-width="640" scrollable>
-      <v-card color="surface-container-high">
-        <v-card-title class="d-flex align-center pa-4 pb-3">
-          <v-icon size="20" class="mr-2" color="on-surface-variant">mdi-puzzle-outline</v-icon>
-          <span class="text-title-medium font-weight-bold">Mod 管理</span>
-          <span v-if="currentInstance" class="text-body-medium text-on-surface-variant ml-2">
-            · {{ currentInstance.name }}
-          </span>
-          <v-spacer />
-          <v-btn
-            icon
-            size="small"
-            variant="text"
-            aria-label="重新加载模组列表"
-            :loading="modsLoading"
-            @click="loadMods"
-          >
-            <v-icon size="18">mdi-refresh</v-icon>
-          </v-btn>
-          <v-btn icon size="small" variant="text" aria-label="关闭" @click="modDialog = false">
-            <v-icon size="18">mdi-close</v-icon>
-          </v-btn>
-        </v-card-title>
-        <v-divider />
-
-        <v-card-text class="pa-0" style="min-height: 160px">
-          <div v-if="modsLoading && mods.length === 0" class="d-flex align-center justify-center pa-8">
-            <v-progress-circular indeterminate size="28" color="primary" />
-          </div>
-          <div v-else-if="modsError" class="text-center pa-8">
-            <div class="text-body-medium text-error mb-3">{{ modsError }}</div>
-            <v-btn size="small" variant="tonal" color="primary" @click="loadMods">重试</v-btn>
-          </div>
-          <div v-else-if="mods.length === 0" class="text-center pa-8 text-on-surface-variant">
-            <v-icon size="36" class="mb-2" color="on-surface-variant">mdi-puzzle-outline</v-icon>
-            <div class="text-body-medium">这个实例还没有模组</div>
-          </div>
-          <v-list v-else lines="two" density="compact">
-            <v-list-item v-for="mod in mods" :key="mod.fileName">
-              <template #prepend>
-                <v-icon size="20" color="on-surface-variant">mdi-puzzle-outline</v-icon>
-              </template>
-              <v-list-item-title class="text-body-medium" :class="{ 'text-on-surface-variant': !mod.enabled }">
-                {{ mod.displayName }}
-              </v-list-item-title>
-              <v-list-item-subtitle class="text-body-small">
-                <template v-if="mod.version">v{{ mod.version }} · </template>
-                {{ formatModSize(mod.size) }} · {{ mod.fileName }}
-              </v-list-item-subtitle>
-              <template #append>
-                <div class="d-flex align-center ga-1">
-                  <v-switch
-                    :model-value="mod.enabled"
-                    :loading="modBusy === mod.fileName"
-                    :disabled="modBusy === mod.fileName"
-                    :aria-label="mod.enabled ? `禁用 ${mod.displayName}` : `启用 ${mod.displayName}`"
-                    hide-details
-                    inset
-                    density="compact"
-                    color="primary"
-                    @update:model-value="toggleMod(mod)"
-                  />
-                  <v-btn
-                    icon
-                    size="small"
-                    variant="text"
-                    :aria-label="`删除 ${mod.displayName}`"
-                    :disabled="modBusy === mod.fileName"
-                    @click="askDeleteMod(mod)"
-                  >
-                    <v-icon size="18">mdi-delete-outline</v-icon>
-                  </v-btn>
-                </div>
-              </template>
-            </v-list-item>
-          </v-list>
-        </v-card-text>
-
-        <v-divider />
-        <v-card-actions class="pa-3">
-          <span class="text-body-small text-on-surface-variant">
-            {{
-              versionIsolation
-                ? '禁用只是把文件改名为 .jar.disabled，不会删除'
-                : '共享目录：这里启停或删除会影响所有实例'
-            }}
-          </span>
-          <v-spacer />
-          <v-btn variant="text" @click="modDialog = false">关闭</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
-
-    <v-dialog v-model="modDeleteDialog" max-width="380">
-      <v-card color="surface-container-high">
-        <v-card-text class="pa-5">
-          <div class="text-title-large font-weight-bold mb-2">删除模组</div>
-          <div class="text-body-medium text-on-surface-variant">
-            确定要删除 <strong class="text-on-surface">{{ modToDelete?.displayName }}</strong> 吗？ 文件
-            {{ modToDelete?.fileName }} 会直接从磁盘移除。
-          </div>
-          <div v-if="!versionIsolation" class="text-body-small text-error mt-3">
-            当前关闭了版本隔离，这个文件在共享 mods 目录里，删除后所有实例都不再加载它。
-          </div>
-        </v-card-text>
-        <v-card-actions class="pa-4 pt-0">
-          <v-spacer />
-          <v-btn variant="text" @click="modDeleteDialog = false">取消</v-btn>
-          <v-btn color="error" :loading="modBusy === modToDelete?.fileName" @click="deleteMod">删除</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

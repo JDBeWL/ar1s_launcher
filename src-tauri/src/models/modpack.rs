@@ -23,6 +23,9 @@ pub struct ModrinthModpack {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModrinthModpackVersion {
     pub id: String,
+    /// 所属项目，模组更新与依赖去重时用
+    #[serde(default)]
+    pub project_id: String,
     pub name: String,
     pub version_number: String,
     pub game_versions: Vec<String>,

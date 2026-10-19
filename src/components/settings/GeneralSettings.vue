@@ -335,7 +335,7 @@ onUnmounted(() => {
           <v-chip size="small" color="primary" variant="tonal">{{ appVersion }}</v-chip>
         </div>
         <div class="text-body-small text-on-surface-variant">
-          快捷键：Ctrl+D 下载，Ctrl+N 新建实例，Ctrl+I 实例管理，Ctrl+, 设置
+          快捷键：Ctrl+D 下载，Ctrl+N 新建实例，Ctrl+I 实例列表，Ctrl+, 设置
         </div>
       </v-card-text>
     </v-card>

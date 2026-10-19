@@ -126,6 +126,21 @@ pub fn sha1_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// 流式计算文件 sha1，模组更新检查按内容识别文件，不依赖文件名
+pub fn sha1_file(path: &std::path::Path) -> Result<String, LauncherError> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha1::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buf)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// maven 的 .sha1 文件常见格式是「hash  filename」或只有 hash
 pub fn parse_sha1(text: &str) -> Option<String> {
     let hash = text.split_whitespace().next()?;

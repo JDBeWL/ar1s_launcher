@@ -74,6 +74,32 @@ impl ModrinthService {
         offset: Option<u32>,
         sort_by: Option<String>,
     ) -> Result<ModrinthSearchResponse, LauncherError> {
+        self.search_projects(
+            "modpack",
+            query,
+            game_versions,
+            loaders,
+            categories,
+            limit,
+            offset,
+            sort_by,
+        )
+        .await
+    }
+
+    /// 按项目类型搜索，整合包与模组共用同一套 facets 逻辑
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_projects(
+        &self,
+        project_type: &str,
+        query: Option<String>,
+        game_versions: Option<Vec<String>>,
+        loaders: Option<Vec<String>>,
+        categories: Option<Vec<String>>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+        sort_by: Option<String>,
+    ) -> Result<ModrinthSearchResponse, LauncherError> {
         let mut params = HashMap::new();
 
         let search_query = query.unwrap_or_else(|| "*".to_string());
@@ -84,7 +110,8 @@ impl ModrinthService {
         }
 
         // facets 是分组数组：外层 AND、组内 OR
-        let mut facets_groups: Vec<Vec<String>> = vec![vec!["project_type:modpack".to_string()]];
+        let mut facets_groups: Vec<Vec<String>> =
+            vec![vec![format!("project_type:{}", project_type)]];
 
         if let Some(versions) = game_versions {
             // 同组放多个版本才是 OR；这里每个版本单独一组（AND，更严格）
@@ -119,7 +146,7 @@ impl ModrinthService {
         let response = self
             .retry_request(|client| client.get(&url).query(&params))
             .await
-            .map_err(|e| LauncherError::Custom(format!("搜索整合包失败: {}", e)))?;
+            .map_err(|e| LauncherError::Custom(format!("搜索失败: {}", e)))?;
 
         if !response.status().is_success() {
             return Err(LauncherError::Custom(format!(
@@ -138,9 +165,9 @@ impl ModrinthService {
             .ok_or_else(|| LauncherError::Custom("无效的响应格式".to_string()))?
             .iter()
             .filter_map(|hit| {
-                // 搜索结果可能混入模组，只保留 modpack 项目
+                // 搜索结果可能混入其他类型，只保留请求的项目类型
                 match hit.get("project_type").and_then(|v| v.as_str()) {
-                    Some("modpack") => {}
+                    Some(t) if t == project_type => {}
                     _ => return None,
                 }
                 // 搜索结果的字段名与项目接口不同：游戏版本在 `versions`，loaders 混在 `categories`
@@ -307,87 +334,91 @@ impl ModrinthService {
             .await
             .map_err(|e| LauncherError::Custom(format!("解析响应失败: {}", e)))?;
 
-        versions
-            .into_iter()
-            .map(|version| {
-                Ok(ModrinthModpackVersion {
-                    id: version["id"]
-                        .as_str()
-                        .ok_or_else(|| LauncherError::Custom("缺少id字段".to_string()))?
-                        .to_string(),
-                    name: version["name"]
-                        .as_str()
-                        .ok_or_else(|| LauncherError::Custom("缺少name字段".to_string()))?
-                        .to_string(),
-                    version_number: version["version_number"]
-                        .as_str()
-                        .ok_or_else(|| LauncherError::Custom("缺少version_number字段".to_string()))?
-                        .to_string(),
-                    game_versions: version["game_versions"]
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    loaders: version["loaders"]
-                        .as_array()
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    featured: version["featured"].as_bool().unwrap_or(false),
-                    date_published: version["date_published"]
-                        .as_str()
-                        .ok_or_else(|| LauncherError::Custom("缺少date_published字段".to_string()))?
-                        .to_string(),
-                    downloads: version["downloads"].as_u64().unwrap_or(0),
-                    files: version["files"]
-                        .as_array()
-                        .map(|files| {
-                            files
-                                .iter()
-                                .filter_map(|file| {
-                                    Some(ModrinthFile {
-                                        url: file["url"].as_str()?.to_string(),
-                                        filename: file["filename"].as_str()?.to_string(),
-                                        primary: file["primary"].as_bool().unwrap_or(false),
-                                        size: file["size"].as_u64().unwrap_or(0),
-                                        hashes: ModrinthHashes {
-                                            sha1: file["hashes"]["sha1"].as_str()?.to_string(),
-                                            sha512: file["hashes"]["sha512"].as_str()?.to_string(),
-                                        },
-                                    })
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    dependencies: version["dependencies"]
-                        .as_array()
-                        .map(|deps| {
-                            deps.iter()
-                                .filter_map(|dep| {
-                                    Some(ModrinthDependency {
-                                        version_id: dep["version_id"]
-                                            .as_str()
-                                            .map(|s| s.to_string()),
-                                        project_id: dep["project_id"]
-                                            .as_str()
-                                            .map(|s| s.to_string()),
-                                        dependency_type: dep["dependency_type"]
-                                            .as_str()?
-                                            .to_string(),
-                                    })
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                })
-            })
-            .collect()
+        versions.iter().map(parse_version).collect()
+    }
+
+    /// 按项目取版本列表（模组与整合包通用）
+    pub async fn get_project_versions(
+        &self,
+        project_id: &str,
+        game_versions: Option<Vec<String>>,
+        loaders: Option<Vec<String>>,
+    ) -> Result<Vec<ModrinthModpackVersion>, LauncherError> {
+        self.get_modpack_versions(project_id, game_versions, loaders)
+            .await
+    }
+
+    /// 按版本 ID 取单个版本，安装依赖与更新时用
+    pub async fn get_version(
+        &self,
+        version_id: &str,
+    ) -> Result<ModrinthModpackVersion, LauncherError> {
+        let url = format!("{}/version/{}", MODRINTH_API_BASE, version_id);
+        let response = self
+            .retry_request(|client| client.get(&url))
+            .await
+            .map_err(|e| LauncherError::Custom(format!("获取版本信息失败: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(LauncherError::Custom(format!(
+                "获取版本信息失败: {}",
+                response.status()
+            )));
+        }
+
+        let version: Value = response
+            .json()
+            .await
+            .map_err(|e| LauncherError::Custom(format!("解析响应失败: {}", e)))?;
+        parse_version(&version)
+    }
+
+    /// 批量查更新：本地文件的 sha1 交给 Modrinth，返回每个文件当前对应的最新版本
+    pub async fn check_updates(
+        &self,
+        hashes: Vec<String>,
+        game_versions: Vec<String>,
+        loaders: Vec<String>,
+    ) -> Result<HashMap<String, ModrinthModpackVersion>, LauncherError> {
+        if hashes.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let url = format!("{}/version_files/update", MODRINTH_API_BASE);
+        let body = serde_json::json!({
+            "hashes": hashes,
+            "algorithm": "sha1",
+            "game_versions": game_versions,
+            "loaders": loaders,
+        });
+
+        let response = self
+            .retry_request(|client| client.post(&url).json(&body))
+            .await
+            .map_err(|e| LauncherError::Custom(format!("检查更新失败: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(LauncherError::Custom(format!(
+                "检查更新失败: {}",
+                response.status()
+            )));
+        }
+
+        let versions: HashMap<String, Value> = response
+            .json()
+            .await
+            .map_err(|e| LauncherError::Custom(format!("解析响应失败: {}", e)))?;
+
+        let mut result = HashMap::new();
+        for (hash, value) in versions {
+            match parse_version(&value) {
+                Ok(version) => {
+                    result.insert(hash, version);
+                }
+                Err(error) => warn!("跳过无法解析的版本: {}", error),
+            }
+        }
+        Ok(result)
     }
 
     pub async fn download_modpack_file(
@@ -448,5 +479,121 @@ impl ModrinthService {
         }
 
         Err(last_error.unwrap_or_else(|| LauncherError::Custom("整合包文件下载失败".to_string())))
+    }
+}
+
+/// 把 Modrinth 的 version JSON 解析成模型；项目版本列表、单版本、更新检查共用
+fn parse_version(version: &Value) -> Result<ModrinthModpackVersion, LauncherError> {
+    Ok(ModrinthModpackVersion {
+        id: version["id"]
+            .as_str()
+            .ok_or_else(|| LauncherError::Custom("缺少id字段".to_string()))?
+            .to_string(),
+        // 单版本接口一定会给 project_id；旧数据缺失时留空，不影响安装
+        project_id: version["project_id"].as_str().unwrap_or_default().to_string(),
+        name: version["name"]
+            .as_str()
+            .ok_or_else(|| LauncherError::Custom("缺少name字段".to_string()))?
+            .to_string(),
+        version_number: version["version_number"]
+            .as_str()
+            .ok_or_else(|| LauncherError::Custom("缺少version_number字段".to_string()))?
+            .to_string(),
+        game_versions: version["game_versions"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        loaders: version["loaders"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        featured: version["featured"].as_bool().unwrap_or(false),
+        date_published: version["date_published"]
+            .as_str()
+            .ok_or_else(|| LauncherError::Custom("缺少date_published字段".to_string()))?
+            .to_string(),
+        downloads: version["downloads"].as_u64().unwrap_or(0),
+        files: version["files"]
+            .as_array()
+            .map(|files| {
+                files
+                    .iter()
+                    .filter_map(|file| {
+                        Some(ModrinthFile {
+                            url: file["url"].as_str()?.to_string(),
+                            filename: file["filename"].as_str()?.to_string(),
+                            primary: file["primary"].as_bool().unwrap_or(false),
+                            size: file["size"].as_u64().unwrap_or(0),
+                            hashes: ModrinthHashes {
+                                sha1: file["hashes"]["sha1"].as_str()?.to_string(),
+                                sha512: file["hashes"]["sha512"].as_str()?.to_string(),
+                            },
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        dependencies: version["dependencies"]
+            .as_array()
+            .map(|deps| {
+                deps.iter()
+                    .filter_map(|dep| {
+                        Some(ModrinthDependency {
+                            version_id: dep["version_id"].as_str().map(|s| s.to_string()),
+                            project_id: dep["project_id"].as_str().map(|s| s.to_string()),
+                            dependency_type: dep["dependency_type"].as_str()?.to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_version;
+    use serde_json::json;
+
+    #[test]
+    fn test_parse_version_keeps_files_and_dependencies() {
+        let value = json!({
+            "id": "ver1",
+            "project_id": "proj1",
+            "name": "Sodium 0.5.8",
+            "version_number": "0.5.8",
+            "game_versions": ["1.20.1"],
+            "loaders": ["fabric"],
+            "featured": false,
+            "date_published": "2024-04-01T00:00:00Z",
+            "downloads": 123,
+            "files": [{
+                "url": "https://cdn.modrinth.com/x.jar",
+                "filename": "sodium.jar",
+                "primary": true,
+                "size": 10,
+                "hashes": { "sha1": "abc", "sha512": "def" }
+            }],
+            "dependencies": [{
+                "version_id": "dep1",
+                "project_id": "depProj",
+                "dependency_type": "required"
+            }]
+        });
+
+        let version = parse_version(&value).unwrap();
+        assert_eq!(version.id, "ver1");
+        assert_eq!(version.project_id, "proj1");
+        assert_eq!(version.files.len(), 1);
+        assert!(version.files[0].primary);
+        assert_eq!(version.dependencies[0].dependency_type, "required");
     }
 }

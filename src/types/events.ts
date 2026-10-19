@@ -77,6 +77,27 @@ export interface ModInfo {
   size: number;
 }
 
+/** 后端安装结果里的一条记录，依赖也会出现在这里 */
+export interface InstalledMod {
+  versionId: string;
+  projectId: string;
+  name: string;
+  versionNumber: string;
+  fileName: string;
+}
+
+export interface ModInstallResult {
+  installed: InstalledMod[];
+}
+
+/** 本地文件与它可更新的版本，fileName 带 .disabled 时表示更新后仍保持禁用 */
+export interface ModUpdate {
+  fileName: string;
+  versionId: string;
+  projectId: string;
+  versionNumber: string;
+}
+
 export interface CreateInstancePayload {
   newInstanceName: string;
   baseVersionId: string;

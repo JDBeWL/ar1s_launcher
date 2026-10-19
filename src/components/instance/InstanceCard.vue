@@ -11,7 +11,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'launch', instance: GameInstance): void;
   (e: 'open-folder', instance: GameInstance): void;
-  (e: 'manage-mods', instance: GameInstance): void;
+  (e: 'open', instance: GameInstance): void;
   (e: 'delete', instance: GameInstance): void;
   (e: 'rename', instance: GameInstance): void;
   (e: 'export-diagnostics', instance: GameInstance): void;
@@ -88,11 +88,11 @@ const chipLabel = computed(() => {
               </template>
               <v-list-item-title class="text-body-medium">打开文件夹</v-list-item-title>
             </v-list-item>
-            <v-list-item @click="emit('manage-mods', instance)">
+            <v-list-item @click="emit('open', instance)">
               <template #prepend>
-                <v-icon size="18">mdi-puzzle-outline</v-icon>
+                <v-icon size="18">mdi-view-dashboard-outline</v-icon>
               </template>
-              <v-list-item-title class="text-body-medium">Mod 管理</v-list-item-title>
+              <v-list-item-title class="text-body-medium">实例详情</v-list-item-title>
             </v-list-item>
             <v-list-item @click="emit('export-diagnostics', instance)">
               <template #prepend>
