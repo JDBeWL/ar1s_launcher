@@ -21,6 +21,15 @@ export function formatLastPlayed(timestamp?: number): string {
   return formatTimeAgo(timestamp);
 }
 
+/** 资源包、模组这类文件体积展示：不到 1 MB 按 KB 取整，避免出现「0 MB」 */
+export function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 const LOADER_ICONS: Record<string, { list: string; select: string }> = {
   forge: { list: 'mdi-anvil', select: 'mdi-anvil' },
   fabric: { list: 'mdi-texture-box', select: 'mdi-feather' },

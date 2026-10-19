@@ -18,3 +18,7 @@ pub mod mod_installer;
 pub mod modpack_installer;
 pub mod modrinth;
 pub mod proxy;
+pub mod resourcepack;
+pub mod resourcepack_installer;
+pub mod shaderpack;
+pub mod shaderpack_installer;

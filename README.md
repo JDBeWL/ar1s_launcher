@@ -39,6 +39,14 @@ Ar1s Launcher manages Minecraft versions, mod loaders and isolated game instance
   files are still recognised, and batch-updating keeps disabled mods disabled
 - Enable, disable and delete mods without touching the files by hand
 
+### Resource and shader packs
+
+- Resource packs: browse Modrinth by the instance's game version, enable/disable through `options.txt`, import local files, delete, and check updates by SHA-1
+- Shader packs: browse Modrinth, install and enable in one click, and manage the game's own selection
+  (`iris.properties` / `oculus.properties` for Iris and Oculus, `optionsshaders.txt` for OptiFine),
+  including the Iris/Oculus master switch and SHA-1 based update checks
+- Packs without a `shaders` directory are flagged before the game silently refuses to load them
+
 ### Downloads
 
 - Official Mojang sources, with an optional BMCLAPI mirror for users in mainland China
@@ -150,7 +158,13 @@ Opening an instance goes to its own page instead of a dialog, with tabs for:
 - **Mods** — installed mods with enable/disable, delete, install from Modrinth
   (dependencies included) and update checks
 - **Game settings** — instance summary, plus a link to the global settings
-- **Resource packs** — placeholder for the upcoming resource pack manager
+- **Resource packs** — installed packs with icons and metadata, enable/disable and
+  ordering via `options.txt`, delete, import from local files, install from Modrinth
+  and SHA-1 based update checks
+- **Shaders** — installed shader packs with validity checks, one-click enable through
+  the game's own config (`iris.properties` / `oculus.properties` for Iris and Oculus,
+  `optionsshaders.txt` for OptiFine), the Iris/Oculus master switch, delete, import
+  from local files, install from Modrinth and SHA-1 based update checks
 
 ### Downloads
 
@@ -232,8 +246,8 @@ Thanks to [M-Crowe](https://github.com/m-crowe) for testing and for parts of the
 
 - [ ] CurseForge modpack support
 - [x] Mod installation and updates (search, dependency resolution, SHA-1 based update checks)
-- [ ] Resource pack management
-- [ ] Shader pack management
+- [x] Resource pack management (local management, Modrinth installs, update checks)
+- [x] Shader pack management (local management, Modrinth installs, update checks)
 - [ ] Internationalization
 
 ## Disclaimer

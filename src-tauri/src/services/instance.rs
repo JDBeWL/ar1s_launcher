@@ -38,7 +38,7 @@ fn get_dirs() -> Result<(PathBuf, PathBuf), LauncherError> {
 }
 
 /// 实例目录的创建/删除/重命名/整合包安装跨进程串行；嵌套下载另用 download.lock
-async fn acquire_instance_lock(
+pub(crate) async fn acquire_instance_lock(
     game_dir: &Path,
 ) -> Result<crate::utils::file_lock::FileLock, LauncherError> {
     crate::utils::file_lock::acquire_async(

@@ -12,3 +12,5 @@ pub mod java_controller;
 pub mod loader_controller;
 pub mod mod_controller;
 pub mod modpack_controller;
+pub mod resourcepack_controller;
+pub mod shaderpack_controller;

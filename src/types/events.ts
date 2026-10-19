@@ -98,6 +98,97 @@ export interface ModUpdate {
   versionNumber: string;
 }
 
+/** 资源包与当前实例版本的匹配程度；unknown 表示读不到游戏的资源包格式 */
+export type ResourcePackCompatibility = 'compatible' | 'outdated' | 'tooNew' | 'unknown';
+
+/** 对应后端 ResourcePackInfo，camelCase */
+export interface ResourcePackInfo {
+  /** 磁盘上的名字，`.zip` 文件名或文件夹名 */
+  fileName: string;
+  /** pack.mcmeta 里的描述，读不到时是文件名 */
+  displayName: string;
+  description: string | null;
+  minFormat: number | null;
+  maxFormat: number | null;
+  compatibility: ResourcePackCompatibility;
+  enabled: boolean;
+  size: number;
+  isDirectory: boolean;
+  /** pack.png 的 data URL */
+  iconDataUrl: string | null;
+}
+
+/** 对应后端 ImportSummary */
+export interface ResourcePackImportSummary {
+  imported: string[];
+  skipped: string[];
+}
+
+export interface InstalledResourcePack {
+  versionId: string;
+  projectId: string;
+  name: string;
+  versionNumber: string;
+  fileName: string;
+}
+
+/** 本地文件与它可更新的版本 */
+export interface ResourcePackUpdate {
+  fileName: string;
+  versionId: string;
+  projectId: string;
+  versionNumber: string;
+}
+
+/** 实例装的是哪套光影加载器；unknown 表示既没有 Iris/Oculus 也没有 OptiFine */
+export type ShaderBackend = 'iris' | 'oculus' | 'optifine' | 'unknown';
+
+/** 对应后端 ShaderPackInfo，camelCase */
+export interface ShaderPackInfo {
+  /** 磁盘上的名字，`.zip` 文件名或文件夹名，也是配置里 shaderPack 的值 */
+  fileName: string;
+  /** 展示名：压缩包去掉 .zip，文件夹保持原名 */
+  displayName: string;
+  size: number;
+  isDirectory: boolean;
+  /** 包里有没有 shaders 目录；没有的话游戏会拒绝加载 */
+  valid: boolean;
+  selected: boolean;
+}
+
+/** 对应后端 ShaderPackList */
+export interface ShaderPackList {
+  backend: ShaderBackend;
+  /** 只有 Iris / Oculus 有独立总开关，OptiFine 靠 shaderPack=OFF 表示关闭 */
+  supportsToggle: boolean;
+  enabled: boolean;
+  /** 配置里选中的包名，文件已不在磁盘上时也会原样返回 */
+  selected: string | null;
+  packs: ShaderPackInfo[];
+}
+
+/** 对应后端光影包的 ImportSummary */
+export interface ShaderPackImportSummary {
+  imported: string[];
+  skipped: string[];
+}
+
+export interface InstalledShaderPack {
+  versionId: string;
+  projectId: string;
+  name: string;
+  versionNumber: string;
+  fileName: string;
+}
+
+/** 本地文件与它可更新的版本 */
+export interface ShaderPackUpdate {
+  fileName: string;
+  versionId: string;
+  projectId: string;
+  versionNumber: string;
+}
+
 export interface CreateInstancePayload {
   newInstanceName: string;
   baseVersionId: string;

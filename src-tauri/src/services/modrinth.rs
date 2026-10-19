@@ -100,6 +100,35 @@ impl ModrinthService {
         offset: Option<u32>,
         sort_by: Option<String>,
     ) -> Result<ModrinthSearchResponse, LauncherError> {
+        self.search_projects_with_loader_mode(
+            project_type,
+            query,
+            game_versions,
+            loaders,
+            categories,
+            limit,
+            offset,
+            sort_by,
+            false,
+        )
+        .await
+    }
+
+    /// `loaders_any` 为 true 时把 loader 列表放进同一组（OR），用于光影包这种
+    /// 「Iris 或 OptiFine 任一能用就行」的场景
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_projects_with_loader_mode(
+        &self,
+        project_type: &str,
+        query: Option<String>,
+        game_versions: Option<Vec<String>>,
+        loaders: Option<Vec<String>>,
+        categories: Option<Vec<String>>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+        sort_by: Option<String>,
+        loaders_any: bool,
+    ) -> Result<ModrinthSearchResponse, LauncherError> {
         let mut params = HashMap::new();
 
         let search_query = query.unwrap_or_else(|| "*".to_string());
@@ -122,8 +151,19 @@ impl ModrinthService {
         }
 
         if let Some(loader_list) = loaders {
-            for loader in &loader_list {
-                facets_groups.push(vec![format!("categories:{}", loader)]);
+            if loaders_any {
+                // 同组才是 OR：光影包同时支持 iris 与 optifine，不能要求两个都命中
+                let group = loader_list
+                    .iter()
+                    .map(|loader| format!("categories:{}", loader))
+                    .collect::<Vec<_>>();
+                if !group.is_empty() {
+                    facets_groups.push(group);
+                }
+            } else {
+                for loader in &loader_list {
+                    facets_groups.push(vec![format!("categories:{}", loader)]);
+                }
             }
             debug!("添加加载器过滤: {:?}", loader_list);
         }

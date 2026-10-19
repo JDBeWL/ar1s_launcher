@@ -92,7 +92,28 @@ pub fn run() {
             controllers::modpack_controller::search_modrinth_modpacks,
             controllers::modpack_controller::get_modrinth_modpack_versions,
             controllers::modpack_controller::install_modrinth_modpack,
-            controllers::modpack_controller::cancel_modpack_install
+            controllers::modpack_controller::cancel_modpack_install,
+            controllers::resourcepack_controller::get_resource_packs,
+            controllers::resourcepack_controller::set_resource_pack_enabled,
+            controllers::resourcepack_controller::delete_instance_resource_pack,
+            controllers::resourcepack_controller::import_resource_packs,
+            controllers::resourcepack_controller::open_resourcepacks_folder,
+            controllers::resourcepack_controller::search_modrinth_resource_packs,
+            controllers::resourcepack_controller::get_modrinth_resource_pack_versions,
+            controllers::resourcepack_controller::install_modrinth_resource_pack,
+            controllers::resourcepack_controller::check_modrinth_resource_pack_updates,
+            controllers::resourcepack_controller::update_modrinth_resource_pack,
+            controllers::shaderpack_controller::get_shader_packs,
+            controllers::shaderpack_controller::set_shader_pack,
+            controllers::shaderpack_controller::set_shaders_enabled,
+            controllers::shaderpack_controller::delete_instance_shader_pack,
+            controllers::shaderpack_controller::import_shader_packs,
+            controllers::shaderpack_controller::open_shaderpacks_folder,
+            controllers::shaderpack_controller::search_modrinth_shader_packs,
+            controllers::shaderpack_controller::get_modrinth_shader_pack_versions,
+            controllers::shaderpack_controller::install_modrinth_shader_pack,
+            controllers::shaderpack_controller::check_modrinth_shader_pack_updates,
+            controllers::shaderpack_controller::update_modrinth_shader_pack
         ])
         .setup(|_app| {
             let storage_dir = services::config::init_storage();

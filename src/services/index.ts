@@ -2,6 +2,24 @@
  * API 统一出口
  * 汇总各分域接口与 Modrinth 类型，供组件按一个入口引用
  */
-export { api, versionApi, instanceApi, loaderApi, javaApi, configApi, userApi, modpackApi, modApi } from './api';
+export {
+  api,
+  versionApi,
+  instanceApi,
+  loaderApi,
+  javaApi,
+  configApi,
+  userApi,
+  modpackApi,
+  modApi,
+  resourcePackApi,
+  shaderPackApi,
+} from './api';
 
-export type { ModrinthSearchResult, ModrinthModpack } from '../types/events';
+export type {
+  ModrinthSearchResult,
+  ModrinthModpack,
+  ResourcePackInfo,
+  ShaderPackInfo,
+  ShaderPackList,
+} from '../types/events';

@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatTimeAgo, formatLastPlayed, getLoaderIcon, getErrorMessage, getErrorCode } from './format';
+import {
+  formatTimeAgo,
+  formatLastPlayed,
+  formatFileSize,
+  getLoaderIcon,
+  getErrorMessage,
+  getErrorCode,
+} from './format';
 
 describe('formatTimeAgo', () => {
   afterEach(() => {
@@ -58,6 +65,32 @@ describe('formatLastPlayed', () => {
     const now = Date.now();
     expect(formatLastPlayed(now)).toBe('刚刚');
     expect(formatLastPlayed(now - 3_600_000)).toBe('1 小时前');
+  });
+});
+
+describe('formatFileSize', () => {
+  it('小文件按 B 显示', () => {
+    expect(formatFileSize(0)).toBe('0 KB');
+    expect(formatFileSize(-1)).toBe('0 KB');
+    expect(formatFileSize(512)).toBe('512 B');
+  });
+
+  it('不足 1 MB 按 KB 取整且不会显示 0 KB', () => {
+    expect(formatFileSize(1024)).toBe('1 KB');
+    expect(formatFileSize(200)).toBe('200 B');
+    expect(formatFileSize(1500)).toBe('1 KB');
+    expect(formatFileSize(1024 * 1024 - 1)).toBe('1024 KB');
+  });
+
+  it('MB 与 GB 保留小数', () => {
+    expect(formatFileSize(1024 * 1024)).toBe('1.0 MB');
+    expect(formatFileSize(12.5 * 1024 * 1024)).toBe('12.5 MB');
+    expect(formatFileSize(3 * 1024 * 1024 * 1024)).toBe('3.00 GB');
+  });
+
+  it('非法数值兜底成 0 KB', () => {
+    expect(formatFileSize(Number.NaN)).toBe('0 KB');
+    expect(formatFileSize(Number.POSITIVE_INFINITY)).toBe('0 KB');
   });
 });
 

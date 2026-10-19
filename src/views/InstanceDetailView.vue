@@ -1,12 +1,14 @@
 <script setup lang="ts">
 /**
  * 实例详情页
- * 从实例列表进入，按标签组织这个实例的模组、游戏设置与资源包
+ * 从实例列表进入，按标签组织这个实例的模组、游戏设置、资源包与光影
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
 import ModsPanel from '../components/instance/ModsPanel.vue';
+import ResourcePacksPanel from '../components/instance/ResourcePacksPanel.vue';
+import ShaderPacksPanel from '../components/instance/ShaderPacksPanel.vue';
 import { useNotificationStore } from '../stores/notificationStore';
 import { getInstanceListCache } from '../stores/instanceListCache';
 import { instanceApi } from '../services';
@@ -20,13 +22,12 @@ const router = useRouter();
 const notificationStore = useNotificationStore();
 const { launchInstance: startInstance } = useGameLaunch();
 
-const tab = ref<'mods' | 'settings' | 'resourcepacks'>('mods');
+const tab = ref<'mods' | 'settings' | 'resourcepacks' | 'shaderpacks'>('mods');
 
 const instanceName = computed(() => String(route.params.name ?? ''));
 
 // 列表页已经拉过一次，先用缓存把头部画出来，再静默刷新，避免整页转圈闪一下
-const cachedInstance =
-  getInstanceListCache().find((item) => item.name === instanceName.value) ?? null;
+const cachedInstance = getInstanceListCache().find((item) => item.name === instanceName.value) ?? null;
 const instance = ref<GameInstance | null>(cachedInstance);
 const loading = ref(cachedInstance === null);
 const error = ref('');
@@ -158,6 +159,10 @@ onMounted(() => {
           <v-icon start size="18">mdi-texture-box</v-icon>
           资源包
         </v-tab>
+        <v-tab value="shaderpacks">
+          <v-icon start size="18">mdi-shimmer</v-icon>
+          光影
+        </v-tab>
       </v-tabs>
 
       <v-window v-model="tab">
@@ -214,19 +219,19 @@ onMounted(() => {
         </v-window-item>
 
         <v-window-item value="resourcepacks">
-          <v-card variant="flat" color="surface-container">
-            <v-card-text class="pa-4">
-              <v-alert type="info" variant="tonal" density="comfortable">
-                资源包管理正在开发中。当前可以在实例文件夹的 <code>resourcepacks</code>
-                目录里手动放入资源包，游戏内即可选择启用。
-              </v-alert>
-              <div class="d-flex ga-2 mt-4">
-                <v-btn variant="tonal" prepend-icon="mdi-folder-open-outline" @click="openFolder">
-                  打开实例文件夹
-                </v-btn>
-              </div>
-            </v-card-text>
-          </v-card>
+          <ResourcePacksPanel
+            :instance-name="instance.name"
+            :game-version="instance.gameVersion"
+            @changed="loadInstance(true)"
+          />
+        </v-window-item>
+
+        <v-window-item value="shaderpacks">
+          <ShaderPacksPanel
+            :instance-name="instance.name"
+            :game-version="instance.gameVersion"
+            @changed="loadInstance(true)"
+          />
         </v-window-item>
       </v-window>
     </template>
