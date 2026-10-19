@@ -23,6 +23,7 @@ export default defineConfig(async () => ({
     globals: true,
     environment: 'node',
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    setupFiles: ['./src/test/setup.ts'],
   },
 
   clearScreen: false,
