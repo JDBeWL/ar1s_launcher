@@ -949,26 +949,148 @@ fn read_mod_metadata(path: &Path) -> (Option<String>, Option<String>) {
 /// 取 mods.toml 里第一条 displayName，缺省退化到 modId
 fn parse_mods_toml_name(text: &str) -> Option<String> {
     let mut mod_id = None;
+    // description 这类多行字符串的正文里可能正好有 `modId = "..."` 这样的行，
+    // 所以整块正文要跳过，不能逐行当键值对解析
+    let mut in_multiline: Option<char> = None;
     for line in text.lines() {
         let line = line.trim();
+        if let Some(quote) = in_multiline {
+            if line.contains(multiline_delimiter(quote)) {
+                in_multiline = None;
+            }
+            continue;
+        }
         if line.starts_with('#') {
             continue;
         }
         // mods.toml 里满是 [mods] 这类没有 '=' 的表头行，不能用 ? 退出整个函数
-        let Some((key, value)) = line.split_once('=') else {
+        let Some((key, rest)) = line.split_once('=') else {
             continue;
         };
-        let value = value.trim().trim_matches('"').trim();
-        if value.is_empty() {
+        let key = key.trim().trim_matches('"').trim();
+        if key.is_empty() {
             continue;
         }
-        match key.trim() {
-            "displayName" => return Some(value.to_string()),
-            "modId" if mod_id.is_none() => mod_id = Some(value.to_string()),
+        let rest = rest.trim_start();
+        // 多行字符串：同一行能闭合就取首行内容，否则跳过整块正文
+        if let Some(quote) = multiline_delimiter_at(rest) {
+            let delimiter = multiline_delimiter(quote);
+            let body = &rest[delimiter.len()..];
+            let closed = body.find(delimiter);
+            if closed.is_none() {
+                in_multiline = Some(quote);
+            }
+            let body = match closed {
+                Some(end) => &body[..end],
+                None => body,
+            };
+            if key == "displayName" {
+                let value = body.lines().next().unwrap_or_default().trim();
+                return if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+            }
+            continue;
+        }
+        // 值可能是 `"名字" #mandatory` 这种带行内注释的写法，注释不属于值
+        let Some(value) = toml_string_value(rest) else {
+            continue;
+        };
+        match key {
+            "displayName" => return Some(value),
+            "modId" if mod_id.is_none() => mod_id = Some(value),
             _ => {}
         }
     }
     mod_id
+}
+
+/// 多行字符串的定界符：三个双引号或三个单引号
+fn multiline_delimiter(quote: char) -> &'static str {
+    if quote == '"' { "\"\"\"" } else { "'''" }
+}
+
+/// 值是否以多行字符串的起始定界符开头
+fn multiline_delimiter_at(value: &str) -> Option<char> {
+    if value.starts_with("\"\"\"") {
+        Some('"')
+    } else if value.starts_with("'''") {
+        Some('\'')
+    } else {
+        None
+    }
+}
+
+/// 解析 TOML 值里的字符串：支持双引号/单引号、转义，
+/// 引号外的 `#` 之后是注释。空串或解析不出内容时返回 None。
+/// 多行字符串由调用方单独处理。
+fn toml_string_value(rest: &str) -> Option<String> {
+    let mut chars = rest.chars();
+    match chars.next() {
+        Some(quote @ ('"' | '\'')) => toml_quoted_string(chars.as_str(), quote),
+        // 裸值（true、1.0 之类）同样按行内注释切
+        _ => {
+            let raw = strip_toml_comment(rest).trim();
+            if raw.is_empty() {
+                None
+            } else {
+                Some(raw.to_string())
+            }
+        }
+    }
+}
+
+/// 读到与开引号配对的闭引号；引号内的 `#` 是正文，不是注释
+fn toml_quoted_string(rest: &str, quote: char) -> Option<String> {
+    let mut out = String::new();
+    let mut chars = rest.chars();
+    while let Some(c) = chars.next() {
+        if quote == '"' && c == '\\' {
+            let escaped = chars.next()?;
+            match escaped {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                '"' => out.push('"'),
+                '\\' => out.push('\\'),
+                'u' | 'U' => {
+                    let len = if escaped == 'u' { 4 } else { 8 };
+                    let hex: String = chars.by_ref().take(len).collect();
+                    let code = u32::from_str_radix(&hex, 16).ok()?;
+                    out.push(char::from_u32(code)?);
+                }
+                // 其余转义（\b、\f 等）对展示名没有意义，原样保留
+                other => {
+                    out.push('\\');
+                    out.push(other);
+                }
+            }
+            continue;
+        }
+        if c == quote {
+            return if out.is_empty() { None } else { Some(out) };
+        }
+        out.push(c);
+    }
+    // 没有闭合引号：多半是残缺行，宁可回退到 modId 也不吐出垃圾
+    None
+}
+
+/// 切掉裸值后面的行内注释，引号内的 `#` 不算
+fn strip_toml_comment(value: &str) -> &str {
+    let mut in_single = false;
+    let mut in_double = false;
+    for (index, c) in value.char_indices() {
+        match c {
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '#' if !in_single && !in_double => return &value[..index],
+            _ => {}
+        }
+    }
+    value
 }
 
 /// 列出实例的模组，含被禁用的 *.jar.disabled
@@ -1552,6 +1674,55 @@ mod tests {
     #[test]
     fn test_mods_toml_name_skips_empty_display_name() {
         let text = "[[mods]]\nmodId=\"examplemod\"\ndisplayName=\"\"\n";
+        assert_eq!(parse_mods_toml_name(text).as_deref(), Some("examplemod"));
+    }
+
+    /// Forge MDK 模板到处是 `#mandatory`，行内注释不能被当成名字的一部分
+    #[test]
+    fn test_mods_toml_name_strips_inline_comment() {
+        let text = "[[mods]] #mandatory\nmodId = \"opack2reload\" #mandatory\ndisplayName = \"0Pack2Reload\" #mandatory\n";
+        assert_eq!(parse_mods_toml_name(text).as_deref(), Some("0Pack2Reload"));
+    }
+
+    #[test]
+    fn test_mods_toml_name_keeps_hash_inside_quotes() {
+        let text = "[[mods]]\nmodId=\"examplemod\"\ndisplayName=\"Mod #1\" #mandatory\n";
+        assert_eq!(parse_mods_toml_name(text).as_deref(), Some("Mod #1"));
+    }
+
+    #[test]
+    fn test_mods_toml_name_reads_literal_strings_and_escapes() {
+        // 单引号是字面串，不处理转义
+        let text = "[[mods]]\nmodId='examplemod'\ndisplayName='Literal \\\" Name'\n";
+        assert_eq!(
+            parse_mods_toml_name(text).as_deref(),
+            Some("Literal \\\" Name")
+        );
+
+        // 双引号串里的转义要还原
+        let text = "[[mods]]\nmodId=\"examplemod\"\ndisplayName=\"A \\\"quoted\\\" mod\"\n";
+        assert_eq!(
+            parse_mods_toml_name(text).as_deref(),
+            Some("A \"quoted\" mod")
+        );
+    }
+
+    #[test]
+    fn test_mods_toml_name_reads_single_line_multiline_string() {
+        let text = "[[mods]]\nmodId=\"examplemod\"\ndisplayName=\"\"\"Example\"\"\"\n";
+        assert_eq!(parse_mods_toml_name(text).as_deref(), Some("Example"));
+    }
+
+    /// description 的多行正文里可能写着看起来像键值的行，不能拿来当名字
+    #[test]
+    fn test_mods_toml_name_ignores_multiline_description_body() {
+        let text = "[[mods]]\nmodId=\"examplemod\"\ndisplayName=\"Example\"\ndescription='''\nmodId=\"bogus\"\ndisplayName=\"Bogus\"\n'''\n";
+        assert_eq!(parse_mods_toml_name(text).as_deref(), Some("Example"));
+    }
+
+    #[test]
+    fn test_mods_toml_name_skips_commented_out_display_name() {
+        let text = "[[mods]]\nmodId=\"examplemod\"\n#displayName=\"Bogus\" #optional\n";
         assert_eq!(parse_mods_toml_name(text).as_deref(), Some("examplemod"));
     }
 }
