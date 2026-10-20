@@ -6,6 +6,7 @@ use crate::errors::LauncherError;
 use crate::utils::verify_cache;
 use log::{debug, info, warn};
 use sha1::{Digest, Sha1};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -204,6 +205,31 @@ pub fn sha1_files_parallel(paths: &[PathBuf]) -> Vec<(PathBuf, String)> {
     })
 }
 
+/// 并行算出「文件 -> sha1」的索引，供 Modrinth 的按哈希反查使用
+///
+/// 模组、资源包、光影包的更新检查是同一套流程：列出本地文件、算哈希、反查归属项目。
+/// 三处以前各自写一遍串行循环，只有单核在跑；这里统一走并行分片。
+/// 返回 (哈希列表, 哈希 -> 文件名)，单个文件算不出来时记警告并跳过。
+pub fn sha1_index_parallel(files: &[(PathBuf, String)]) -> (Vec<String>, HashMap<String, String>) {
+    let paths: Vec<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
+    let by_path: HashMap<PathBuf, String> = sha1_files_parallel(&paths).into_iter().collect();
+
+    let mut hashes = Vec::with_capacity(files.len());
+    let mut by_hash = HashMap::with_capacity(files.len());
+
+    for (path, file_name) in files {
+        match by_path.get(path) {
+            Some(hash) => {
+                hashes.push(hash.clone());
+                by_hash.insert(hash.clone(), file_name.clone());
+            }
+            None => warn!("计算 {} 的 sha1 失败，跳过更新检查", file_name),
+        }
+    }
+
+    (hashes, by_hash)
+}
+
 /// 边写边算：下载时每块数据顺手进哈希，写完不必再把整个文件读一遍
 pub struct FileHasher {
     hasher: Sha1,
@@ -330,93 +356,6 @@ pub fn verify_file(
         verify_cache::remember(path, &metadata, expected_hash);
     }
     Ok(valid)
-}
-
-/// 校验并修复：只做校验和就地修复的判定，真正下载交给 `download_with_resume`
-///
-/// 这里以前自己 `response.bytes()` 下一遍，失败了下载层再下一遍；而且整文件读进
-/// 内存，大 jar 直接把内存顶上去。现在损坏文件就地删掉，由调用方决定怎么补。
-pub async fn verify_and_repair_file(
-    job: &crate::models::DownloadJob,
-    _client: &reqwest::Client,
-) -> Result<bool, LauncherError> {
-    let path = &job.path;
-
-    if !path.exists() {
-        debug!("文件不存在，需要下载: {}", path.display());
-        return Ok(false);
-    }
-
-    if verify_file(path, job.hash.as_deref(), job.size)? {
-        debug!("文件验证通过: {}", path.display());
-        return Ok(true);
-    }
-
-    warn!("文件损坏，删除后重新下载: {}", path.display());
-
-    // 保留一份备份只在文件不大时值得，否则等于把整个 jar 再复制一遍磁盘
-    if let Ok(metadata) = std::fs::metadata(path)
-        && metadata.len() <= MAX_BACKUP_BYTES
-    {
-        let backup_path = with_backup_suffix(path);
-        if let Err(e) = std::fs::copy(path, &backup_path) {
-            warn!("备份损坏文件失败: {}", e);
-        }
-    }
-
-    if let Err(e) = std::fs::remove_file(path) {
-        warn!("删除损坏文件失败: {}", e);
-    }
-
-    Ok(false)
-}
-
-/// 大文件不做备份：修复的意义远小于一次完整磁盘拷贝的开销
-const MAX_BACKUP_BYTES: u64 = 8 * 1024 * 1024;
-
-/// 追加后缀而不是换扩展名，否则 `mod.jar` 会覆盖同目录的 `mod.bak`
-fn with_backup_suffix(path: &std::path::Path) -> PathBuf {
-    let mut name = path
-        .file_name()
-        .map(|name| name.to_os_string())
-        .unwrap_or_default();
-    name.push(".bak");
-    path.with_file_name(name)
-}
-
-pub async fn batch_verify_files(
-    jobs: &[crate::models::DownloadJob],
-    client: &reqwest::Client,
-) -> Result<Vec<(String, bool)>, LauncherError> {
-    use tokio::task;
-
-    let mut tasks = vec![];
-
-    for job in jobs {
-        let job_clone = job.clone();
-        let client_clone = client.clone();
-
-        tasks.push(task::spawn(async move {
-            let file_name = job_clone
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-
-            match verify_and_repair_file(&job_clone, &client_clone).await {
-                Ok(is_valid) => (file_name, is_valid),
-                Err(_) => (file_name, false),
-            }
-        }));
-    }
-
-    let mut results = vec![];
-    for task in tasks {
-        results.push(task.await?);
-    }
-
-    Ok(results)
 }
 
 pub fn cleanup_instance_creation(game_dir: &Path, instance_name: &str, _base_version_id: &str) {
@@ -657,6 +596,51 @@ mod tests {
     #[test]
     fn test_parallel_sha1_handles_empty_input() {
         assert!(sha1_files_parallel(&[]).is_empty());
+    }
+
+    /// 更新检查用的索引：哈希列表与「哈希 -> 文件名」必须一一对应
+    #[test]
+    fn test_sha1_index_maps_each_hash_back_to_its_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut files = Vec::new();
+        for index in 0..5 {
+            let path = dir.path().join(format!("mod{index}.jar"));
+            let content = format!("jar-{index}");
+            fs::write(&path, &content).unwrap();
+            files.push((path, format!("mod{index}.jar")));
+        }
+
+        let (hashes, by_hash) = sha1_index_parallel(&files);
+
+        assert_eq!(hashes.len(), files.len());
+        assert_eq!(by_hash.len(), files.len());
+        for (path, file_name) in &files {
+            let expected = sha1_file(path).unwrap();
+            assert!(hashes.contains(&expected), "哈希列表缺少 {file_name}");
+            assert_eq!(by_hash.get(&expected), Some(file_name));
+        }
+    }
+
+    /// 读不出来的文件要跳过，不能让它挤掉其他文件的映射
+    #[test]
+    fn test_sha1_index_skips_unreadable_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let good = dir.path().join("good.jar");
+        fs::write(&good, b"content").unwrap();
+        let missing = dir.path().join("missing.jar");
+
+        let files = vec![
+            (good.clone(), "good.jar".to_string()),
+            (missing, "missing.jar".to_string()),
+        ];
+        let (hashes, by_hash) = sha1_index_parallel(&files);
+
+        assert_eq!(hashes.len(), 1);
+        assert_eq!(by_hash.len(), 1);
+        assert_eq!(
+            by_hash.get(&sha1_file(&good).unwrap()),
+            Some(&"good.jar".to_string())
+        );
     }
 
     #[test]

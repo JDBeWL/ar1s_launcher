@@ -613,16 +613,6 @@ impl ModpackInstaller {
                 break;
             }
 
-            let permit = match semaphore.clone().acquire_owned().await {
-                Ok(permit) => permit,
-                Err(_) => break,
-            };
-
-            if is_cancelled() {
-                drop(permit);
-                break;
-            }
-
             let file = &files[index];
             let state = states[index].clone();
             let completed = completed_count.clone();
@@ -633,6 +623,7 @@ impl ModpackInstaller {
             let cancelled = cancelled.clone();
             let bytes_since_last = bytes_since_last.clone();
             let client = client.clone();
+            let semaphore = semaphore.clone();
             // Modrinth 每个文件给多个镜像：第一个当主源、第二个当备源
             let job = DownloadJob {
                 url: file.downloads.first().cloned().unwrap_or_default(),
@@ -644,7 +635,16 @@ impl ModpackInstaller {
             };
 
             let handle = tokio::spawn(async move {
-                let _permit = permit;
+                // 许可在任务内部获取：在派发循环里 await 的话，大文件占满槽位会卡住
+                // 整个循环，后面的小文件连排队的机会都没有（与 batch.rs 保持一致）
+                let Ok(_permit) = semaphore.acquire_owned().await else {
+                    state.status.store(FILE_PENDING, Ordering::Release);
+                    return;
+                };
+                if is_cancelled() {
+                    state.status.store(FILE_PENDING, Ordering::Release);
+                    return;
+                }
                 state.status.store(FILE_DOWNLOADING, Ordering::Release);
 
                 // 重试时 .part 已经落了半截，download_file 会带 Range 续传而不是从头再下

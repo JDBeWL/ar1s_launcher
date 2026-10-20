@@ -632,10 +632,18 @@ fn get_instances_sync(
         .unwrap_or_else(|| versions_dir.to_path_buf());
 
     // 自动内存开启时给每张实例卡片一个启动时的预计值；可用内存只采样一次
-    let auto_memory_available_mb = config::load_config()
-        .ok()
+    let config = config::load_config().ok();
+    let auto_memory_available_mb = config
+        .as_ref()
         .filter(|cfg| cfg.auto_memory_enabled)
         .map(|_| get_system_memory().available_memory_mb as u32);
+
+    // 上次启动时间整表取一次：以前在循环里逐实例调用，每次都 stat 配置文件 + 抢锁，
+    // 20 个实例就是 20 次系统调用，而内容其实是同一份
+    let last_played_map = config
+        .as_ref()
+        .map(|cfg| cfg.instance_last_played.clone())
+        .unwrap_or_default();
 
     if let Ok(entries) = fs::read_dir(versions_dir) {
         for entry in entries.flatten() {
@@ -794,7 +802,7 @@ fn get_instances_sync(
                         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                         .map(|d| d.as_secs().to_string());
 
-                    let config_last_played = config::get_instance_last_played(&name);
+                    let config_last_played = last_played_map.get(&name).copied();
                     let json_last_played =
                         json_value.as_ref().and_then(|v| v["lastPlayed"].as_i64());
                     let last_played = match (config_last_played, json_last_played) {

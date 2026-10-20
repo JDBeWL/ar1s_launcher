@@ -10,7 +10,7 @@ import { instanceApi, modpackApi, versionApi } from './api';
 const gameDirInfoKey = `${CacheKeys.CONFIG}:game_dir_info`;
 
 function seedGameDirInfoCache() {
-  cache.set(gameDirInfoKey, { path: 'D:/mc', versions: ['1.20.1'], total_size: 0 });
+  cache.set(gameDirInfoKey, { path: 'D:/mc', versions: ['1.20.1'] });
 }
 
 describe('game dir info cache invalidation', () => {

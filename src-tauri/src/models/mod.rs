@@ -202,7 +202,6 @@ impl Default for GameConfig {
 pub struct GameDirInfo {
     pub path: String,
     pub versions: Vec<String>,
-    pub total_size: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

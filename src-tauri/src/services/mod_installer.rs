@@ -11,7 +11,7 @@ use crate::services::{config, download, instance, launcher, modrinth};
 use crate::utils::file_utils;
 use log::{info, warn};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -138,54 +138,37 @@ impl ModInstaller {
                 })?,
         };
 
-        let mut queue = VecDeque::from([root_version_id]);
+        // 依赖解析分轮：同一轮里的取版本与下载互不依赖，可以并发；
+        // 下一轮要等这一轮的结果才能知道新发现了哪些依赖。
+        // 串行版本是每个依赖一次 get_version + 一次下载，10 个依赖就是 20 个往返
+        let mut frontier = vec![root_version_id];
         let mut visited: HashSet<String> = HashSet::new();
-        let mut installed = Vec::new();
+        let mut installed: Vec<InstalledMod> = Vec::new();
 
-        while let Some(version_id) = queue.pop_front() {
-            if !visited.insert(version_id.clone()) {
-                continue;
+        while !frontier.is_empty() {
+            let mut round: Vec<String> = Vec::new();
+            for version_id in std::mem::take(&mut frontier) {
+                if !visited.insert(version_id.clone()) {
+                    continue;
+                }
+                if visited.len() > MAX_INSTALLED_MODS {
+                    warn!("依赖数量超过 {}，停止继续解析", MAX_INSTALLED_MODS);
+                    break;
+                }
+                round.push(version_id);
             }
-            if visited.len() > MAX_INSTALLED_MODS {
-                warn!("依赖数量超过 {}，停止继续解析", MAX_INSTALLED_MODS);
+
+            if round.is_empty() {
                 break;
             }
 
-            let version = self.modrinth.get_version(&version_id).await?;
-            let file_name = download_version(&version, &context.mods_dir).await?;
+            let results = resolve_and_download(&context, round, install_dependencies).await?;
 
-            if install_dependencies {
-                for dependency in &version.dependencies {
-                    if dependency.dependency_type != "required" {
-                        continue;
-                    }
-                    if let Some(dependency_version) = dependency.version_id.as_ref() {
-                        queue.push_back(dependency_version.clone());
-                    } else if let Some(dependency_project) = dependency.project_id.as_ref() {
-                        // 依赖只给了项目：按实例版本与加载器挑最新的一个
-                        if let Ok(versions) = self
-                            .modrinth
-                            .get_project_versions(
-                                dependency_project,
-                                Some(vec![context.game_version.clone()]),
-                                Some(vec![context.loader.clone()]),
-                            )
-                            .await
-                            && let Some(first) = versions.first()
-                        {
-                            queue.push_back(first.id.clone());
-                        }
-                    }
-                }
+            // 结果已按本轮序号排好，直接追加能保持「根 → 一级依赖 → 二级依赖」的顺序
+            for (_, installed_mod, next) in results {
+                installed.push(installed_mod);
+                frontier.extend(next);
             }
-
-            installed.push(InstalledMod {
-                version_id: version.id.clone(),
-                project_id: version.project_id.clone(),
-                name: version.name.clone(),
-                version_number: version.version_number.clone(),
-                file_name,
-            });
         }
 
         info!(
@@ -207,23 +190,11 @@ impl ModInstaller {
             return Ok(Vec::new());
         }
 
-        // 哈希是 CPU 密集活，扔到阻塞线程池，别占着 async worker
-        let (hashes, by_hash) = tokio::task::spawn_blocking(move || {
-            let mut hashes = Vec::new();
-            let mut by_hash: HashMap<String, String> = HashMap::new();
-            for (path, file_name) in files {
-                match file_utils::sha1_file(&path) {
-                    Ok(hash) => {
-                        hashes.push(hash.clone());
-                        by_hash.insert(hash, file_name);
-                    }
-                    Err(error) => warn!("计算 {} 的 sha1 失败: {}", file_name, error),
-                }
-            }
-            (hashes, by_hash)
-        })
-        .await
-        .map_err(|e| LauncherError::Custom(format!("计算模组哈希失败: {}", e)))?;
+        // 哈希是 CPU 密集活，扔到阻塞线程池并按核数并行分片
+        let (hashes, by_hash) =
+            tokio::task::spawn_blocking(move || file_utils::sha1_index_parallel(&files))
+                .await
+                .map_err(|e| LauncherError::Custom(format!("计算模组哈希失败: {}", e)))?;
 
         let versions = self
             .modrinth
@@ -313,6 +284,101 @@ impl ModInstaller {
             file_name: final_name,
         })
     }
+}
+
+/// 依赖解析的并发上限：再多也只会把 Modrinth 的速率限制撞得更狠
+const MAX_CONCURRENT_RESOLVES: usize = 8;
+
+/// 并发取版本并下载一轮依赖，返回 (序号, 安装结果, 新发现的依赖)
+///
+/// 同一轮内各模组互不依赖，串行只是白等网络；并发上限跟下载线程数走，
+/// 不额外放大连接数。结果按入参顺序返回，保证安装列表的顺序稳定。
+async fn resolve_and_download(
+    context: &ModContext,
+    version_ids: Vec<String>,
+    install_dependencies: bool,
+) -> Result<Vec<(usize, InstalledMod, Vec<String>)>, LauncherError> {
+    let concurrency = config::load_config()
+        .map(|cfg| {
+            (cfg.download_threads as usize).clamp(
+                config::MIN_DOWNLOAD_THREADS as usize,
+                MAX_CONCURRENT_RESOLVES,
+            )
+        })
+        .unwrap_or(4)
+        .max(1);
+
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut handles = Vec::with_capacity(version_ids.len());
+
+    for (index, version_id) in version_ids.into_iter().enumerate() {
+        let mods_dir = context.mods_dir.clone();
+        let game_version = context.game_version.clone();
+        let loader = context.loader.clone();
+        let permit = semaphore.clone();
+
+        handles.push((
+            index,
+            tokio::spawn(async move {
+                let _permit = permit
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| LauncherError::Custom("依赖解析被中止".to_string()))?;
+
+                let service = modrinth::ModrinthService::new();
+                let version = service.get_version(&version_id).await?;
+                let file_name = download_version(&version, &mods_dir).await?;
+
+                let mut next = Vec::new();
+                if install_dependencies {
+                    for dependency in &version.dependencies {
+                        if dependency.dependency_type != "required" {
+                            continue;
+                        }
+                        if let Some(dependency_version) = dependency.version_id.as_ref() {
+                            next.push(dependency_version.clone());
+                        } else if let Some(dependency_project) = dependency.project_id.as_ref() {
+                            // 依赖只给了项目：按实例版本与加载器挑最新的一个
+                            if let Ok(versions) = service
+                                .get_project_versions(
+                                    dependency_project,
+                                    Some(vec![game_version.clone()]),
+                                    Some(vec![loader.clone()]),
+                                )
+                                .await
+                                && let Some(first) = versions.first()
+                            {
+                                next.push(first.id.clone());
+                            }
+                        }
+                    }
+                }
+
+                Ok::<_, LauncherError>((
+                    InstalledMod {
+                        version_id: version.id.clone(),
+                        project_id: version.project_id.clone(),
+                        name: version.name.clone(),
+                        version_number: version.version_number.clone(),
+                        file_name,
+                    },
+                    next,
+                ))
+            }),
+        ));
+    }
+
+    let mut results = Vec::with_capacity(handles.len());
+    for (index, handle) in handles {
+        let (installed_mod, next) = handle
+            .await
+            .map_err(|e| LauncherError::Custom(format!("模组下载任务异常终止: {}", e)))??;
+        results.push((index, installed_mod, next));
+    }
+
+    // 并发完成顺序不可控，按序号还原成本轮入参顺序
+    results.sort_by_key(|(index, _, _)| *index);
+    Ok(results)
 }
 
 /// 从实例元数据里取 MC 版本与加载器，原版实例直接拒绝

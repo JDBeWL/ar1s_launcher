@@ -36,12 +36,6 @@ export interface VersionManifest {
   versions: MinecraftVersion[];
 }
 
-export interface VersionSizeInfo {
-  version_id: string;
-  client_size: number;
-  total_size: number;
-}
-
 // 对应后端 MemoryStats，snake_case
 export interface MemoryStats {
   total_memory_mb: number;
@@ -253,7 +247,6 @@ export interface InstanceNameValidation {
 export interface GameDirInfo {
   path: string;
   versions: string[];
-  total_size: number;
 }
 
 export interface ModrinthModpack {

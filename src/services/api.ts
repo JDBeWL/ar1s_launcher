@@ -22,7 +22,6 @@ import type {
   AuthStatus,
   DeviceCodeDisplay,
   MicrosoftLoginResult,
-  VersionSizeInfo,
   JavaCompatibilityResult,
   GameConfig,
   MemoryStats,
@@ -82,10 +81,6 @@ async function dedupedInvoke<T>(
 export const versionApi = {
   async getVersions(): Promise<VersionManifest> {
     return withCache(CacheKeys.VERSIONS, () => dedupedInvoke<VersionManifest>('get_versions'));
-  },
-
-  async getVersionSize(versionId: string, mirror?: string): Promise<VersionSizeInfo> {
-    return invokeCommand<VersionSizeInfo>('get_version_size', { versionId, mirror });
   },
 
   async downloadVersion(versionId: string, mirror?: string): Promise<void> {

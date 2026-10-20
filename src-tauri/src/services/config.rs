@@ -745,7 +745,6 @@ pub fn get_game_dir_info() -> Result<GameDirInfo, LauncherError> {
     Ok(GameDirInfo {
         path: game_dir_str,
         versions,
-        total_size: 0,
     })
 }
 

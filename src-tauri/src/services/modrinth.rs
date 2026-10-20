@@ -17,6 +17,35 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 const MODRINTH_API_BASE: &str = "https://api.modrinth.com/v2";
 const MAX_API_RETRIES: u32 = 3;
 
+/// 这些状态码值得重试：限流与临时性服务端故障
+///
+/// 404 / 400 / 401 这类是请求本身有问题，重试只会重复失败并浪费退避时间
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+/// 指数退避：500ms、1s、2s……上限 8 秒，别让界面等太久
+fn exponential_backoff(attempt: u32) -> std::time::Duration {
+    let millis = 500u64.saturating_mul(1u64 << attempt.min(4));
+    std::time::Duration::from_millis(millis.min(8_000))
+}
+
+/// 读 `Retry-After`：Modrinth 在限流时会给出剩余秒数
+///
+/// 只支持秒数形式（HTTP 日期形式对这里没有意义）；缺省或解析不出时返回 None，
+/// 由调用方退回指数退避。上限 30 秒：再久也不该让用户干等。
+fn retry_after(response: &reqwest::Response) -> Option<std::time::Duration> {
+    let raw = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+
+    let seconds: u64 = raw.parse().ok()?;
+    Some(std::time::Duration::from_secs(seconds.min(30)))
+}
+
 pub struct ModrinthService;
 
 /// 项目在客户端/服务端的可用性：required / optional / unsupported
@@ -37,19 +66,53 @@ impl ModrinthService {
         Self
     }
 
+    /// 带退避重试地发一次请求
+    ///
+    /// 以前只在**传输层**出错时重试，服务端返回 429 / 5xx 时当成成功交给调用方，
+    /// 调用方只会报「Modrinth API返回错误: 429」而不会重试。批量接口（导出时的
+    /// `version_files`、`projects`）恰恰最容易撞上速率限制，这里补上：
+    /// - 429：优先遵循 `Retry-After`，没给就按指数退避
+    /// - 5xx：按指数退避重试
     async fn retry_request(
         &self,
         request_fn: impl Fn(&Client) -> reqwest::RequestBuilder,
     ) -> Result<reqwest::Response, LauncherError> {
         let client = http_client::get_client();
-        let mut last_err = None;
+        let mut last_err: Option<String> = None;
+
         for attempt in 0..=MAX_API_RETRIES {
             let builder = request_fn(&client);
             match builder.send().await {
-                Ok(resp) => return Ok(resp),
+                Ok(resp) => {
+                    let status = resp.status();
+
+                    // 其余的 4xx（404、400 之类）是请求本身的问题，重试没有意义，直接交回去
+                    if status.is_success() || !is_retryable_status(status) {
+                        return Ok(resp);
+                    }
+
+                    let wait = match retry_after(&resp) {
+                        Some(duration) => duration,
+                        None => exponential_backoff(attempt),
+                    };
+
+                    if attempt < MAX_API_RETRIES {
+                        warn!(
+                            "Modrinth API 返回 {} (尝试 {}/{}), {}ms 后重试",
+                            status,
+                            attempt + 1,
+                            MAX_API_RETRIES + 1,
+                            wait.as_millis()
+                        );
+                        tokio::time::sleep(wait).await;
+                    } else {
+                        warn!("Modrinth API 返回 {}，已达重试上限", status);
+                    }
+                    last_err = Some(format!("HTTP {}", status));
+                }
                 Err(e) => {
                     if attempt < MAX_API_RETRIES {
-                        let backoff = std::time::Duration::from_millis(500 * (1 << attempt));
+                        let backoff = exponential_backoff(attempt);
                         warn!(
                             "Modrinth API 请求失败 (尝试 {}/{}): {}, {}ms 后重试",
                             attempt + 1,
@@ -59,14 +122,15 @@ impl ModrinthService {
                         );
                         tokio::time::sleep(backoff).await;
                     }
-                    last_err = Some(e);
+                    last_err = Some(e.to_string());
                 }
             }
         }
+
         Err(LauncherError::Custom(format!(
             "Modrinth API 请求失败 (已重试 {} 次): {}",
             MAX_API_RETRIES,
-            last_err.unwrap()
+            last_err.unwrap_or_else(|| "未知错误".to_string())
         )))
     }
 
@@ -701,8 +765,35 @@ fn parse_version(version: &Value) -> Result<ModrinthModpackVersion, LauncherErro
 
 #[cfg(test)]
 mod tests {
-    use super::parse_version;
+    use super::{exponential_backoff, is_retryable_status, parse_version};
+    use reqwest::StatusCode;
     use serde_json::json;
+
+    /// 只有限流和 5xx 值得重试；4xx 是请求本身的问题
+    #[test]
+    fn test_only_rate_limit_and_server_errors_are_retried() {
+        assert!(is_retryable_status(StatusCode::TOO_MANY_REQUESTS));
+        assert!(is_retryable_status(StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(is_retryable_status(StatusCode::BAD_GATEWAY));
+        assert!(is_retryable_status(StatusCode::SERVICE_UNAVAILABLE));
+        assert!(is_retryable_status(StatusCode::GATEWAY_TIMEOUT));
+
+        assert!(!is_retryable_status(StatusCode::OK));
+        assert!(!is_retryable_status(StatusCode::NOT_FOUND));
+        assert!(!is_retryable_status(StatusCode::BAD_REQUEST));
+        assert!(!is_retryable_status(StatusCode::UNAUTHORIZED));
+    }
+
+    #[test]
+    fn test_backoff_grows_and_is_capped() {
+        assert_eq!(exponential_backoff(0).as_millis(), 500);
+        assert_eq!(exponential_backoff(1).as_millis(), 1_000);
+        assert_eq!(exponential_backoff(2).as_millis(), 2_000);
+        assert_eq!(exponential_backoff(3).as_millis(), 4_000);
+        // 封顶 8 秒：再往后也不该让用户干等
+        assert_eq!(exponential_backoff(4).as_millis(), 8_000);
+        assert_eq!(exponential_backoff(16).as_millis(), 8_000);
+    }
 
     #[test]
     fn test_parse_version_keeps_files_and_dependencies() {

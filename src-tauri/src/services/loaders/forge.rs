@@ -4,6 +4,7 @@
 
 use crate::errors::LauncherError;
 use crate::services::config;
+use crate::services::download;
 use crate::services::http_client;
 use crate::services::launcher::java::JavaCandidate;
 use crate::utils::file_utils;
@@ -343,6 +344,90 @@ fn forge_installer_sources(mc: &str, v: &str) -> Vec<String> {
     sources
 }
 
+/// 流式把 URL 写到目标文件，边写边算 sha1，可选校验 ZIP 头
+///
+/// 以前用 `resp.bytes()` 把整个 jar 读进内存：Forge installer ~10 MB 还行，
+/// 但库文件走同一条路径、还是并发下载的，几个大 jar 同时进来就是几十 MB 的峰值。
+/// 现在内存占用与文件大小无关。
+///
+/// `validate` 拿到「ZIP 头是否合法 + 实际 sha1」，返回 false 表示这份内容不可用。
+pub(crate) async fn download_to_file(
+    url: &str,
+    client: &Client,
+    target: &Path,
+    expected_sha1: Option<&str>,
+    require_zip: bool,
+) -> Result<bool, LauncherError> {
+    let response = download_with_retry(url, client, 2).await?;
+
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+
+    // 先写临时文件再改名：校验失败时不能留下半截 jar 冒充已下载
+    let temp = target.with_extension("download.tmp");
+    let mut file = fs::File::create(&temp)?;
+    let mut hasher = file_utils::FileHasher::new();
+    let mut head = [0u8; 4];
+    let mut head_len = 0usize;
+    let mut total: u64 = 0;
+
+    let mut response = response;
+    let written = async {
+        while let Some(chunk) = response.chunk().await? {
+            if head_len < head.len() {
+                let take = (head.len() - head_len).min(chunk.len());
+                head[head_len..head_len + take].copy_from_slice(&chunk[..take]);
+                head_len += take;
+            }
+            file.write_all(&chunk)?;
+            hasher.update(&chunk);
+            total += chunk.len() as u64;
+        }
+        Ok::<(), LauncherError>(())
+    }
+    .await;
+
+    if let Err(error) = written {
+        drop(file);
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
+    drop(file);
+
+    let is_zip = head_len >= 4 && head == [0x50, 0x4B, 0x03, 0x04];
+    let actual = hasher.finish_hex();
+
+    let hash_ok = match expected_sha1.map(str::trim).filter(|h| !h.is_empty()) {
+        Some(expected) => {
+            let ok = actual.eq_ignore_ascii_case(expected);
+            if !ok {
+                warn!("Forge: sha1 校验失败: {}", target.display());
+            }
+            ok
+        }
+        None => true,
+    };
+
+    let zip_ok = !require_zip || is_zip;
+    if require_zip && !is_zip {
+        warn!("Forge: 下载内容不是 ZIP: {}", target.display());
+    }
+
+    // 空文件/超小文件一律当作失败：多半是镜像返回的错误页
+    if !hash_ok || !zip_ok || total < 100 {
+        let _ = fs::remove_file(&temp);
+        return Ok(false);
+    }
+
+    if let Err(error) = fs::rename(&temp, target) {
+        let _ = fs::remove_file(&temp);
+        return Err(error.into());
+    }
+
+    Ok(true)
+}
+
 async fn download_forge_installer(
     forge_version: &ForgeVersion,
 ) -> Result<tempfile::TempPath, LauncherError> {
@@ -353,34 +438,38 @@ async fn download_forge_installer(
 
     let sources = forge_installer_sources(&forge_version.mcversion, &forge_version.version);
 
-    let client = http_client::get_client();
+    // 安装器是实打实的大文件下载，用下载客户端（只设读超时）而不是 30 秒总超时的 API 客户端
+    let download_client = download::get_http_client();
+    let api_client = http_client::get_client();
 
     for url in &sources {
         info!("Forge: 尝试下载: {}", url);
-        if let Ok(resp) = download_with_retry(url, &client, 3).await
-            && let Ok(bytes) = resp.bytes().await
-            && bytes.len() > 1024
-            && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04])
-        {
-            match download_sha1(&client, url).await {
-                Some(expected) if !file_utils::verify_sha1(&bytes, &expected) => {
-                    warn!("Forge: 安装器 sha1 不匹配，跳过该源: {}", url);
-                    continue;
-                }
-                Some(_) => {}
-                None => warn!("Forge: 未取到安装器 sha1，仅校验 ZIP 头: {}", url),
-            }
 
-            let mut tmp = tempfile::Builder::new()
-                .prefix(&installer_filename)
-                .suffix(".jar")
-                .tempfile()
-                .map_err(|e| LauncherError::Custom(format!("创建临时文件失败: {}", e)))?;
-            tmp.write_all(&bytes)
-                .map_err(|e| LauncherError::Custom(format!("写入安装器失败: {}", e)))?;
-            let temp_path = tmp.into_temp_path();
-            info!("Forge: 安装器已下载");
-            return Ok(temp_path);
+        let tmp = tempfile::Builder::new()
+            .prefix(&installer_filename)
+            .suffix(".jar")
+            .tempfile()
+            .map_err(|e| LauncherError::Custom(format!("创建临时文件失败: {}", e)))?;
+        let temp_path = tmp.into_temp_path();
+
+        let expected = download_sha1(&api_client, url).await;
+        if expected.is_none() {
+            warn!("Forge: 未取到安装器 sha1，仅校验 ZIP 头: {}", url);
+        }
+
+        match download_to_file(url, &download_client, &temp_path, expected.as_deref(), true).await {
+            Ok(true) => {
+                if expected.is_some() {
+                    info!("Forge: 安装器 sha1 校验通过");
+                }
+                info!("Forge: 安装器已下载");
+                return Ok(temp_path);
+            }
+            Ok(false) => continue,
+            Err(error) => {
+                warn!("Forge: 下载安装器失败: {}", error);
+                continue;
+            }
         }
     }
 
@@ -536,26 +625,6 @@ pub(crate) async fn download_sha1(client: &Client, url: &str) -> Option<String> 
     file_utils::parse_sha1(&text)
 }
 
-fn payload_valid(path: &Path, bytes: &[u8], expected_sha1: Option<&str>) -> bool {
-    if let Some(expected) = expected_sha1
-        && !file_utils::verify_sha1(bytes, expected)
-    {
-        warn!("Forge: sha1 校验失败: {}", path.display());
-        return false;
-    }
-
-    let expects_zip = path.extension().is_some_and(|ext| {
-        let ext = ext.to_string_lossy();
-        ext.eq_ignore_ascii_case("jar") || ext.eq_ignore_ascii_case("zip")
-    });
-    if expects_zip && !bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
-        warn!("Forge: 下载内容不是 ZIP: {}", path.display());
-        return false;
-    }
-
-    true
-}
-
 async fn download_with_retry(
     url: &str,
     client: &Client,
@@ -607,16 +676,18 @@ async fn download_library(
         fs::create_dir_all(parent)?;
     }
 
-    let client = http_client::get_client();
+    let client = download::get_http_client();
     for url in &sources {
-        if let Ok(response) = download_with_retry(url, &client, 3).await
-            && let Ok(bytes) = response.bytes().await
-            && bytes.len() >= 4
-            && bytes[0..4] == [0x50, 0x4B, 0x03, 0x04]
-        {
-            fs::write(&target_path, &bytes)?;
-            info!("Forge: {} 下载成功", lib_name);
-            return Ok(());
+        match download_to_file(url, &client, &target_path, None, true).await {
+            Ok(true) => {
+                info!("Forge: {} 下载成功", lib_name);
+                return Ok(());
+            }
+            Ok(false) => continue,
+            Err(error) => {
+                warn!("Forge: {} 下载失败: {}", lib_name, error);
+                continue;
+            }
         }
     }
 
@@ -747,15 +818,13 @@ pub(crate) async fn download_library_from_profile(
         sources.push(format!("{}/{}", MAVEN_FORGE, path));
 
         for url in &sources {
-            if let Ok(resp) = download_with_retry(url, client, 2).await
-                && let Ok(bytes) = resp.bytes().await
-                && bytes.len() > 100
-                && payload_valid(&target_path, &bytes, expected_sha1)
-            {
-                fs::write(&target_path, &bytes).map_err(|e| {
-                    LauncherError::Custom(format!("写入 {} 失败: {}", target_path.display(), e))
-                })?;
-                return Ok(());
+            match download_to_file(url, client, &target_path, expected_sha1, true).await {
+                Ok(true) => return Ok(()),
+                Ok(false) => continue,
+                Err(error) => {
+                    warn!("Forge: 下载 {} 失败: {}", target_path.display(), error);
+                    continue;
+                }
             }
         }
     }
@@ -766,26 +835,21 @@ pub(crate) async fn download_library_from_profile(
             return Ok(());
         }
 
-        if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent).ok();
-        }
-
         let sources = vec![
             format!("{}/{}", BMCL_LIBRARIES_URL, maven_path),
             format!("{}/{}", MAVEN_FORGE, maven_path),
             format!("{}/{}", MAVEN_CENTRAL, maven_path),
         ];
 
+        let client = download::get_http_client();
         for url in &sources {
-            if let Ok(resp) = download_with_retry(url, &http_client::get_client(), 2).await
-                && let Ok(bytes) = resp.bytes().await
-                && bytes.len() > 100
-                && payload_valid(&target_path, &bytes, expected_sha1)
-            {
-                fs::write(&target_path, &bytes).map_err(|e| {
-                    LauncherError::Custom(format!("写入 {} 失败: {}", target_path.display(), e))
-                })?;
-                return Ok(());
+            match download_to_file(url, &client, &target_path, expected_sha1, true).await {
+                Ok(true) => return Ok(()),
+                Ok(false) => continue,
+                Err(error) => {
+                    warn!("Forge: 下载 {} 失败: {}", target_path.display(), error);
+                    continue;
+                }
             }
         }
     }

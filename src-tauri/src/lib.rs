@@ -19,7 +19,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             controllers::download_controller::get_versions,
-            controllers::download_controller::get_version_size,
             controllers::download_controller::download_version,
             controllers::download_controller::cancel_download,
             controllers::config_controller::get_config,

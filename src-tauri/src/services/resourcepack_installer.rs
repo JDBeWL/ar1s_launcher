@@ -8,9 +8,8 @@ use crate::models::DownloadJob;
 use crate::models::modpack::*;
 use crate::services::{config, download, launcher, modrinth};
 use crate::utils::file_utils;
-use log::{info, warn};
+use log::info;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -153,22 +152,11 @@ impl ResourcePackInstaller {
             return Ok(Vec::new());
         }
 
-        let (hashes, by_hash) = tokio::task::spawn_blocking(move || {
-            let mut hashes = Vec::new();
-            let mut by_hash: HashMap<String, String> = HashMap::new();
-            for (path, file_name) in files {
-                match file_utils::sha1_file(&path) {
-                    Ok(hash) => {
-                        hashes.push(hash.clone());
-                        by_hash.insert(hash, file_name);
-                    }
-                    Err(error) => warn!("计算 {} 的 sha1 失败: {}", file_name, error),
-                }
-            }
-            (hashes, by_hash)
-        })
-        .await
-        .map_err(|e| LauncherError::Custom(format!("计算资源包哈希失败: {}", e)))?;
+        // 并行分片算哈希：串行循环只用得上一个核
+        let (hashes, by_hash) =
+            tokio::task::spawn_blocking(move || file_utils::sha1_index_parallel(&files))
+                .await
+                .map_err(|e| LauncherError::Custom(format!("计算资源包哈希失败: {}", e)))?;
 
         let versions = self
             .modrinth

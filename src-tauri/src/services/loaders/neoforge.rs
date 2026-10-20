@@ -5,8 +5,8 @@
 use super::forge;
 use crate::errors::LauncherError;
 use crate::services::config;
+use crate::services::download;
 use crate::services::http_client;
-use crate::utils::file_utils;
 use log::{info, warn};
 use serde_json::Value;
 use std::fs;
@@ -71,70 +71,60 @@ pub async fn install_neoforge(
 
     let mut downloaded = false;
 
+    // installer 是几 MB 的大文件下载：用下载客户端（只设读超时），并流式落盘而不是整包进内存
+    let download_client = download::get_http_client();
+
     info!("尝试从 BMCLAPI 下载 NeoForge installer");
-    if let Ok(response) = client.get(&bmclapi_url).send().await
-        && response.status().is_success()
-        && let Ok(bytes) = response.bytes().await
+    let bmclapi_sha1 = forge::download_sha1(&client, &bmclapi_url).await;
+    if bmclapi_sha1.is_none() {
+        warn!("NeoForge: 未取到 BMCLAPI installer sha1，仅校验 ZIP 头");
+    }
+    match forge::download_to_file(
+        &bmclapi_url,
+        &download_client,
+        &installer_path,
+        bmclapi_sha1.as_deref(),
+        true,
+    )
+    .await
     {
-        if bytes.len() > 1024 && bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
-            let expected = match forge::download_sha1(&client, &bmclapi_url).await {
-                Some(hash) => Some(hash),
-                None => forge::download_sha1(&client, &official_url).await,
-            };
-            let hash_ok = expected
-                .as_deref()
-                .is_none_or(|hash| file_utils::verify_sha1(&bytes, hash));
-            if hash_ok {
-                if expected.is_none() {
-                    warn!("NeoForge: 未取到 installer sha1，仅校验 ZIP 头");
-                }
-                fs::write(&installer_path, &bytes)?;
-                downloaded = true;
-                info!("从 BMCLAPI 下载成功");
-            } else {
-                warn!("NeoForge: BMCLAPI installer sha1 不匹配，改试官方源");
-            }
-        } else {
-            warn!("NeoForge: BMCLAPI installer 不是有效 ZIP");
+        Ok(true) => {
+            downloaded = true;
+            info!("从 BMCLAPI 下载成功");
         }
+        Ok(false) => warn!("NeoForge: BMCLAPI installer 不可用，改试官方源"),
+        Err(error) => warn!("NeoForge: BMCLAPI 下载失败: {}", error),
     }
 
     if !downloaded {
         info!("尝试从官方源下载 NeoForge installer: {}", official_url);
-        let response =
-            client.get(&official_url).send().await.map_err(|e| {
-                LauncherError::Custom(format!("下载 NeoForge installer 失败: {}", e))
-            })?;
-
-        if !response.status().is_success() {
-            return Err(LauncherError::Custom(format!(
-                "下载 NeoForge installer 失败: {}",
-                response.status()
-            )));
-        }
-
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| LauncherError::Custom(format!("读取 NeoForge installer 失败: {}", e)))?;
-
-        if bytes.len() <= 1024 || !bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
-            return Err(LauncherError::Custom(
-                "NeoForge installer 不是有效 ZIP".to_string(),
-            ));
-        }
-
-        if let Some(expected) = forge::download_sha1(&client, &official_url).await {
-            if !file_utils::verify_sha1(&bytes, &expected) {
-                return Err(LauncherError::Custom(
-                    "NeoForge installer sha1 校验失败".to_string(),
-                ));
-            }
-        } else {
+        let expected = forge::download_sha1(&client, &official_url).await;
+        if expected.is_none() {
             warn!("NeoForge: 未取到 installer sha1，仅校验 ZIP 头");
         }
 
-        fs::write(&installer_path, &bytes)?;
+        match forge::download_to_file(
+            &official_url,
+            &download_client,
+            &installer_path,
+            expected.as_deref(),
+            true,
+        )
+        .await
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(LauncherError::Custom(
+                    "NeoForge installer 不是有效 ZIP".to_string(),
+                ));
+            }
+            Err(e) => {
+                return Err(LauncherError::Custom(format!(
+                    "下载 NeoForge installer 失败: {}",
+                    e
+                )));
+            }
+        }
     }
 
     let libraries_dir = game_dir.join("libraries");
