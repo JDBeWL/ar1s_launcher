@@ -20,6 +20,7 @@ export default {
     openFolder: 'Open folder',
     details: 'Instance details',
     exportDiagnostics: 'Export diagnostics',
+    exportModpack: 'Export as modpack',
     rename: 'Rename',
     delete: 'Delete',
     totalInstances: '{count} instance | {count} instances',

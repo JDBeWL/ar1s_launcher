@@ -22,4 +22,7 @@ export type {
   ResourcePackInfo,
   ShaderPackInfo,
   ShaderPackList,
+  LocalModpackPreview,
+  ModpackExportOptions,
+  ModpackExportResult,
 } from '../types/events';

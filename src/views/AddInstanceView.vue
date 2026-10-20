@@ -9,6 +9,10 @@
         <v-icon start size="20">mdi-cloud-download</v-icon>
         {{ t('addInstance.modpack') }}
       </v-tab>
+      <v-tab value="local">
+        <v-icon start size="20">mdi-file-import-outline</v-icon>
+        {{ t('addInstance.fromFile') }}
+      </v-tab>
     </v-tabs>
 
     <v-window v-model="installType">
@@ -37,6 +41,10 @@
           {{ t('addInstance.curseforgeComingSoon') }}
         </v-alert>
       </v-window-item>
+
+      <v-window-item value="local">
+        <LocalModpackImport />
+      </v-window-item>
     </v-window>
   </v-container>
 </template>
@@ -47,6 +55,7 @@ import { useI18n } from 'vue-i18n';
 
 const CustomInstallForm = defineAsyncComponent(() => import('../components/add-instance/CustomInstallForm.vue'));
 const ModrinthBrowser = defineAsyncComponent(() => import('../components/add-instance/ModrinthBrowser.vue'));
+const LocalModpackImport = defineAsyncComponent(() => import('../components/add-instance/LocalModpackImport.vue'));
 
 const { t } = useI18n();
 

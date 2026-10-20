@@ -307,6 +307,41 @@ export interface ModrinthDependency {
   dependency_type: string;
 }
 
+/** 本地 .mrpack 的预览信息，对应后端 LocalModpackPreview（camelCase） */
+export interface LocalModpackPreview {
+  path: string;
+  name: string;
+  versionId: string;
+  summary: string | null;
+  minecraft: string;
+  /** Modrinth 加载器标识；原版整合包为 null */
+  loader: string | null;
+  loaderVersion: string | null;
+  fileCount: number;
+  totalSize: number;
+  suggestedInstanceName: string;
+}
+
+export interface ModpackExportOptions {
+  name: string;
+  version: string;
+  summary?: string;
+  targetPath: string;
+  includeSaves: boolean;
+}
+
+/** 对应后端 ModpackExportResult（camelCase） */
+export interface ModpackExportResult {
+  path: string;
+  name: string;
+  versionId: string;
+  /** 写进 index.files、装的时候从 Modrinth 下载的文件数 */
+  linkedFiles: number;
+  /** 打进 overrides、随包分发的文件数 */
+  overrideFiles: number;
+  totalBytes: number;
+}
+
 export interface WindowSettings {
   width: number | null;
   height: number | null;

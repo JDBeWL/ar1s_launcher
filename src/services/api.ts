@@ -36,6 +36,9 @@ import type {
   ShaderPackImportSummary,
   InstalledShaderPack,
   ShaderPackUpdate,
+  LocalModpackPreview,
+  ModpackExportOptions,
+  ModpackExportResult,
 } from '../types/events';
 
 const pendingRequests = new Map<string, Promise<unknown>>();
@@ -429,6 +432,26 @@ export const modpackApi = {
     install_path: string;
   }): Promise<void> {
     return withGameDirInfoInvalidation(() => invokeCommand('install_modrinth_modpack', { options }));
+  },
+
+  /** 读取本地 .mrpack 的清单，安装页据此展示包信息 */
+  async previewLocalModpack(filePath: string): Promise<LocalModpackPreview> {
+    return invokeCommand<LocalModpackPreview>('preview_local_modpack', { filePath });
+  },
+
+  /** 从本地 .mrpack 安装，压缩包不会被移动或删除 */
+  async installLocalModpack(options: { filePath: string; instanceName: string }): Promise<void> {
+    return withGameDirInfoInvalidation(() =>
+      invokeCommand('install_local_modpack', {
+        options: { file_path: options.filePath, instance_name: options.instanceName },
+      }),
+    );
+  },
+
+  /** 把实例打包成 Modrinth 格式的 .mrpack；目标路径由原生保存对话框选定 */
+  async exportModpack(instanceName: string, options: ModpackExportOptions): Promise<ModpackExportResult> {
+    // options 走 serde camelCase，其余命令参数按 Tauri 的 snake_case->camelCase 约定
+    return invokeCommand<ModpackExportResult>('export_modpack', { instanceName, options });
   },
 
   async cancelModpackInstall(): Promise<void> {

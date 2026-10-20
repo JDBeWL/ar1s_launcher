@@ -19,6 +19,13 @@ const MAX_API_RETRIES: u32 = 3;
 
 pub struct ModrinthService;
 
+/// 项目在客户端/服务端的可用性：required / optional / unsupported
+#[derive(Debug, Clone, Default)]
+pub struct ProjectSides {
+    pub client: Option<String>,
+    pub server: Option<String>,
+}
+
 impl Default for ModrinthService {
     fn default() -> Self {
         Self::new()
@@ -457,6 +464,97 @@ impl ModrinthService {
                 }
                 Err(error) => warn!("跳过无法解析的版本: {}", error),
             }
+        }
+        Ok(result)
+    }
+
+    /// 批量按 sha1 反查文件所属版本。
+    ///
+    /// 导出整合包时用：本地模组只要是 Modrinth 上有的文件，就没必要塞进 overrides，
+    /// 直接按哈希查回版本，写进 index 的 files 里，别人安装时能走官方 CDN。
+    pub async fn get_versions_by_hashes(
+        &self,
+        hashes: Vec<String>,
+    ) -> Result<HashMap<String, ModrinthModpackVersion>, LauncherError> {
+        if hashes.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let url = format!("{}/version_files", MODRINTH_API_BASE);
+        let body = serde_json::json!({
+            "hashes": hashes,
+            "algorithm": "sha1",
+        });
+
+        let response = self
+            .retry_request(|client| client.post(&url).json(&body))
+            .await
+            .map_err(|e| LauncherError::Custom(format!("查询文件所属版本失败: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(LauncherError::Custom(format!(
+                "查询文件所属版本失败: {}",
+                response.status()
+            )));
+        }
+
+        let versions: HashMap<String, Value> = response
+            .json()
+            .await
+            .map_err(|e| LauncherError::Custom(format!("解析响应失败: {}", e)))?;
+
+        let mut result = HashMap::new();
+        for (hash, value) in versions {
+            match parse_version(&value) {
+                Ok(version) => {
+                    result.insert(hash.to_ascii_lowercase(), version);
+                }
+                Err(error) => warn!("跳过无法解析的版本: {}", error),
+            }
+        }
+        Ok(result)
+    }
+
+    /// 批量取项目的端侧支持情况（client_side / server_side），导出时写进 index 的 env 字段
+    pub async fn get_project_sides(
+        &self,
+        project_ids: &[String],
+    ) -> Result<HashMap<String, ProjectSides>, LauncherError> {
+        if project_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let url = format!("{}/projects", MODRINTH_API_BASE);
+        let ids = serde_json::to_string(project_ids)?;
+        let response = self
+            .retry_request(|client| client.get(&url).query(&[("ids", ids.as_str())]))
+            .await
+            .map_err(|e| LauncherError::Custom(format!("获取项目信息失败: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(LauncherError::Custom(format!(
+                "获取项目信息失败: {}",
+                response.status()
+            )));
+        }
+
+        let projects: Vec<Value> = response
+            .json()
+            .await
+            .map_err(|e| LauncherError::Custom(format!("解析响应失败: {}", e)))?;
+
+        let mut result = HashMap::new();
+        for project in projects {
+            let Some(id) = project["id"].as_str() else {
+                continue;
+            };
+            result.insert(
+                id.to_string(),
+                ProjectSides {
+                    client: project["client_side"].as_str().map(str::to_string),
+                    server: project["server_side"].as_str().map(str::to_string),
+                },
+            );
         }
         Ok(result)
     }

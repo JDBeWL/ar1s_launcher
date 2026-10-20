@@ -10,7 +10,10 @@
               {{ t('installModpack.installing') }}
             </v-chip>
           </div>
-          <div class="text-body-small text-on-surface-variant">Modrinth · {{ projectId }}</div>
+          <div class="text-body-small text-on-surface-variant">
+            <template v-if="isLocal">{{ t('localModpack.title') }}</template>
+            <template v-else>Modrinth · {{ projectId }}</template>
+          </div>
         </div>
       </v-card-title>
 
@@ -233,6 +236,79 @@
           </v-row>
         </template>
 
+        <template v-else-if="!installing && isLocal">
+          <v-alert v-if="localError" type="error" variant="tonal" class="mb-4">
+            <template #title>{{ t('localModpack.readFailed') }}</template>
+            {{ localError }}
+            <div class="text-body-small mt-1">{{ t('localModpack.readFailedHint') }}</div>
+          </v-alert>
+
+          <template v-else-if="localPreview">
+            <div class="config-section mb-4">
+              <div class="text-title-small text-on-surface-variant mb-3">
+                <v-icon size="18" class="mr-1">mdi-package-variant-closed</v-icon>
+                {{ t('localModpack.contentSection') }}
+              </div>
+
+              <v-row density="compact">
+                <v-col cols="6" sm="3">
+                  <div class="text-body-small text-on-surface-variant">{{ t('localModpack.minecraftVersion') }}</div>
+                  <div class="text-body-medium">{{ localPreview.minecraft }}</div>
+                </v-col>
+                <v-col cols="6" sm="3">
+                  <div class="text-body-small text-on-surface-variant">{{ t('localModpack.loaderLabel') }}</div>
+                  <div class="text-body-medium">{{ localLoaderLabel }}</div>
+                </v-col>
+                <v-col cols="6" sm="3">
+                  <div class="text-body-small text-on-surface-variant">{{ t('localModpack.fileCount') }}</div>
+                  <div class="text-body-medium">{{ localPreview.fileCount }}</div>
+                </v-col>
+                <v-col cols="6" sm="3">
+                  <div class="text-body-small text-on-surface-variant">{{ t('localModpack.totalSize') }}</div>
+                  <div class="text-body-medium">{{ formatBytes(localPreview.totalSize) }}</div>
+                </v-col>
+              </v-row>
+            </div>
+
+            <div class="config-section mb-4">
+              <div class="text-title-small text-on-surface-variant mb-3">
+                <v-icon size="18" class="mr-1">mdi-rename</v-icon>
+                {{ t('localModpack.instanceSection') }}
+              </div>
+
+              <v-text-field
+                v-model="instanceName"
+                :label="t('localModpack.instanceNameLabel')"
+                :placeholder="effectiveInstanceName"
+                density="comfortable"
+                variant="outlined"
+                :error-messages="instanceNameError || undefined"
+                :loading="checkingInstanceName"
+                hide-details="auto"
+                counter="64"
+                maxlength="64"
+              >
+                <template #prepend-inner>
+                  <v-icon size="18" color="on-surface-variant">mdi-rename</v-icon>
+                </template>
+                <template #append-inner>
+                  <v-fade-transition>
+                    <v-icon
+                      v-if="instanceName && !instanceNameError && !checkingInstanceName"
+                      size="18"
+                      color="success"
+                    >
+                      mdi-check-circle
+                    </v-icon>
+                  </v-fade-transition>
+                </template>
+              </v-text-field>
+
+              <div class="text-body-small text-on-surface-variant mt-2">{{ t('localModpack.instanceNameHint') }}</div>
+            </div>
+          </template>
+        </template>
+
         <template v-else-if="!installing">
           <v-alert v-if="modpackVersions.length === 0" type="warning" variant="tonal" class="mb-4">
             <template #title>{{ t('installModpack.noVersionsTitle') }}</template>
@@ -407,6 +483,7 @@ import { compareVersionDesc, getErrorMessage, getErrorCode } from '../utils/form
 import type {
   DownloadProgress,
   InstallProgressPayload,
+  LocalModpackPreview,
   ModpackActiveFile,
   ModpackFilesProgress,
   ModrinthVersion,
@@ -418,11 +495,16 @@ const notificationStore = useNotificationStore();
 const settingsStore = useSettingsStore();
 const { t } = useI18n();
 
+/** 本地导入时 query 里带 file，在线安装时带 projectId */
+const localFilePath = String(route.query.file || '');
+const isLocal = computed(() => localFilePath.length > 0);
 const projectId = String(route.query.projectId || '');
 const title = String(route.query.title || '');
 
 const loadingVersions = ref(false);
 const modpackVersions = ref<ModrinthVersion[]>([]);
+const localPreview = ref<LocalModpackPreview | null>(null);
+const localError = ref('');
 const selectedVersionId = ref<string | null>(null);
 const selectedLoader = ref<string | null>(null);
 const selectedGameVersion = ref<string | null>(null);
@@ -499,7 +581,17 @@ const selectedVersionInfo = computed(() => {
 });
 
 const effectiveInstanceName = computed(() => {
-  return instanceName.value.trim() || title;
+  return instanceName.value.trim() || localPreview.value?.suggestedInstanceName || title;
+});
+
+/** 没填实例名时用来校验/预览的默认名：本地包优先用清单里名字的净化结果 */
+const fallbackInstanceName = computed(() => localPreview.value?.suggestedInstanceName || title);
+
+const localLoaderLabel = computed(() => {
+  const loader = localPreview.value?.loader;
+  if (!loader) return t('localModpack.vanilla');
+  const version = localPreview.value?.loaderVersion;
+  return version ? `${loader} ${version}` : loader;
 });
 
 watch(instanceName, (newName) => {
@@ -509,7 +601,7 @@ watch(instanceName, (newName) => {
 
   instanceNameError.value = null;
 
-  const nameToCheck = newName.trim() || title;
+  const nameToCheck = newName.trim() || fallbackInstanceName.value;
   if (!nameToCheck) return;
 
   instanceNameCheckTimeout = setTimeout(async () => {
@@ -532,6 +624,9 @@ async function checkInstanceName(name: string) {
 }
 
 const canInstall = computed(() => {
+  if (isLocal.value) {
+    return Boolean(localPreview.value) && !instanceNameError.value && !checkingInstanceName.value;
+  }
   return (
     selectedVersionId.value &&
     !instanceNameError.value &&
@@ -642,8 +737,22 @@ async function loadVersions() {
   }
 }
 
+async function loadLocalPreview() {
+  loadingVersions.value = true;
+  localError.value = '';
+  try {
+    localPreview.value = await modpackApi.previewLocalModpack(localFilePath);
+  } catch (e) {
+    logError('Failed to read local modpack', e, 'InstallModpackView');
+    localError.value = getErrorMessage(e);
+  } finally {
+    loadingVersions.value = false;
+  }
+}
+
 async function install() {
-  if (!projectId || !selectedVersionId.value || !canInstall.value) return;
+  if (!canInstall.value) return;
+  if (isLocal.value ? !localFilePath : !projectId || !selectedVersionId.value) return;
 
   installing.value = true;
   installProgress.value = { progress: 0, message: t('installModpack.prepareInstall'), indeterminate: false };
@@ -660,12 +769,19 @@ async function install() {
   await installSubscriptions.subscribeAll();
 
   try {
-    await modpackApi.installModrinthModpack({
-      modpack_id: projectId,
-      version_id: selectedVersionId.value!,
-      instance_name: effectiveInstanceName.value,
-      install_path: '',
-    });
+    if (isLocal.value) {
+      await modpackApi.installLocalModpack({
+        filePath: localFilePath,
+        instanceName: effectiveInstanceName.value,
+      });
+    } else {
+      await modpackApi.installModrinthModpack({
+        modpack_id: projectId,
+        version_id: selectedVersionId.value!,
+        instance_name: effectiveInstanceName.value,
+        install_path: '',
+      });
+    }
 
     installProgress.value = { progress: 100, message: t('installModpack.installDone'), indeterminate: false };
     validatingFiles.value = true;
@@ -811,9 +927,15 @@ function dirName(path: string): string {
 }
 
 onMounted(async () => {
-  await loadVersions();
-  if (title) {
-    await checkInstanceName(title);
+  if (isLocal.value) {
+    await loadLocalPreview();
+  } else {
+    await loadVersions();
+  }
+
+  const nameToCheck = title || fallbackInstanceName.value;
+  if (nameToCheck) {
+    await checkInstanceName(nameToCheck);
   }
 });
 

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import InstanceCard from '../components/instance/InstanceCard.vue';
 import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
+import ExportModpackDialog from '../components/instance/ExportModpackDialog.vue';
 import { useNotificationStore } from '../stores/notificationStore';
 import { getInstanceListCache, setInstanceListCache } from '../stores/instanceListCache';
 import { instanceApi } from '../services';
@@ -35,6 +36,8 @@ const currentInstance = ref<GameInstance | null>(null);
 const deleteDialog = ref(false);
 const deleteConfirmName = ref('');
 const sortBy = ref(getInstanceSortBy());
+const exportDialog = ref(false);
+const exportInstance = ref<GameInstance | null>(null);
 
 const sortOptions = computed(() => [
   { title: t('instanceManager.sortLastPlayed'), value: 'lastPlayed' },
@@ -175,6 +178,11 @@ async function deleteInstance() {
 
 function openInstanceDetail(instance: GameInstance) {
   router.push({ name: 'instance-detail', params: { name: instance.name } });
+}
+
+function openExportDialog(instance: GameInstance) {
+  exportInstance.value = instance;
+  exportDialog.value = true;
 }
 
 watch(viewMode, (v) => localStorage.setItem('instanceViewMode', v));
@@ -323,6 +331,7 @@ onUnmounted(() => {
           @open-folder="openInstanceFolder"
           @open="openInstanceDetail"
           @export-diagnostics="exportDiagnostics"
+          @export-modpack="openExportDialog"
           @rename="openRenameDialog"
           @delete="openDeleteDialog"
         />
@@ -384,6 +393,14 @@ onUnmounted(() => {
                   </template>
                   <v-list-item-title class="text-body-medium">
                     {{ t('instanceManager.exportDiagnostics') }}
+                  </v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="openExportDialog(instance)">
+                  <template #prepend>
+                    <v-icon size="18">mdi-package-variant-closed</v-icon>
+                  </template>
+                  <v-list-item-title class="text-body-medium">
+                    {{ t('instanceManager.exportModpack') }}
                   </v-list-item-title>
                 </v-list-item>
                 <v-list-item @click="openRenameDialog(instance)">
@@ -464,6 +481,8 @@ onUnmounted(() => {
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <ExportModpackDialog v-model="exportDialog" :instance="exportInstance" />
   </v-container>
 </template>
 

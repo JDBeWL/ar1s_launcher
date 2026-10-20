@@ -10,6 +10,7 @@ import InstanceAvatar from '../components/instance/InstanceAvatar.vue';
 import ModsPanel from '../components/instance/ModsPanel.vue';
 import ResourcePacksPanel from '../components/instance/ResourcePacksPanel.vue';
 import ShaderPacksPanel from '../components/instance/ShaderPacksPanel.vue';
+import ExportModpackDialog from '../components/instance/ExportModpackDialog.vue';
 import { useNotificationStore } from '../stores/notificationStore';
 import { getInstanceListCache } from '../stores/instanceListCache';
 import { instanceApi } from '../services';
@@ -34,6 +35,7 @@ const instance = ref<GameInstance | null>(cachedInstance);
 const loading = ref(cachedInstance === null);
 const error = ref('');
 const launching = ref(false);
+const exportDialog = ref(false);
 
 const versionLabel = computed(() => {
   const value = instance.value;
@@ -221,6 +223,9 @@ onMounted(() => {
                 <v-btn variant="tonal" prepend-icon="mdi-folder-open-outline" @click="openFolder">
                   {{ t('instanceDetail.openInstanceFolder') }}
                 </v-btn>
+                <v-btn variant="tonal" prepend-icon="mdi-package-variant-closed" @click="exportDialog = true">
+                  {{ t('instanceManager.exportModpack') }}
+                </v-btn>
                 <v-btn variant="text" prepend-icon="mdi-cog-outline" to="/settings">
                   {{ t('instanceDetail.openGlobalSettings') }}
                 </v-btn>
@@ -246,6 +251,8 @@ onMounted(() => {
         </v-window-item>
       </v-window>
     </template>
+
+    <ExportModpackDialog v-model="exportDialog" :instance="instance" />
   </v-container>
 </template>
 

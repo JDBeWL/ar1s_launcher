@@ -20,6 +20,7 @@ export default {
     openFolder: '打开文件夹',
     details: '实例详情',
     exportDiagnostics: '导出诊断包',
+    exportModpack: '导出为整合包',
     rename: '重命名',
     delete: '删除',
     totalInstances: '共 {count} 个实例',

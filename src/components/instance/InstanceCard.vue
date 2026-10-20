@@ -16,6 +16,7 @@ const emit = defineEmits<{
   (e: 'delete', instance: GameInstance): void;
   (e: 'rename', instance: GameInstance): void;
   (e: 'export-diagnostics', instance: GameInstance): void;
+  (e: 'export-modpack', instance: GameInstance): void;
 }>();
 
 const { t } = useI18n();
@@ -110,6 +111,14 @@ const chipLabel = computed(() => {
               </template>
               <v-list-item-title class="text-body-medium">
                 {{ t('instanceManager.exportDiagnostics') }}
+              </v-list-item-title>
+            </v-list-item>
+            <v-list-item @click="emit('export-modpack', instance)">
+              <template #prepend>
+                <v-icon size="18">mdi-package-variant-closed</v-icon>
+              </template>
+              <v-list-item-title class="text-body-medium">
+                {{ t('instanceManager.exportModpack') }}
               </v-list-item-title>
             </v-list-item>
             <v-list-item @click="emit('rename', instance)">

@@ -72,3 +72,41 @@ pub struct ModpackInstallOptions {
     pub instance_name: String,
     pub install_path: String,
 }
+
+/// 从本地 .mrpack 安装的参数；file_path 是用户选中的压缩包
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LocalModpackInstallOptions {
+    pub file_path: String,
+    pub instance_name: String,
+}
+
+/// 导出整合包的参数
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ModpackExportOptions {
+    /// 整合包名称，同时也当 index 里的 name
+    pub name: String,
+    /// 版本号，写进 index 的 versionId
+    pub version: String,
+    /// 简介可省略，前端不填时不下发这个字段
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// 保存位置，必须以 .mrpack 结尾
+    pub target_path: String,
+    /// 是否把存档一起打包（体积大、常常是私人的）
+    pub include_saves: bool,
+}
+
+/// 导出结果，供前端提示
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ModpackExportResult {
+    pub path: String,
+    pub name: String,
+    pub version_id: String,
+    /// 写进 index.files 的文件数（安装时按链接下载）
+    pub linked_files: usize,
+    /// 打进 overrides 的文件数
+    pub override_files: usize,
+    pub total_bytes: u64,
+}

@@ -1,17 +1,20 @@
 //! 整合包安装模块
 //!
-//! 下载解压 Modrinth 整合包，按 modrinth.index.json 并发补下模组与依赖加载器，失败或取消时回滚实例
+//! 下载解压 Modrinth 整合包（或直接读取本地的 .mrpack），按 modrinth.index.json 并发补下
+//! 模组与依赖加载器，失败或取消时回滚实例。在线安装与本地导入共用同一条安装流水线，
+//! 区别只在「压缩包从哪来、展示信息从哪取」。
 
 use crate::errors::LauncherError;
 use crate::models::DownloadJob;
 use crate::models::modpack::*;
 use crate::services::launcher::isolation;
+use crate::services::modpack_format::{
+    self, ModrinthDependencies, ModrinthIndex, ModrinthIndexFile,
+};
 use crate::services::{config, download, http_client, loaders, modrinth};
 use crate::utils::file_utils::{self, validate_instance_name_or_error};
 use log::{error, info, warn};
-use serde::Deserialize;
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -21,6 +24,9 @@ use tauri::Emitter;
 static MODPACK_CANCEL_FLAG: std::sync::OnceLock<Arc<AtomicBool>> = std::sync::OnceLock::new();
 
 const MAX_EXTRACTED_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
+/// 单个整合包的压缩包上限，防止误选超大文件把临时目录塞满
+const MAX_MODPACK_ARCHIVE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 fn get_cancel_flag() -> Arc<AtomicBool> {
     MODPACK_CANCEL_FLAG
@@ -72,6 +78,24 @@ pub struct ModpackFilesProgress {
     pub downloaded_bytes: u64,
     pub total_bytes: u64,
     pub speed: f64,
+}
+
+/// 本地 .mrpack 的预览信息，用于安装前展示与默认实例名
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalModpackPreview {
+    pub path: String,
+    pub name: String,
+    pub version_id: String,
+    pub summary: Option<String>,
+    pub minecraft: String,
+    /// Modrinth 加载器标识：forge / fabric / quilt / neoforge，原版为空
+    pub loader: Option<String>,
+    pub loader_version: Option<String>,
+    /// 需要下载的文件数（已排除服务端专用文件）
+    pub file_count: usize,
+    pub total_size: u64,
+    pub suggested_instance_name: String,
 }
 
 const FILE_PENDING: u8 = 0;
@@ -170,53 +194,30 @@ fn spawn_file_progress_reporter(
     })
 }
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct ModrinthIndexFile {
-    path: String,
-    hashes: ModrinthIndexHashes,
-    downloads: Vec<String>,
-    #[serde(rename = "fileSize")]
-    file_size: Option<u64>,
+/// 一次安装涉及的所有落盘位置
+struct InstallTargets {
+    game_dir: PathBuf,
+    instance_dir: PathBuf,
+    content_root: PathBuf,
+    temp_dir: PathBuf,
+    extract_dir: PathBuf,
 }
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct ModrinthIndexHashes {
-    sha1: String,
-    sha512: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct ModrinthIndex {
-    #[serde(rename = "formatVersion")]
-    format_version: u32,
-    game: String,
-    #[serde(rename = "versionId")]
-    version_id: String,
-    name: String,
-    files: Vec<ModrinthIndexFile>,
-    dependencies: ModrinthDependencies,
-}
-
-#[derive(Debug, Deserialize)]
-struct ModrinthDependencies {
-    minecraft: String,
-    #[serde(default)]
-    forge: Option<String>,
-    #[serde(default)]
-    fabric: Option<String>,
-    #[serde(rename = "fabric-loader")]
-    #[serde(default)]
-    fabric_loader: Option<String>,
-    #[serde(default)]
-    quilt: Option<String>,
-    #[serde(rename = "quilt-loader")]
-    #[serde(default)]
-    quilt_loader: Option<String>,
-    #[serde(default)]
-    neoforge: Option<String>,
+/// 待安装的包：压缩包本体 + 已经解析好的清单
+struct ModpackPlan {
+    /// 展示用名称（Modrinth 项目名或清单里的 name）
+    display_name: String,
+    /// 展示用版本号（Modrinth 版本号或清单里的 versionId）
+    version_label: String,
+    /// instance.json 里的 source 字段
+    source: &'static str,
+    modpack_id: String,
+    icon_url: Option<String>,
+    loaders: Vec<String>,
+    index: ModrinthIndex,
+    archive_path: PathBuf,
+    /// 在线安装下载到 temp 的包可以删；用户自己的本地文件绝不能删
+    remove_archive_after: bool,
 }
 
 pub struct ModpackInstaller {
@@ -237,103 +238,133 @@ impl ModpackInstaller {
         }
     }
 
+    /// 在线安装：从 Modrinth 拉项目信息与版本，下载 .mrpack 后走统一流水线
     pub async fn install_modrinth_modpack(
         &self,
         options: ModpackInstallOptions,
         window: &tauri::Window,
     ) -> Result<(), LauncherError> {
         reset_modpack_cancel_flag();
-
         validate_instance_name_or_error(&options.instance_name)?;
 
         let config = config::load_config()?;
-        let game_dir = PathBuf::from(&config.game_dir);
-        let instance_dir = game_dir.join("versions").join(&options.instance_name);
-        // 版本信息写在实例目录，模组/配置/存档按隔离开关落到实例目录或共享根目录
-        let content_root = isolation::content_root(&config, &game_dir, &options.instance_name);
-        if !config.version_isolation {
-            warn!(
-                "版本隔离已关闭：整合包内容会写入共享目录 {}",
-                content_root.display()
-            );
-        }
-        let temp_dir = game_dir.join("temp");
-        let extract_dir = temp_dir.join(format!("{}_extract", options.instance_name));
+        let targets = build_targets(&config, &options.instance_name);
+        let _install_lock = acquire_install_lock(&targets).await?;
+        ensure_instance_free(&targets, &options.instance_name)?;
 
-        // 与实例创建/删除/重命名共用一把锁；失败清理会删实例目录，不能和另一实例互相踩
-        let _install_lock = crate::utils::file_lock::acquire_async(
-            &crate::services::instance::lock_dir(&game_dir).join("instances.lock"),
-            std::time::Duration::from_secs(2),
-        )
-        .await?;
+        let result = async {
+            let plan = self
+                .prepare_modrinth_plan(&options, &targets, window)
+                .await?;
+            let outcome = self
+                .install_plan(&plan, &options.instance_name, &targets, window)
+                .await;
 
-        if instance_dir.exists() {
-            return Err(LauncherError::Custom(format!(
-                "名为 '{}' 的实例已存在，请使用其他名称",
-                options.instance_name
-            )));
-        }
-
-        let result = self
-            .do_install_modrinth_modpack(
-                &options,
-                window,
-                &game_dir,
-                &instance_dir,
-                &content_root,
-                &temp_dir,
-                &extract_dir,
-            )
-            .await;
-
-        if result.is_err() {
-            info!("安装失败或被取消，清理已创建的文件...");
-
-            if instance_dir.exists() {
-                if let Err(e) = fs::remove_dir_all(&instance_dir) {
-                    warn!("清理实例目录失败: {}", e);
-                } else {
-                    info!("已清理实例目录: {}", instance_dir.display());
-                }
+            if plan.remove_archive_after {
+                let _ = fs::remove_file(&plan.archive_path);
             }
-
-            if !config.version_isolation && content_root != instance_dir {
-                // 关闭隔离时内容是共享的，删掉就等于删别人的文件，只能提示手动处理
-                warn!(
-                    "版本隔离已关闭，本次写入共享目录 {} 的文件不会被自动清理",
-                    content_root.display()
-                );
-            }
-
-            if extract_dir.exists() {
-                let _ = fs::remove_dir_all(&extract_dir);
-            }
+            outcome
         }
+        .await;
 
-        result
+        finalize_install(&config, &targets, result)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn do_install_modrinth_modpack(
+    /// 本地导入：直接读取用户选中的 .mrpack，其余流程与在线安装一致
+    pub async fn install_local_modpack(
+        &self,
+        options: LocalModpackInstallOptions,
+        window: &tauri::Window,
+    ) -> Result<(), LauncherError> {
+        reset_modpack_cancel_flag();
+        validate_instance_name_or_error(&options.instance_name)?;
+
+        let archive_path = PathBuf::from(&options.file_path);
+        validate_local_archive(&archive_path)?;
+
+        let config = config::load_config()?;
+        let targets = build_targets(&config, &options.instance_name);
+        let _install_lock = acquire_install_lock(&targets).await?;
+        ensure_instance_free(&targets, &options.instance_name)?;
+
+        let result = async {
+            let index = read_archive_index(&archive_path).await?;
+            let file_stem = file_stem_of(&archive_path);
+            let loader = index.dependencies.loader_slug();
+            let plan = ModpackPlan {
+                display_name: trimmed_or(&index.name, &file_stem),
+                version_label: trimmed_or(&index.version_id, "1.0.0"),
+                source: "local",
+                modpack_id: file_stem,
+                icon_url: None,
+                loaders: loader
+                    .map(|slug| vec![slug.to_string()])
+                    .unwrap_or_default(),
+                index,
+                archive_path,
+                remove_archive_after: false,
+            };
+            self.install_plan(&plan, &options.instance_name, &targets, window)
+                .await
+        }
+        .await;
+
+        finalize_install(&config, &targets, result)
+    }
+
+    /// 只读预览本地包，供安装页在真正落盘前展示信息
+    pub async fn preview_local_modpack(
+        &self,
+        file_path: String,
+    ) -> Result<LocalModpackPreview, LauncherError> {
+        let archive_path = PathBuf::from(&file_path);
+        validate_local_archive(&archive_path)?;
+
+        tokio::task::spawn_blocking(move || -> Result<LocalModpackPreview, LauncherError> {
+            let index = modpack_format::read_index_from_archive(&archive_path)?;
+            let client_files: Vec<&ModrinthIndexFile> = index
+                .files
+                .iter()
+                .filter(|file| modpack_format::is_client_file(file))
+                .collect();
+            let total_size = client_files
+                .iter()
+                .map(|file| file.file_size.unwrap_or(0))
+                .sum();
+            let loader = index.dependencies.loader();
+            let stem = file_stem_of(&archive_path);
+
+            Ok(LocalModpackPreview {
+                path: archive_path.to_string_lossy().to_string(),
+                name: trimmed_or(&index.name, &stem),
+                version_id: trimmed_or(&index.version_id, "1.0.0"),
+                summary: index
+                    .summary
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_string),
+                minecraft: index.dependencies.minecraft.clone(),
+                loader: index.dependencies.loader_slug().map(str::to_string),
+                loader_version: loader
+                    .as_ref()
+                    .map(|loaded| loaded.loader_version().to_string()),
+                file_count: client_files.len(),
+                total_size,
+                suggested_instance_name: sanitize_instance_name(&trimmed_or(&index.name, &stem)),
+            })
+        })
+        .await
+        .map_err(|e| LauncherError::Custom(format!("读取整合包失败: {}", e)))?
+    }
+
+    async fn prepare_modrinth_plan(
         &self,
         options: &ModpackInstallOptions,
+        targets: &InstallTargets,
         window: &tauri::Window,
-        game_dir: &Path,
-        instance_dir: &Path,
-        content_root: &Path,
-        temp_dir: &Path,
-        extract_dir: &Path,
-    ) -> Result<(), LauncherError> {
-        let send_progress = |progress: u8, message: &str, indeterminate: bool| {
-            let _ = window.emit(
-                "modpack-install-progress",
-                ModpackInstallProgress {
-                    progress,
-                    message: message.to_string(),
-                    indeterminate,
-                },
-            );
-        };
+    ) -> Result<ModpackPlan, LauncherError> {
+        let send_progress = progress_emitter(window);
 
         send_progress(5, "检查实例目录...", false);
         check_cancelled()?;
@@ -371,12 +402,12 @@ impl ModpackInstaller {
             .or_else(|| selected_version.files.first())
             .ok_or_else(|| LauncherError::Custom("整合包没有可用的文件".to_string()))?;
 
-        if !temp_dir.exists() {
-            fs::create_dir_all(temp_dir)?;
+        if !targets.temp_dir.exists() {
+            fs::create_dir_all(&targets.temp_dir)?;
         }
 
         file_utils::validate_file_name_or_error(&primary_file.filename)?;
-        let modpack_file_path = temp_dir.join(&primary_file.filename);
+        let archive_path = targets.temp_dir.join(&primary_file.filename);
         let sha1 = (!primary_file.hashes.sha1.trim().is_empty())
             .then_some(primary_file.hashes.sha1.as_str());
         let cancel_flag = get_cancel_flag();
@@ -384,7 +415,7 @@ impl ModpackInstaller {
         self.modrinth_service
             .download_modpack_file(
                 &primary_file.url,
-                &modpack_file_path,
+                &archive_path,
                 primary_file.size,
                 sha1,
                 &cancel_flag,
@@ -398,137 +429,110 @@ impl ModpackInstaller {
                 }
             })?;
 
+        send_progress(30, "读取整合包清单...", false);
+        check_cancelled()?;
+
+        let index = read_archive_index(&archive_path).await?;
+
+        Ok(ModpackPlan {
+            display_name: modpack.title.clone(),
+            version_label: selected_version.version_number.clone(),
+            source: "modrinth",
+            modpack_id: modpack.slug.clone(),
+            icon_url: modpack.icon_url.clone(),
+            loaders: selected_version.loaders.clone(),
+            index,
+            archive_path,
+            remove_archive_after: true,
+        })
+    }
+
+    /// 解压 → 复制 overrides → 下载清单文件 → 装游戏与加载器 → 写 instance.json
+    async fn install_plan(
+        &self,
+        plan: &ModpackPlan,
+        instance_name: &str,
+        targets: &InstallTargets,
+        window: &tauri::Window,
+    ) -> Result<(), LauncherError> {
+        let send_progress = progress_emitter(window);
+
         send_progress(35, "解压整合包...", false);
         check_cancelled()?;
 
-        if extract_dir.exists() {
-            fs::remove_dir_all(extract_dir)?;
+        if targets.extract_dir.exists() {
+            fs::remove_dir_all(&targets.extract_dir)?;
         }
-        fs::create_dir_all(extract_dir)?;
-
-        self.extract_modpack(&modpack_file_path, extract_dir)
-            .await
-            .map_err(|e| LauncherError::Custom(format!("解压整合包失败: {}", e)))?;
+        fs::create_dir_all(&targets.extract_dir)?;
+        modpack_format::extract_archive(
+            &plan.archive_path,
+            &targets.extract_dir,
+            MAX_EXTRACTED_BYTES,
+        )
+        .map_err(|e| LauncherError::Custom(format!("解压整合包失败: {}", e)))?;
 
         send_progress(45, "处理整合包配置...", false);
         check_cancelled()?;
 
-        let index_path = extract_dir.join("modrinth.index.json");
-        let modrinth_index = if index_path.exists() {
-            let content = fs::read_to_string(&index_path)?;
-            Some(
-                serde_json::from_str::<ModrinthIndex>(&content).map_err(|e| {
-                    LauncherError::Custom(format!("解析 modrinth.index.json 失败: {}", e))
-                })?,
-            )
-        } else {
-            None
-        };
-
-        fs::create_dir_all(instance_dir)?;
-        if content_root != instance_dir {
-            fs::create_dir_all(content_root)?;
+        fs::create_dir_all(&targets.instance_dir)?;
+        if targets.content_root != targets.instance_dir {
+            fs::create_dir_all(&targets.content_root)?;
         }
 
         send_progress(50, "复制整合包文件...", false);
         check_cancelled()?;
 
-        let overrides_dir = extract_dir.join("overrides");
-        if overrides_dir.exists() {
-            info!("复制 overrides 目录到实例");
-            file_utils::copy_dir_all(&overrides_dir, content_root)?;
-        }
+        copy_overrides(&targets.extract_dir, &targets.content_root)?;
 
-        // 某些整合包用 client-overrides 而非 overrides
-        let client_overrides_dir = extract_dir.join("client-overrides");
-        if client_overrides_dir.exists() {
-            info!("复制 client-overrides 目录到实例");
-            file_utils::copy_dir_all(&client_overrides_dir, content_root)?;
-        }
+        let client_files: Vec<ModrinthIndexFile> = plan
+            .index
+            .files
+            .iter()
+            .filter(|file| modpack_format::is_client_file(file))
+            .cloned()
+            .collect();
 
-        if let Some(ref index) = modrinth_index {
-            send_progress(55, "下载模组文件...", false);
-            check_cancelled()?;
-            self.download_modpack_files(&index.files, content_root, window)
-                .await?;
-        }
+        send_progress(55, "下载模组文件...", false);
+        check_cancelled()?;
+        self.download_modpack_files(&client_files, &targets.content_root, window)
+            .await?;
 
         send_progress(75, "准备游戏核心文件...", false);
         check_cancelled()?;
-
-        if let Some(ref index) = modrinth_index {
-            self.install_game_and_loader(
-                &index.dependencies,
-                &options.instance_name,
-                game_dir,
-                window,
-            )
-            .await?;
-        }
+        self.install_game_and_loader(
+            &plan.index.dependencies,
+            instance_name,
+            &targets.game_dir,
+            window,
+        )
+        .await?;
 
         send_progress(90, "创建实例配置...", false);
         check_cancelled()?;
 
-        let mc_version = modrinth_index
-            .as_ref()
-            .map(|i| i.dependencies.minecraft.clone())
-            .or_else(|| selected_version.game_versions.first().cloned())
-            .unwrap_or_default();
-
-        let loader_type = if modrinth_index
-            .as_ref()
-            .map(|i| i.dependencies.forge.is_some())
-            .unwrap_or(false)
-        {
-            Some("forge")
-        } else if modrinth_index
-            .as_ref()
-            .map(|i| i.dependencies.fabric_loader.is_some() || i.dependencies.fabric.is_some())
-            .unwrap_or(false)
-        {
-            Some("fabric")
-        } else if modrinth_index
-            .as_ref()
-            .map(|i| i.dependencies.quilt_loader.is_some() || i.dependencies.quilt.is_some())
-            .unwrap_or(false)
-        {
-            Some("quilt")
-        } else if modrinth_index
-            .as_ref()
-            .map(|i| i.dependencies.neoforge.is_some())
-            .unwrap_or(false)
-        {
-            Some("neoforge")
-        } else {
-            None
-        };
-
         let instance_config = serde_json::json!({
-            "id": options.instance_name.clone(),
-            "name": modpack.title.clone(),
+            "id": instance_name,
+            "name": plan.display_name,
             "type": "modpack",
-            "source": "modrinth",
-            "modpack_id": modpack.slug.clone(),
-            "modpack_version": selected_version.version_number.clone(),
-            "minecraft": mc_version,
-            "loader": loader_type,
-            "icon_url": modpack.icon_url.clone(),
-            "loaders": selected_version.loaders.clone(),
+            "source": plan.source,
+            "modpack_id": plan.modpack_id,
+            "modpack_version": plan.version_label,
+            "minecraft": plan.index.dependencies.minecraft,
+            "loader": plan.index.dependencies.loader_slug(),
+            "icon_url": plan.icon_url,
+            "loaders": plan.loaders,
             "created": chrono::Utc::now().to_rfc3339(),
         });
 
-        let config_path = instance_dir.join("instance.json");
+        let config_path = targets.instance_dir.join("instance.json");
         fs::write(config_path, serde_json::to_string_pretty(&instance_config)?)?;
 
-        if modpack_file_path.exists() {
-            let _ = fs::remove_file(&modpack_file_path);
-        }
-        if extract_dir.exists() {
-            let _ = fs::remove_dir_all(extract_dir);
+        if targets.extract_dir.exists() {
+            let _ = fs::remove_dir_all(&targets.extract_dir);
         }
 
         send_progress(100, "整合包安装完成！", false);
-        info!("整合包 {} 安装完成", options.instance_name);
+        info!("整合包 {} 安装完成", instance_name);
 
         if let Ok(game_dir_str) = config::get_game_dir() {
             let _ = window.emit("game-dir-changed", &game_dir_str);
@@ -549,17 +553,6 @@ impl ModpackInstaller {
 
         if total_files == 0 {
             return Ok(());
-        }
-
-        // 清单里的 path 由远端给；出现遍历路径说明包本身有问题，整包拒绝而不是装一半
-        if let Some(bad) = files
-            .iter()
-            .find(|file| !file_utils::is_safe_relative_path(&file.path))
-        {
-            return Err(LauncherError::Custom(format!(
-                "整合包清单包含非法文件路径，已拒绝安装: {}",
-                bad.path
-            )));
         }
 
         let dl_config = config::load_config()?;
@@ -768,13 +761,8 @@ impl ModpackInstaller {
         check_cancelled()?;
         core_result?;
 
-        let has_loader = deps.forge.is_some()
-            || deps.fabric_loader.is_some()
-            || deps.fabric.is_some()
-            || deps.quilt_loader.is_some()
-            || deps.quilt.is_some()
-            || deps.neoforge.is_some();
-        if has_loader {
+        let loader = deps.loader();
+        if loader.is_some() {
             let _ = window.emit(
                 "modpack-install-progress",
                 ModpackInstallProgress {
@@ -785,65 +773,21 @@ impl ModpackInstaller {
             );
         }
 
-        if let Some(forge_version) = &deps.forge {
-            info!("安装 Forge {}", forge_version);
-            let result = loaders::install_loader(
-                &loaders::LoaderType::Forge {
-                    mc_version: mc_version.clone(),
-                    loader_version: forge_version.clone(),
-                },
-                instance_name,
-                game_dir,
-                Some(cancel.as_ref()),
-            )
-            .await;
-            check_cancelled()?;
-            result?;
-        } else if let Some(fabric_version) = deps.fabric_loader.as_ref().or(deps.fabric.as_ref()) {
-            info!("安装 Fabric {}", fabric_version);
-            let result = loaders::install_loader(
-                &loaders::LoaderType::Fabric {
-                    mc_version: mc_version.clone(),
-                    loader_version: fabric_version.clone(),
-                },
-                instance_name,
-                game_dir,
-                Some(cancel.as_ref()),
-            )
-            .await;
-            check_cancelled()?;
-            result?;
-        } else if let Some(quilt_version) = deps.quilt_loader.as_ref().or(deps.quilt.as_ref()) {
-            info!("安装 Quilt {}", quilt_version);
-            let result = loaders::install_loader(
-                &loaders::LoaderType::Quilt {
-                    mc_version: mc_version.clone(),
-                    loader_version: quilt_version.clone(),
-                },
-                instance_name,
-                game_dir,
-                Some(cancel.as_ref()),
-            )
-            .await;
-            check_cancelled()?;
-            result?;
-        } else if let Some(neoforge_version) = &deps.neoforge {
-            info!("安装 NeoForge {}", neoforge_version);
-            let result = loaders::install_loader(
-                &loaders::LoaderType::NeoForge {
-                    mc_version: mc_version.clone(),
-                    loader_version: neoforge_version.clone(),
-                },
-                instance_name,
-                game_dir,
-                Some(cancel.as_ref()),
-            )
-            .await;
-            check_cancelled()?;
-            result?;
-        } else {
+        match loader {
+            Some(loaded) => {
+                info!("安装 {} {}", loaded.name(), loaded.loader_version());
+                let result = loaders::install_loader(
+                    &loaded,
+                    instance_name,
+                    game_dir,
+                    Some(cancel.as_ref()),
+                )
+                .await;
+                check_cancelled()?;
+                result?;
+            }
             // 无加载器依赖时手动补一份版本 JSON
-            self.create_vanilla_version_json(mc_version, instance_name, game_dir)?;
+            None => self.create_vanilla_version_json(mc_version, instance_name, game_dir)?,
         }
 
         // 加载器安装器只负责自己的文件；Fabric/Quilt 的 profile 库需要在这里补
@@ -905,15 +849,6 @@ impl ModpackInstaller {
         self.create_loader_version_json(instance_name, mc_version, game_dir)
     }
 
-    /// 解压整合包，防止 zip 路径遍历与 zip bomb
-    async fn extract_modpack(
-        &self,
-        modpack_file_path: &Path,
-        extract_dir: &Path,
-    ) -> Result<(), LauncherError> {
-        extract_zip_limited(modpack_file_path, extract_dir, MAX_EXTRACTED_BYTES)
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub async fn search_modpacks(
         &self,
@@ -950,90 +885,199 @@ impl ModpackInstaller {
     }
 }
 
-fn extract_zip_limited(
-    modpack_file_path: &std::path::Path,
-    extract_dir: &std::path::Path,
-    max_bytes: u64,
+fn progress_emitter(window: &tauri::Window) -> impl Fn(u8, &str, bool) {
+    let window = window.clone();
+    move |progress: u8, message: &str, indeterminate: bool| {
+        let _ = window.emit(
+            "modpack-install-progress",
+            ModpackInstallProgress {
+                progress,
+                message: message.to_string(),
+                indeterminate,
+            },
+        );
+    }
+}
+
+fn build_targets(config: &crate::models::GameConfig, instance_name: &str) -> InstallTargets {
+    let game_dir = PathBuf::from(&config.game_dir);
+    let instance_dir = game_dir.join("versions").join(instance_name);
+    // 版本信息写在实例目录，模组/配置/存档按隔离开关落到实例目录或共享根目录
+    let content_root = isolation::content_root(config, &game_dir, instance_name);
+    if !config.version_isolation {
+        warn!(
+            "版本隔离已关闭：整合包内容会写入共享目录 {}",
+            content_root.display()
+        );
+    }
+
+    let temp_dir = game_dir.join("temp");
+    let extract_dir = temp_dir.join(format!("{}_extract", instance_name));
+
+    InstallTargets {
+        game_dir,
+        instance_dir,
+        content_root,
+        temp_dir,
+        extract_dir,
+    }
+}
+
+/// 与实例创建/删除/重命名共用一把锁；失败清理会删实例目录，不能和另一实例互相踩
+async fn acquire_install_lock(
+    targets: &InstallTargets,
+) -> Result<crate::utils::file_lock::FileLock, LauncherError> {
+    crate::utils::file_lock::acquire_async(
+        &crate::services::instance::lock_dir(&targets.game_dir).join("instances.lock"),
+        std::time::Duration::from_secs(2),
+    )
+    .await
+}
+
+fn ensure_instance_free(
+    targets: &InstallTargets,
+    instance_name: &str,
 ) -> Result<(), LauncherError> {
-    fs::create_dir_all(extract_dir)?;
-
-    // 先按 central directory 声明的未压缩大小做快速上限检查
-    let file = fs::File::open(modpack_file_path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    let mut declared_total = 0u64;
-    for i in 0..archive.len() {
-        let entry = archive.by_index(i)?;
-        let name = entry.name()?.to_string();
-        if name.ends_with('/') || !file_utils::is_safe_relative_path(&name) {
-            continue;
-        }
-        declared_total = declared_total.saturating_add(entry.size());
-        if declared_total > max_bytes {
-            return Err(LauncherError::Custom(format!(
-                "整合包解压后超过 {} 字节上限，已中止",
-                max_bytes
-            )));
-        }
+    if targets.instance_dir.exists() {
+        return Err(LauncherError::Custom(format!(
+            "名为 '{}' 的实例已存在，请使用其他名称",
+            instance_name
+        )));
     }
-    drop(archive);
-
-    let file = fs::File::open(modpack_file_path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    let mut actual_total = 0u64;
-
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)?;
-        let file_name = entry.name()?.to_string();
-
-        if !file_utils::is_safe_relative_path(&file_name) {
-            log::warn!("跳过可疑的 zip 条目: {}", file_name);
-            continue;
-        }
-
-        let outpath = extract_dir.join(&file_name);
-
-        if file_name.ends_with('/') {
-            fs::create_dir_all(&outpath)?;
-            continue;
-        }
-
-        if let Some(parent) = outpath.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let mut outfile = fs::File::create(&outpath)?;
-        let mut buffer = [0u8; 64 * 1024];
-        loop {
-            let read = entry.read(&mut buffer)?;
-            if read == 0 {
-                break;
-            }
-            actual_total = actual_total.saturating_add(read as u64);
-            if actual_total > max_bytes {
-                return Err(LauncherError::Custom(format!(
-                    "整合包解压后超过 {} 字节上限，已中止",
-                    max_bytes
-                )));
-            }
-            outfile.write_all(&buffer[..read])?;
-        }
-    }
-
     Ok(())
 }
 
+/// 失败或被取消时回滚这次安装产生的文件
+fn finalize_install(
+    config: &crate::models::GameConfig,
+    targets: &InstallTargets,
+    result: Result<(), LauncherError>,
+) -> Result<(), LauncherError> {
+    if result.is_err() {
+        info!("安装失败或被取消，清理已创建的文件...");
+
+        if targets.instance_dir.exists() {
+            if let Err(e) = fs::remove_dir_all(&targets.instance_dir) {
+                warn!("清理实例目录失败: {}", e);
+            } else {
+                info!("已清理实例目录: {}", targets.instance_dir.display());
+            }
+        }
+
+        if !config.version_isolation && targets.content_root != targets.instance_dir {
+            // 关闭隔离时内容是共享的，删掉就等于删别人的文件，只能提示手动处理
+            warn!(
+                "版本隔离已关闭，本次写入共享目录 {} 的文件不会被自动清理",
+                targets.content_root.display()
+            );
+        }
+
+        if targets.extract_dir.exists() {
+            let _ = fs::remove_dir_all(&targets.extract_dir);
+        }
+    }
+
+    result
+}
+
+/// overrides 与 client-overrides 都是要原样铺到实例内容目录的
+fn copy_overrides(extract_dir: &Path, content_root: &Path) -> Result<(), LauncherError> {
+    for name in [
+        modpack_format::OVERRIDES_DIR,
+        modpack_format::CLIENT_OVERRIDES_DIR,
+    ] {
+        let dir = extract_dir.join(name);
+        if dir.exists() {
+            info!("复制 {} 目录到实例", name);
+            file_utils::copy_dir_all(&dir, content_root)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_local_archive(path: &Path) -> Result<(), LauncherError> {
+    if !path.is_file() {
+        return Err(LauncherError::Custom(format!(
+            "整合包文件不存在: {}",
+            path.display()
+        )));
+    }
+
+    let size = fs::metadata(path)?.len();
+    if size == 0 {
+        return Err(LauncherError::Custom("整合包文件是空的".to_string()));
+    }
+    if size > MAX_MODPACK_ARCHIVE_BYTES {
+        return Err(LauncherError::Custom(format!(
+            "整合包文件超过 {} 字节上限",
+            MAX_MODPACK_ARCHIVE_BYTES
+        )));
+    }
+    Ok(())
+}
+
+async fn read_archive_index(path: &Path) -> Result<ModrinthIndex, LauncherError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || modpack_format::read_index_from_archive(&path))
+        .await
+        .map_err(|e| LauncherError::Custom(format!("读取整合包失败: {}", e)))?
+}
+
+fn trimmed_or(value: &str, fallback: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        fallback.to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn file_stem_of(path: &Path) -> String {
+    path.file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .filter(|stem| !stem.trim().is_empty())
+        .unwrap_or_else(|| "modpack".to_string())
+}
+
+/// 把清单里的包名收敛成合法的实例目录名；实在救不回来就用固定兜底
+fn sanitize_instance_name(raw: &str) -> String {
+    let mut cleaned = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        let reserved = matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*');
+        cleaned.push(if reserved || (ch as u32) < 32 {
+            '-'
+        } else {
+            ch
+        });
+    }
+
+    // 实例名上限 64，校验函数量的是字节数，所以先按字符裁再按字节收缩
+    let mut candidate: String = cleaned.chars().take(64).collect();
+    candidate = candidate
+        .trim_matches(|c: char| c == ' ' || c == '.')
+        .to_string();
+    while candidate.len() > 64 {
+        candidate.pop();
+    }
+    let candidate = candidate.trim_end_matches([' ', '.']).to_string();
+
+    // 长度之外还不合法（CON、NUL 之类的保留名）就没救了，直接用兜底名
+    if candidate.is_empty() || !file_utils::validate_instance_name(&candidate).is_valid {
+        return "modpack".to_string();
+    }
+
+    candidate
+}
 #[cfg(test)]
 mod tests {
     use super::{
-        FILE_COMPLETED, FILE_DOWNLOADING, ModpackFileState, ModrinthIndexFile, ModrinthIndexHashes,
-        dispatch_order, extract_zip_limited, snapshot_files,
+        FILE_COMPLETED, FILE_DOWNLOADING, ModpackFileState, dispatch_order, sanitize_instance_name,
+        snapshot_files,
     };
-    use std::fs;
-    use std::io::Write;
+    use crate::services::modpack_format::{ModrinthIndexFile, ModrinthIndexHashes};
+    use crate::utils::file_utils;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
-    use zip::ZipWriter;
-    use zip::write::SimpleFileOptions;
 
     fn make_index_file(path: &str, size: Option<u64>) -> ModrinthIndexFile {
         ModrinthIndexFile {
@@ -1044,6 +1088,7 @@ mod tests {
             },
             downloads: Vec::new(),
             file_size: size,
+            env: None,
         }
     }
 
@@ -1089,41 +1134,32 @@ mod tests {
         assert_eq!(snapshot.speed, 1024.0);
     }
 
-    fn write_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
-        let file = fs::File::create(path).unwrap();
-        let mut zip = ZipWriter::new(file);
-        for (name, content) in entries {
-            zip.start_file(*name, SimpleFileOptions::default()).unwrap();
-            zip.write_all(content).unwrap();
-        }
-        zip.finish().unwrap();
+    #[test]
+    fn test_sanitize_instance_name_keeps_readable_names() {
+        assert_eq!(
+            sanitize_instance_name("Fabulously Optimized"),
+            "Fabulously Optimized"
+        );
+        assert_eq!(sanitize_instance_name("我的整合包"), "我的整合包");
+        assert_eq!(sanitize_instance_name("Pack: 1/2?"), "Pack- 1-2-");
     }
 
     #[test]
-    fn test_extract_zip_enforces_uncompressed_limit() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let zip_path = dir.path().join("pack.zip");
-        let extract_dir = dir.path().join("extract");
-        fs::create_dir_all(&extract_dir).unwrap();
-        write_zip(&zip_path, &[("a.txt", b"0123456789")]);
-
-        let error = extract_zip_limited(&zip_path, &extract_dir, 5).unwrap_err();
-        assert!(error.to_string().contains("上限"));
-
-        assert!(extract_zip_limited(&zip_path, &extract_dir, 10).is_ok());
+    fn test_sanitize_instance_name_falls_back_for_unusable_names() {
+        assert_eq!(sanitize_instance_name(""), "modpack");
+        assert_eq!(sanitize_instance_name(".."), "modpack");
+        assert_eq!(sanitize_instance_name("CON"), "modpack");
+        assert_eq!(sanitize_instance_name("   "), "modpack");
     }
 
     #[test]
-    fn test_extract_zip_skips_path_traversal() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let zip_path = dir.path().join("pack.zip");
-        let extract_dir = dir.path().join("extract");
-        fs::create_dir_all(&extract_dir).unwrap();
-        write_zip(&zip_path, &[("ok.txt", b"ok"), ("../evil.txt", b"evil")]);
+    fn test_sanitize_instance_name_truncates_to_the_byte_limit() {
+        // 校验按字节算上限，64 个汉字有 192 字节，必须先截短
+        let long = sanitize_instance_name(&"名".repeat(100));
+        assert!(long.len() <= 64);
+        assert!(file_utils::validate_instance_name(&long).is_valid);
 
-        extract_zip_limited(&zip_path, &extract_dir, 1024).unwrap();
-
-        assert!(extract_dir.join("ok.txt").exists());
-        assert!(!dir.path().join("evil.txt").exists());
+        let ascii = sanitize_instance_name(&"a".repeat(100));
+        assert_eq!(ascii.chars().count(), 64);
     }
 }

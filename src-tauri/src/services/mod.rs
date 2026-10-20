@@ -14,6 +14,8 @@ pub mod loaders;
 pub mod memory;
 pub mod microsoft_auth;
 pub mod mod_installer;
+pub mod modpack_exporter;
+pub mod modpack_format;
 pub mod modpack_installer;
 pub mod modrinth;
 pub mod proxy;
