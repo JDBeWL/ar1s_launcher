@@ -7,9 +7,12 @@ use crate::models::modpack::{ModrinthModpackVersion, ModrinthSearchResponse};
 use crate::services::shaderpack::{self, ImportSummary, ShaderPackList};
 use crate::services::shaderpack_installer::{self, InstalledShaderPack, ShaderPackUpdate};
 
+use super::run_blocking;
+
+/// 列出光影包：每个包都要开 zip 找 shaders 目录并递归统计体积，必须离开主线程
 #[tauri::command]
-pub fn get_shader_packs(instance_name: String) -> Result<ShaderPackList, LauncherError> {
-    shaderpack::list_shader_packs(&instance_name)
+pub async fn get_shader_packs(instance_name: String) -> Result<ShaderPackList, LauncherError> {
+    run_blocking(move || shaderpack::list_shader_packs(&instance_name)).await
 }
 
 /// `file_name` 为 None 表示关闭光影；传名字则选中并启用该包

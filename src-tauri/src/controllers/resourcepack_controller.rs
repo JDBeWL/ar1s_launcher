@@ -7,9 +7,14 @@ use crate::models::modpack::{ModrinthModpackVersion, ModrinthSearchResponse};
 use crate::services::resourcepack::{self, ImportSummary, ResourcePackInfo};
 use crate::services::resourcepack_installer::{self, InstalledResourcePack, ResourcePackUpdate};
 
+use super::run_blocking;
+
+/// 列出资源包：要开 zip、读 pack.png 并 base64，必须离开主线程
 #[tauri::command]
-pub fn get_resource_packs(instance_name: String) -> Result<Vec<ResourcePackInfo>, LauncherError> {
-    resourcepack::list_resource_packs(&instance_name)
+pub async fn get_resource_packs(
+    instance_name: String,
+) -> Result<Vec<ResourcePackInfo>, LauncherError> {
+    run_blocking(move || resourcepack::list_resource_packs(&instance_name)).await
 }
 
 #[tauri::command]

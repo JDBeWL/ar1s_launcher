@@ -146,9 +146,9 @@ pub async fn export_modpack(
             "实例里装了模组但识别不出加载器，无法导出为整合包".to_string(),
         ));
     }
-    let linked_versions = resolve_modrinth_versions(&content_root, options.include_saves).await?;
-    let sides = resolve_project_sides(&linked_versions).await?;
-
+    // 顺序不能反过来：反查 Modrinth 需要哈希，回填链接也需要哈希，所以先收集清单、
+    // 再把所有 jar/zip 一次性并行算完。以前「反查」和「回填」各算一遍，同一批模组
+    // 被完整读了两遍磁盘
     let mut seen_paths = HashSet::new();
     let mut plan = Vec::new();
     collect_planned_files(
@@ -159,8 +159,12 @@ pub async fn export_modpack(
         &mut plan,
     )?;
 
-    // 收集完再统一算哈希：并行分片比在递归里逐个算快得多
-    apply_linked_files(&mut plan, &linked_versions, &sides).await;
+    let hashes = hash_planned_files(&plan).await;
+    let lookup_hashes = modrinth_lookup_hashes(&plan, &hashes);
+    let linked_versions = resolve_modrinth_versions(lookup_hashes).await?;
+    let sides = resolve_project_sides(&linked_versions).await?;
+
+    apply_linked_files(&mut plan, &linked_versions, &sides, &hashes);
 
     let total_bytes = plan.iter().map(|file| file.size).sum::<u64>();
     if total_bytes > MAX_OVERRIDES_BYTES {
@@ -247,40 +251,45 @@ pub async fn export_modpack(
     })
 }
 
-/// 实例内容目录下所有 Modrinth 认得的文件：sha1 -> 版本
-async fn resolve_modrinth_versions(
-    content_root: &Path,
-    include_saves: bool,
-) -> Result<HashMap<String, ModrinthModpackVersion>, LauncherError> {
-    let roots = scan_roots(content_root, include_saves);
-    let mut candidates = Vec::new();
-
-    for root in roots {
-        let Ok(entries) = fs::read_dir(&root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() || !is_archivable_file(&path) {
-                continue;
-            }
-            candidates.push(path);
-        }
-    }
+/// 计划里所有 jar/zip 的 sha1，按路径索引：`PathBuf -> sha1`
+///
+/// 整条导出链路上只在这里读文件内容。反查 Modrinth 与回填链接共用这一份结果，
+/// 以前两处各算一遍，400 个模组等于凭空多读几百 MB 磁盘。
+async fn hash_planned_files(plan: &[PlannedFile]) -> HashMap<PathBuf, String> {
+    let candidates: Vec<PathBuf> = plan
+        .iter()
+        .filter(|file| is_archivable_file(&file.source))
+        .map(|file| file.source.clone())
+        .collect();
 
     if candidates.is_empty() {
-        return Ok(HashMap::new());
+        return HashMap::new();
     }
 
-    let hashes = tokio::task::spawn_blocking(move || {
-        // 串行算哈希只用得上一个核，导出几百个模组时很明显
-        file_utils::sha1_files_parallel(&candidates)
-            .into_iter()
-            .map(|(_, hash)| hash)
-            .collect::<Vec<_>>()
-    })
-    .await
-    .map_err(|e| LauncherError::Custom(format!("计算文件哈希失败: {}", e)))?;
+    match tokio::task::spawn_blocking(move || file_utils::sha1_files_parallel(&candidates)).await {
+        Ok(hashes) => hashes.into_iter().collect(),
+        Err(error) => {
+            warn!("计算文件哈希异常终止: {}", error);
+            HashMap::new()
+        }
+    }
+}
+
+/// 送去反查的哈希：只有 jar/zip 值得查，且只查真会被打包的那些
+fn modrinth_lookup_hashes(plan: &[PlannedFile], hashes: &HashMap<PathBuf, String>) -> Vec<String> {
+    plan.iter()
+        .filter(|file| is_archivable_file(&file.source))
+        .filter_map(|file| hashes.get(&file.source).cloned())
+        .collect()
+}
+
+/// 实例内容目录下所有 Modrinth 认得的文件：sha1 -> 版本
+async fn resolve_modrinth_versions(
+    hashes: Vec<String>,
+) -> Result<HashMap<String, ModrinthModpackVersion>, LauncherError> {
+    if hashes.is_empty() {
+        return Ok(HashMap::new());
+    }
 
     match modrinth::ModrinthService::new()
         .get_versions_by_hashes(hashes)
@@ -334,14 +343,6 @@ fn has_enabled_mods(content_root: &Path) -> bool {
             .to_ascii_lowercase()
             .ends_with(".jar")
     })
-}
-
-fn scan_roots(content_root: &Path, include_saves: bool) -> Vec<PathBuf> {
-    let mut roots = vec![content_root.join("mods")];
-    if include_saves {
-        roots.push(content_root.join("saves"));
-    }
-    roots
 }
 
 /// 只有 jar/zip 这类 Modrinth 会收录的文件才值得去反查
@@ -418,38 +419,24 @@ fn collect_planned_files(
     Ok(())
 }
 
-/// 给计划里的 jar/zip 算 sha1，能反查到 Modrinth 版本的标记成链接
+/// 用已经算好的哈希把能反查到 Modrinth 版本的 jar/zip 标记成链接
 ///
-/// 递归过程中逐个算哈希只能用一个核；这里先把候选攒起来并行算完，再回填结果。
-async fn apply_linked_files(
+/// `hashes` 由 `hash_planned_files` 产出，这里不再读任何文件。
+fn apply_linked_files(
     plan: &mut [PlannedFile],
     linked_versions: &HashMap<String, ModrinthModpackVersion>,
     sides: &HashMap<String, modrinth::ProjectSides>,
+    hashes: &HashMap<PathBuf, String>,
 ) {
-    let candidates: Vec<PathBuf> = plan
-        .iter()
-        .filter(|file| is_archivable_file(&file.source))
-        .map(|file| file.source.clone())
-        .collect();
-
-    if candidates.is_empty() {
+    if linked_versions.is_empty() {
         return;
     }
-
-    let hashes = tokio::task::spawn_blocking(move || file_utils::sha1_files_parallel(&candidates))
-        .await
-        .unwrap_or_else(|error| {
-            warn!("计算文件哈希异常终止: {}", error);
-            Vec::new()
-        });
-
-    let by_path: HashMap<PathBuf, String> = hashes.into_iter().collect();
 
     for file in plan.iter_mut() {
         if !is_archivable_file(&file.source) {
             continue;
         }
-        let Some(hash) = by_path.get(&file.source) else {
+        let Some(hash) = hashes.get(&file.source) else {
             warn!("没有算出 {} 的 sha1，按 overrides 打包", file.relative);
             continue;
         };
@@ -644,13 +631,62 @@ fn write_mrpack(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_dependencies, collect_planned_files, compression_for, sanitize_version_id,
-        validate_target, write_mrpack,
+        build_dependencies, collect_planned_files, compression_for, hash_planned_files,
+        modrinth_lookup_hashes, sanitize_version_id, validate_target, write_mrpack,
     };
     use crate::services::modpack_format;
     use std::collections::HashSet;
     use std::fs;
     use std::path::Path;
+
+    /// 反查用的哈希只能来自 jar/zip：文本配置 Modrinth 没有，送去查是白占额度
+    #[tokio::test]
+    async fn test_lookup_hashes_cover_only_archivable_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("mods")).unwrap();
+        fs::create_dir_all(root.join("config")).unwrap();
+        fs::write(root.join("mods/sodium.jar"), b"jar").unwrap();
+        fs::write(root.join("config/sodium.toml"), b"cfg").unwrap();
+
+        let mut seen = HashSet::new();
+        let mut plan = Vec::new();
+        collect_planned_files(root, root, false, &mut seen, &mut plan).unwrap();
+
+        let hashes = hash_planned_files(&plan).await;
+        // 只给 jar 算过哈希，toml 一次都没读
+        assert_eq!(hashes.len(), 1);
+
+        let lookup = modrinth_lookup_hashes(&plan, &hashes);
+        assert_eq!(lookup.len(), 1);
+        assert_eq!(
+            lookup[0],
+            crate::utils::file_utils::sha1_hex(b"jar"),
+            "送去反查的必须是 jar 的哈希"
+        );
+    }
+
+    /// 同一个文件只该读一次：反查和回填共用同一份哈希表
+    #[tokio::test]
+    async fn test_hash_results_are_reused_by_path() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("mods")).unwrap();
+        fs::write(root.join("mods/a.jar"), b"aaa").unwrap();
+        fs::write(root.join("mods/b.zip"), b"bbb").unwrap();
+
+        let mut seen = HashSet::new();
+        let mut plan = Vec::new();
+        collect_planned_files(root, root, false, &mut seen, &mut plan).unwrap();
+
+        let hashes = hash_planned_files(&plan).await;
+        assert_eq!(hashes.len(), 2);
+        // 按源路径索引，回填时不需要再碰磁盘
+        assert_eq!(
+            hashes.get(&root.join("mods/a.jar")).map(String::as_str),
+            Some(crate::utils::file_utils::sha1_hex(b"aaa").as_str())
+        );
+    }
 
     /// jar 本身是 zip，再压一遍纯耗 CPU；配置文本才值得压
     #[test]

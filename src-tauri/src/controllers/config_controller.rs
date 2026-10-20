@@ -6,15 +6,7 @@ use crate::errors::LauncherError;
 use crate::models::*;
 use crate::services::config;
 
-async fn run_blocking<T, F>(task: F) -> Result<T, LauncherError>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T, LauncherError> + Send + 'static,
-{
-    tauri::async_runtime::spawn_blocking(task)
-        .await
-        .map_err(|e| LauncherError::Custom(format!("后台任务执行失败: {}", e)))?
-}
+use super::run_blocking;
 
 #[tauri::command]
 pub fn get_config() -> Result<GameConfig, LauncherError> {
@@ -75,9 +67,13 @@ pub async fn test_proxy(settings: ProxySettings) -> Result<ProxyTestResult, Laun
     crate::services::proxy::test_connection(settings).await
 }
 
+/// 逐个检查版本 JSON、客户端 jar 与几百个库文件是否存在，全是同步 stat
 #[tauri::command]
 pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, LauncherError> {
-    crate::services::file_verification::validate_version_files(version_id).await
+    run_blocking(move || {
+        crate::services::file_verification::validate_version_files_sync(version_id)
+    })
+    .await
 }
 
 #[tauri::command]

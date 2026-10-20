@@ -102,7 +102,7 @@ pub fn list_resource_packs(instance_name: &str) -> Result<Vec<ResourcePackInfo>,
             continue;
         }
 
-        let meta = read_pack_meta(&path, is_directory).unwrap_or_default();
+        let (meta, icon_data_url) = read_pack_details(&path, is_directory);
         let compatibility = classify_compatibility(&meta, game_format);
         let display_name = meta
             .description
@@ -118,7 +118,7 @@ pub fn list_resource_packs(instance_name: &str) -> Result<Vec<ResourcePackInfo>,
             max_format: meta.max_format,
             compatibility,
             size: entry_size(&path, is_directory, 0),
-            icon_data_url: read_pack_icon(&path, is_directory),
+            icon_data_url,
             is_directory,
             file_name,
         });
@@ -332,30 +332,45 @@ fn entry_size(path: &Path, is_directory: bool, depth: u8) -> u64 {
         .fold(0u64, u64::saturating_add)
 }
 
-fn read_pack_meta(path: &Path, is_directory: bool) -> Option<PackMeta> {
-    let bytes = if is_directory {
-        fs::read(path.join("pack.mcmeta")).ok()?
-    } else {
-        let file = fs::File::open(path).ok()?;
-        let mut archive = zip::ZipArchive::new(file).ok()?;
-        read_zip_entry(&mut archive, "pack.mcmeta")?
+/// 一次打开 zip 同时取 metadata 与图标
+///
+/// 以前 `read_pack_meta` 和 `read_pack_icon` 各开一次 `ZipArchive`：同一个包的
+/// 中央目录被解析两遍，50 个包就是 100 次。这里只开一次。
+fn read_pack_details(path: &Path, is_directory: bool) -> (PackMeta, Option<String>) {
+    if is_directory {
+        let meta = fs::read(path.join("pack.mcmeta"))
+            .ok()
+            .map(|bytes| parse_pack_mcmeta(&String::from_utf8_lossy(&bytes)))
+            .unwrap_or_default();
+
+        let icon = path.join("pack.png");
+        let icon = icon
+            .metadata()
+            .ok()
+            .filter(|meta| meta.len() <= MAX_ICON_BYTES)
+            .and_then(|_| fs::read(&icon).ok())
+            .and_then(encode_icon);
+
+        return (meta, icon);
+    }
+
+    let Ok(file) = fs::File::open(path) else {
+        return (PackMeta::default(), None);
     };
-    let text = String::from_utf8_lossy(&bytes);
-    Some(parse_pack_mcmeta(&text))
+    let Ok(mut archive) = zip::ZipArchive::new(file) else {
+        return (PackMeta::default(), None);
+    };
+
+    let meta = read_zip_entry(&mut archive, "pack.mcmeta")
+        .map(|bytes| parse_pack_mcmeta(&String::from_utf8_lossy(&bytes)))
+        .unwrap_or_default();
+    let icon = read_zip_entry(&mut archive, "pack.png").and_then(encode_icon);
+
+    (meta, icon)
 }
 
-fn read_pack_icon(path: &Path, is_directory: bool) -> Option<String> {
-    let bytes = if is_directory {
-        let icon = path.join("pack.png");
-        if icon.metadata().ok()?.len() > MAX_ICON_BYTES {
-            return None;
-        }
-        fs::read(icon).ok()?
-    } else {
-        let file = fs::File::open(path).ok()?;
-        let mut archive = zip::ZipArchive::new(file).ok()?;
-        read_zip_entry(&mut archive, "pack.png")?
-    };
+/// 图标上限之外的直接丢掉：列表里塞一个几 MB 的 data URL 只会拖慢渲染
+fn encode_icon(bytes: Vec<u8>) -> Option<String> {
     if bytes.len() as u64 > MAX_ICON_BYTES {
         return None;
     }
@@ -735,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_pack_meta_from_zip_and_directory() {
+    fn test_read_pack_details_from_zip_and_directory() {
         let dir = tempfile::TempDir::new().unwrap();
 
         let zip_path = dir.path().join("pack.zip");
@@ -744,9 +759,10 @@ mod tests {
             r#"{"pack":{"pack_format":34,"description":"压缩包资源包"}}"#,
             None,
         );
-        let meta = super::read_pack_meta(&zip_path, false).unwrap();
+        let (meta, icon) = super::read_pack_details(&zip_path, false);
         assert_eq!(meta.description.as_deref(), Some("压缩包资源包"));
         assert_eq!(meta.min_format, Some(34));
+        assert!(icon.is_none());
 
         // 文件夹形式的资源包走的是直接读文件那条路
         let folder = dir.path().join("pack-folder");
@@ -756,35 +772,38 @@ mod tests {
             r#"{"pack":{"min_format":88,"max_format":88,"description":"文件夹资源包"}}"#,
         )
         .unwrap();
-        let folder_meta = super::read_pack_meta(&folder, true).unwrap();
+        let (folder_meta, _) = super::read_pack_details(&folder, true);
         assert_eq!(folder_meta.description.as_deref(), Some("文件夹资源包"));
         assert_eq!(folder_meta.min_format, Some(88));
         assert_eq!(folder_meta.max_format, Some(88));
     }
 
     #[test]
-    fn test_read_pack_meta_returns_none_without_mcmeta() {
+    fn test_read_pack_details_falls_back_to_defaults_without_mcmeta() {
         let dir = tempfile::TempDir::new().unwrap();
         let zip_path = dir.path().join("not-a-pack.zip");
         write_pack_zip(&zip_path, "", None);
         // 空文件不是合法 JSON，解析不出元数据但也不该 panic
-        let meta = super::read_pack_meta(&zip_path, false).unwrap();
+        let (meta, _) = super::read_pack_details(&zip_path, false);
         assert_eq!(meta, PackMeta::default());
     }
 
     #[test]
-    fn test_read_pack_icon_encodes_data_url() {
+    fn test_read_pack_details_encodes_icon_as_data_url() {
         let dir = tempfile::TempDir::new().unwrap();
         let zip_path = dir.path().join("icon.zip");
         let png = b"\x89PNG\r\n\x1a\nfake";
         write_pack_zip(&zip_path, r#"{"pack":{"pack_format":34}}"#, Some(png));
 
-        let icon = super::read_pack_icon(&zip_path, false).unwrap();
+        let (meta, icon) = super::read_pack_details(&zip_path, false);
+        // 一次打开同时拿到元数据与图标：这正是去掉两次 zip 解析的目的
+        assert_eq!(meta.min_format, Some(34));
+        let icon = icon.unwrap();
         assert!(icon.starts_with("data:image/png;base64,"));
 
         // 没有 pack.png 时返回 None，界面回退到默认图标
         let plain = dir.path().join("plain.zip");
         write_pack_zip(&plain, r#"{"pack":{"pack_format":34}}"#, None);
-        assert!(super::read_pack_icon(&plain, false).is_none());
+        assert!(super::read_pack_details(&plain, false).1.is_none());
     }
 }

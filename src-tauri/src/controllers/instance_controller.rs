@@ -8,6 +8,8 @@ use crate::services::instance::{self, ModInfo};
 use crate::services::loaders::LoaderType;
 use crate::utils::file_utils::{InstanceNameValidation, validate_instance_name};
 
+use super::run_blocking;
+
 #[tauri::command]
 pub fn validate_instance_name_cmd(name: String) -> InstanceNameValidation {
     validate_instance_name(&name)
@@ -65,9 +67,11 @@ pub async fn launch_instance(
     .await
 }
 
+/// 列出实例模组：每个 jar 都要打开读 fabric.mod.json / mods.toml，几百个模组时
+/// 留在 async worker 上会把同一时间的其他命令一起拖住
 #[tauri::command]
 pub async fn get_instance_mods(instance_name: String) -> Result<Vec<ModInfo>, LauncherError> {
-    instance::get_instance_mods(instance_name)
+    run_blocking(move || instance::get_instance_mods(instance_name)).await
 }
 
 #[tauri::command]

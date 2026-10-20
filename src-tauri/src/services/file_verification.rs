@@ -151,7 +151,8 @@ fn missing_asset_index(game_dir: &Path, version_json: &serde_json::Value) -> Opt
     (!path.exists()).then(|| format!("游戏资源文件未下载: {}", path.display()))
 }
 
-pub async fn validate_version_files(version_id: String) -> Result<Vec<String>, LauncherError> {
+/// 校验版本文件的完整性：只做同步 stat，调用方负责放进阻塞线程池
+pub fn validate_version_files_sync(version_id: String) -> Result<Vec<String>, LauncherError> {
     let config = load_config()?;
     let game_dir = PathBuf::from(&config.game_dir);
     let version_dir = game_dir.join("versions").join(&version_id);

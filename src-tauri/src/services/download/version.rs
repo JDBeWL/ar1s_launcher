@@ -315,39 +315,68 @@ async fn collect_assets(
         fs::write(&assets_index_path, &bytes)?;
     }
 
-    let index_content = fs::read_to_string(&assets_index_path)?;
-    let index: serde_json::Value = serde_json::from_str(&index_content)?;
+    // 索引动辄十几 MB、几千个对象：读盘 + 解析 + 建任务是纯 CPU 活，
+    // 留在 async worker 上会让这段时间的其他命令一起等
+    let objects_dir = assets_base_dir.join("objects");
+    let index_path = assets_index_path.clone();
+    let is_mirror_copy = is_mirror;
+    let base_url = base_url.to_string();
 
-    if let Some(objects) = index["objects"].as_object() {
-        for (_path, obj) in objects {
-            let hash = obj["hash"]
-                .as_str()
-                .ok_or_else(|| LauncherError::Custom("资源缺少hash".to_string()))?;
-            let size = obj["size"].as_u64().unwrap_or(0);
-            let original_url = format!(
-                "https://resources.download.minecraft.net/{}/{}",
-                &hash[..2],
-                hash
-            );
-            let download_url = if is_mirror {
-                format!(
-                    "https://bmclapi2.bangbang93.com/assets/{}/{}",
-                    &hash[..2],
-                    hash
-                )
-            } else {
-                original_url.clone()
-            };
-            let file_path = assets_base_dir.join("objects").join(&hash[..2]).join(hash);
+    let jobs = tokio::task::spawn_blocking(move || -> Result<Vec<DownloadJob>, LauncherError> {
+        let index_content = fs::read_to_string(&index_path)?;
+        let index: serde_json::Value = serde_json::from_str(&index_content)?;
+        let mut jobs = Vec::new();
+        collect_asset_objects(&index, &objects_dir, &base_url, is_mirror_copy, &mut jobs)?;
+        Ok(jobs)
+    })
+    .await
+    .map_err(|e| LauncherError::Custom(format!("解析资源索引失败: {}", e)))??;
 
-            downloads.push(DownloadJob {
-                url: download_url,
-                fallback_url: if is_mirror { Some(original_url) } else { None },
-                path: file_path,
-                size,
-                hash: Some(hash.to_string()),
-            });
-        }
+    downloads.extend(jobs);
+
+    Ok(())
+}
+
+/// 把资源索引里的对象展开成下载任务
+fn collect_asset_objects(
+    index: &serde_json::Value,
+    objects_dir: &Path,
+    base_url: &str,
+    is_mirror: bool,
+    downloads: &mut Vec<DownloadJob>,
+) -> Result<(), LauncherError> {
+    let Some(objects) = index["objects"].as_object() else {
+        return Ok(());
+    };
+
+    for (_path, obj) in objects {
+        let hash = obj["hash"]
+            .as_str()
+            .ok_or_else(|| LauncherError::Custom("资源缺少hash".to_string()))?;
+        // 官方索引里的 hash 都是完整的 sha1；短成这样说明数据坏了，跳过而不是在切片上 panic
+        let Some(prefix) = hash.get(..2) else {
+            warn!("资源索引里有异常的 hash，已跳过: {}", hash);
+            continue;
+        };
+        let size = obj["size"].as_u64().unwrap_or(0);
+        let original_url = format!(
+            "https://resources.download.minecraft.net/{}/{}",
+            prefix, hash
+        );
+        let download_url = if is_mirror {
+            format!("{}/assets/{}/{}", base_url, prefix, hash)
+        } else {
+            original_url.clone()
+        };
+        let file_path = objects_dir.join(prefix).join(hash);
+
+        downloads.push(DownloadJob {
+            url: download_url,
+            fallback_url: if is_mirror { Some(original_url) } else { None },
+            path: file_path,
+            size,
+            hash: Some(hash.to_string()),
+        });
     }
 
     Ok(())
@@ -436,9 +465,63 @@ fn library_download_urls(
 
 #[cfg(test)]
 mod tests {
-    use super::collect_libraries;
+    use super::{collect_asset_objects, collect_libraries};
     use crate::utils::minecraft::get_mc_os_name;
     use serde_json::json;
+
+    #[test]
+    fn test_asset_objects_become_download_jobs() {
+        let dir = tempfile::tempdir().unwrap();
+        let objects = dir.path().join("objects");
+        let index = json!({
+            "objects": {
+                "minecraft/sounds/a.ogg": {
+                    "hash": "0123456789012345678901234567890123456789",
+                    "size": 1234
+                }
+            }
+        });
+
+        let mut jobs = Vec::new();
+        collect_asset_objects(
+            &index,
+            &objects,
+            "https://bmclapi2.bangbang93.com",
+            true,
+            &mut jobs,
+        )
+        .unwrap();
+
+        assert_eq!(jobs.len(), 1);
+        // 镜像优先、官方源兜底，路径按 hash 前两位分桶
+        assert_eq!(
+            jobs[0].url,
+            "https://bmclapi2.bangbang93.com/assets/01/0123456789012345678901234567890123456789"
+        );
+        assert_eq!(
+            jobs[0].fallback_url.as_deref(),
+            Some(
+                "https://resources.download.minecraft.net/01/0123456789012345678901234567890123456789"
+            )
+        );
+        assert!(
+            jobs[0]
+                .path
+                .ends_with("01/0123456789012345678901234567890123456789")
+        );
+        assert_eq!(jobs[0].size, 1234);
+    }
+
+    #[test]
+    fn test_asset_objects_skip_malformed_hash_instead_of_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let index = json!({ "objects": { "a": { "hash": "x", "size": 1 } } });
+
+        let mut jobs = Vec::new();
+        collect_asset_objects(&index, dir.path(), "https://example.com", false, &mut jobs).unwrap();
+
+        assert!(jobs.is_empty(), "短 hash 应该被跳过，不能切片 panic");
+    }
 
     fn current_os() -> &'static str {
         get_mc_os_name()
