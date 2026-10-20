@@ -6,7 +6,7 @@ English | [简体中文](README.zh-CN.md)
 
 Ar1s Launcher manages Minecraft versions, mod loaders and isolated game instances in one desktop app, and installs modpacks without making the player assemble a game directory by hand.
 
-![Version](https://img.shields.io/badge/version-0.7.2-blue)
+![Version](https://img.shields.io/badge/version-0.0.7.251-darkred)
 ![Tauri](https://img.shields.io/badge/Tauri-2.12-orange)
 ![Vue](https://img.shields.io/badge/Vue-3.5-green)
 ![Rust](https://img.shields.io/badge/Rust-1.95+-red)
@@ -14,21 +14,33 @@ Ar1s Launcher manages Minecraft versions, mod loaders and isolated game instance
 
 > Status: early development. Windows is the tested platform; macOS and Linux builds are possible but untested. Bug reports are welcome.
 
+> **Notice — vanilla game files are not distributed.** To comply with applicable laws and
+> regulations, this build no longer downloads Minecraft game files (client jar, libraries,
+> assets) from Mojang or its mirrors. As a result the download page, creating a new instance
+> and installing a modpack are switched off.
+
 ## Features
 
 ### Versions and instances
 
-- Browse and install Minecraft releases and snapshots
+- Browse Minecraft releases and snapshots, and see which ones are installed
 - Independent instances with their own mods, configs, saves and resource packs (optional version isolation)
-- Create, rename, delete instances, or open an instance folder in one click
-- Forge, Fabric, Quilt and NeoForge installation, including the libraries each loader needs
+- Rename or delete instances, or open an instance folder in one click
+- Forge, Fabric, Quilt and NeoForge libraries are managed per instance
+- _Currently unavailable:_ installing new versions and creating new instances, because both
+  require downloading vanilla game files
 
 ### Modpacks
 
 - Search and install modpacks from Modrinth
 - Filter by game version, loader and category
+- Import an external `.mrpack` from disk; the launcher reads the manifest, applies the
+  overrides and shows a preview before installing. Your archive is never deleted
+- Export any instance as a Modrinth-format `.mrpack`: files are matched against Modrinth by
+  SHA-1 where possible, and anything else is packed into `overrides/`
 - Concurrent mod downloads with per-file progress, cancellation and rollback on failure
 - CurseForge modpack support is in development (see [Roadmap](#roadmap))
+- _Currently unavailable:_ installing a modpack, because that also installs the vanilla version
 
 ### Mods
 
@@ -50,9 +62,11 @@ Ar1s Launcher manages Minecraft versions, mod loaders and isolated game instance
 ### Downloads
 
 - Official Mojang sources, with an optional BMCLAPI mirror for users in mainland China
-- Automatic fallback between sources
+- Automatic fallback between sources; large files are split across several connections, and a
+  slow source is raced against its fallback instead of waiting for a timeout
 - Configurable download threads and resume support
 - SHA-1 verification, file integrity checks and one-click repair of missing files
+- _Currently unavailable:_ fetching vanilla game files (see the notice at the top)
 
 ### Accounts and launching
 
@@ -151,12 +165,16 @@ ar1s_launcher/
 
 ### Home
 
-Select an installed version, set a player name, choose offline or Microsoft identity, and launch. Shortcuts to downloads, instance creation and instance management sit on the same page.
+Select an installed instance, check your identity, and launch. Shortcuts to downloads and
+instance creation appear here when vanilla file downloads are enabled.
 
 ### Add instance
 
+> Unavailable in this build, because creating an instance requires downloading vanilla game files.
+
 - **Custom install**: pick a Minecraft version, optionally a loader and loader version, name the instance, create it.
 - **Online install**: pick a modpack platform, search and filter, choose a pack version, install. Mods, overrides and the required loader are resolved automatically.
+- **From file**: import a local `.mrpack`, review the preview, then install.
 
 ### Instance list
 
@@ -180,6 +198,8 @@ Opening an instance goes to its own page instead of a dialog, with tabs for:
 
 ### Downloads
 
+> Unavailable in this build, because it distributes vanilla game files.
+
 Browse releases and snapshots, filter by type, choose a source (official or BMCLAPI), and follow progress in real time.
 
 ### Settings
@@ -195,6 +215,9 @@ General (game directory, download source, threads, proxy, interface language, in
 | Quilt    | Supported | Fabric fork                 |
 | NeoForge | Supported | Modern Forge fork           |
 
+Loader libraries are downloaded as part of the loader installation, which is unavailable in
+this build. Existing instances keep their loader files and launch as before.
+
 ## Supported modpack platforms
 
 | Platform   | Status         | Notes                          |
@@ -202,17 +225,26 @@ General (game directory, download source, threads, proxy, interface language, in
 | Modrinth   | Supported      | Open modpack platform          |
 | CurseForge | In development | Requires CurseForge API access |
 
+Importing and exporting `.mrpack` archives works in this build; installing a pack does not,
+because it also installs the vanilla version.
+
 ## Third-party services and content
 
 - **Modrinth**: pack metadata and files come from the official Modrinth API and CDN.
 - **CurseForge** (planned): the launcher will use a user-supplied API key and call the official API. Files will always be downloaded from CurseForge's own CDN — nothing is re-hosted, mirrored or redistributed. Projects that have third-party distribution disabled will not be installed automatically; the launcher will explain why and link to the project page instead.
-- **Minecraft**: version manifests, libraries and assets are fetched from Mojang's official servers, with BMCLAPI as an optional mirror.
+- **Minecraft**: game files are **not** downloaded in this build. When vanilla downloads are
+  enabled again, version manifests, libraries and assets come from Mojang's official servers,
+  with BMCLAPI as an optional mirror. The launcher never re-hosts or redistributes them.
 - Metadata is used only to render the interface, is kept in memory or a short-lived local cache, and is never exposed as a public API or resold.
 - The launcher is free, contains no ads, and does not attempt to bypass any platform's client or author reward program.
 
 ## Troubleshooting
 
-**The game fails to launch** — read the diagnostic report in the failure dialog first. It classifies the log and states the likely cause. Then check the Java configuration (automatic matching is the default) and run the file integrity check.
+**The game fails to launch** — read the diagnostic report in the failure dialog first. It classifies the log and states the likely cause. Then check the Java configuration (automatic matching is the default).
+
+**The download page, add instance or modpack install is missing** — expected in this build.
+Vanilla Minecraft game files are no longer downloaded, so anything that needs them is switched
+off. Already-installed instances still launch normally.
 
 **Downloads are slow** — switch the download source under Settings → General, check the network, and adjust the thread count.
 
@@ -261,10 +293,15 @@ Thanks to [M-Crowe](https://github.com/m-crowe) for testing and for parts of the
 - [x] Resource pack management (local management, Modrinth installs, update checks)
 - [x] Shader pack management (local management, Modrinth installs, update checks)
 - [x] Internationalization (Chinese and English UI, switchable at runtime)
+- [x] Modrinth modpack import and export (`.mrpack`)
 
 ## Disclaimer
 
 Ar1s Launcher is an unofficial, community project. It is not an official Minecraft product, is not approved by or associated with Mojang or Microsoft, and is not affiliated with or endorsed by CurseForge, Overwolf or Modrinth. All trademarks belong to their respective owners.
+
+This project does not distribute Minecraft game files. Downloading them has been disabled for
+compliance reasons; players are expected to own a legitimate copy of the game. The launcher
+only manages files that are already present on the local machine.
 
 ---
 
