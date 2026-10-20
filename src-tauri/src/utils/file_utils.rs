@@ -211,14 +211,63 @@ pub fn sha1_files_parallel(paths: &[PathBuf]) -> Vec<(PathBuf, String)> {
 /// 三处以前各自写一遍串行循环，只有单核在跑；这里统一走并行分片。
 /// 返回 (哈希列表, 哈希 -> 文件名)，单个文件算不出来时记警告并跳过。
 pub fn sha1_index_parallel(files: &[(PathBuf, String)]) -> (Vec<String>, HashMap<String, String>) {
-    let paths: Vec<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
-    let by_path: HashMap<PathBuf, String> = sha1_files_parallel(&paths).into_iter().collect();
+    sha1_index_with(files, false)
+}
+
+/// 同上，但命中校验指纹缓存时直接沿用上次算出的内容哈希
+///
+/// 更新检查是「打开实例页面就看」的操作，每次都把几百 MB 的模组重读一遍太浪费：
+/// 文件的长度与修改时间都没变，内容就一定还是那一份，哈希不必重算。
+pub fn sha1_index_cached(files: &[(PathBuf, String)]) -> (Vec<String>, HashMap<String, String>) {
+    sha1_index_with(files, true)
+}
+
+fn sha1_index_with(
+    files: &[(PathBuf, String)],
+    use_cache: bool,
+) -> (Vec<String>, HashMap<String, String>) {
+    // 先按指纹挑出真正要读盘的文件，剩下的直接取缓存
+    let mut cached: HashMap<PathBuf, String> = HashMap::with_capacity(files.len());
+    let mut to_hash: Vec<PathBuf> = Vec::with_capacity(files.len());
+
+    for (path, _) in files {
+        let hit = use_cache
+            .then(|| {
+                std::fs::metadata(path)
+                    .ok()
+                    .and_then(|meta| verify_cache::known_hash(path, &meta))
+            })
+            .flatten();
+
+        match hit {
+            Some(hash) => {
+                cached.insert(path.clone(), hash);
+            }
+            None => to_hash.push(path.clone()),
+        }
+    }
+
+    let fresh = sha1_files_parallel(&to_hash);
+    if use_cache {
+        for (path, hash) in &fresh {
+            if let Ok(meta) = std::fs::metadata(path) {
+                // 内容哈希记进 actual：这张表就是「这份文件的内容是什么」，
+                // 下次任何需要它的地方（含下载校验）都能直接命中
+                verify_cache::remember(path, &meta, Some(hash), Some(hash));
+            }
+        }
+        // 只有真算过东西才落盘，避免每次打开实例页面都重写一遍缓存文件
+        if !fresh.is_empty() {
+            verify_cache::flush();
+        }
+    }
+    cached.extend(fresh);
 
     let mut hashes = Vec::with_capacity(files.len());
     let mut by_hash = HashMap::with_capacity(files.len());
 
     for (path, file_name) in files {
-        match by_path.get(path) {
+        match cached.get(path) {
             Some(hash) => {
                 hashes.push(hash.clone());
                 by_hash.insert(hash.clone(), file_name.clone());
@@ -329,33 +378,19 @@ pub fn verify_file(
         return Ok(true);
     }
 
-    let valid = if let Some(hash) = expected_hash {
-        let mut file = std::fs::File::open(path)?;
-        let mut hasher = Sha1::new();
-        let mut buf = vec![0u8; 1024 * 1024];
-        loop {
-            let read = file.read(&mut buf)?;
-            if read == 0 {
-                break;
-            }
-            hasher.update(&buf[..read]);
-        }
-        let actual_hash = digest_to_hex(&hasher.finalize());
-        let is_valid = actual_hash.eq_ignore_ascii_case(hash.trim());
-
-        if !is_valid {
+    let actual = if let Some(hash) = expected_hash {
+        let actual_hash = sha1_file(path)?;
+        if !actual_hash.eq_ignore_ascii_case(hash.trim()) {
             warn!("文件哈希不匹配: 期望 {}, 实际 {}", hash, actual_hash);
+            return Ok(false);
         }
-
-        is_valid
+        Some(actual_hash)
     } else {
-        true
+        None
     };
 
-    if valid {
-        verify_cache::remember(path, &metadata, expected_hash);
-    }
-    Ok(valid)
+    verify_cache::remember(path, &metadata, expected_hash, actual.as_deref());
+    Ok(true)
 }
 
 pub fn cleanup_instance_creation(game_dir: &Path, instance_name: &str, _base_version_id: &str) {

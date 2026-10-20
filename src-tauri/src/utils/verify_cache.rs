@@ -27,6 +27,12 @@ struct Entry {
     /// 校验通过时对应的期望哈希，None 表示那次只校验过大小
     #[serde(default)]
     hash: Option<String>,
+    /// 上次真正算出来的内容哈希
+    ///
+    /// 有了它，同一个文件换一个期望哈希来校验时也能直接比对结论，不必再读一遍。
+    /// 升级后新增字段，旧缓存反序列化为 None，按「不知道」处理即可
+    #[serde(default)]
+    actual: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -77,32 +83,64 @@ pub fn init(game_dir: &Path) {
 }
 
 /// 指纹与期望哈希都和上次校验通过时一致，就不必再读文件
+///
+/// 比对时优先看上次真正算出的内容哈希：同一个文件这次换个期望值来问，
+/// 只要内容没变，结论照样成立，不必重算
 pub fn matches(path: &Path, meta: &std::fs::Metadata, expected_hash: Option<&str>) -> bool {
     let expected = expected_hash.map(str::to_ascii_lowercase);
     let cache = read_lock();
-    match cache.entries.get(path) {
-        Some(entry) => {
-            entry.len == meta.len()
-                && entry.modified == modified_nanos(meta)
-                && entry.hash == expected
-        }
-        None => false,
+    let Some(entry) = cache.entries.get(path) else {
+        return false;
+    };
+
+    if entry.len != meta.len() || entry.modified != modified_nanos(meta) {
+        return false;
+    }
+
+    match (expected.clone(), entry.actual.as_ref()) {
+        (Some(expected), Some(actual)) => *actual == expected,
+        _ => entry.hash == expected,
     }
 }
 
+/// 取「这个路径上次校验通过时用的哈希」，指纹必须和当前文件一致
+///
+/// 「校验后台化」靠它判断该不该重算：文件在两次启动之间没被动过，就直接沿用
+/// 上次的结论，连读盘都省了。指纹对不上则返回 None，调用方老老实实重算
+pub fn known_hash(path: &Path, meta: &std::fs::Metadata) -> Option<String> {
+    let cached = read_lock().entries.get(path).cloned()?;
+    (cached.len == meta.len() && cached.modified == modified_nanos(meta))
+        .then_some(cached.actual)
+        .flatten()
+}
+
 /// 校验通过后记一笔；同一路径再次调用会覆盖旧指纹
-pub fn remember(path: &Path, meta: &std::fs::Metadata, expected_hash: Option<&str>) {
+///
+/// `actual_hash` 是这次真正算出来的内容哈希，只校验大小时传 None——
+/// 那种情况下不能顺手把之前记下的结论抹掉，也不能凭大小断言内容
+pub fn remember(
+    path: &Path,
+    meta: &std::fs::Metadata,
+    expected_hash: Option<&str>,
+    actual_hash: Option<&str>,
+) {
     let modified = modified_nanos(meta);
     let mut cache = write_lock();
+
+    let previous = cache
+        .entries
+        .get(path)
+        .filter(|entry| entry.len == meta.len() && entry.modified == modified);
 
     let hash = match expected_hash {
         Some(hash) => Some(hash.to_ascii_lowercase()),
         // 只校验大小的调用不要把之前记下的哈希抹掉，否则下次带哈希的校验又要重算
-        None => cache
-            .entries
-            .get(path)
-            .filter(|entry| entry.len == meta.len() && entry.modified == modified)
-            .and_then(|entry| entry.hash.clone()),
+        None => previous.and_then(|entry| entry.hash.clone()),
+    };
+
+    let actual = match actual_hash {
+        Some(actual) => Some(actual.to_ascii_lowercase()),
+        None => previous.and_then(|entry| entry.actual.clone()),
     };
 
     if cache.entries.len() >= MAX_ENTRIES && !cache.entries.contains_key(path) {
@@ -116,6 +154,7 @@ pub fn remember(path: &Path, meta: &std::fs::Metadata, expected_hash: Option<&st
             len: meta.len(),
             modified,
             hash,
+            actual,
         },
     );
     cache.dirty = true;
@@ -178,7 +217,7 @@ fn save_to(path: &Path, entries: &HashMap<PathBuf, Entry>) -> std::io::Result<()
 
 #[cfg(test)]
 mod tests {
-    use super::{Entry, load, modified_nanos, save_to};
+    use super::{Entry, known_hash, load, modified_nanos, remember, save_to};
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -187,6 +226,7 @@ mod tests {
             len,
             modified,
             hash: hash.map(str::to_string),
+            actual: None,
         }
     }
 
@@ -247,5 +287,40 @@ mod tests {
         // 长度或哈希对不上时必须重算
         assert_ne!(cached.len, meta.len() + 1);
         assert_ne!(cached.hash.as_deref(), Some("00000000"));
+    }
+
+    /// 后台校验靠 known_hash 决定跳过还是重算：文件没动过要给出上次的哈希，
+    /// 被动过就必须返回 None，否则改动过的文件会被当成好的
+    #[test]
+    fn test_known_hash_follows_the_file_fingerprint() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("known.bin");
+        std::fs::write(&path, b"hello").unwrap();
+
+        // 没记过就是 None
+        assert_eq!(known_hash(&path, &std::fs::metadata(&path).unwrap()), None);
+
+        let meta = std::fs::metadata(&path).unwrap();
+        remember(&path, &meta, Some("AABBCC"), Some("aabbcc"));
+        assert_eq!(
+            known_hash(&path, &std::fs::metadata(&path).unwrap()),
+            Some("aabbcc".to_string()),
+            "记下的哈希应当小写化后返回"
+        );
+
+        // 只校验过大小的条目不提供哈希
+        let path2 = dir.path().join("size_only.bin");
+        std::fs::write(&path2, b"abc").unwrap();
+        let meta2 = std::fs::metadata(&path2).unwrap();
+        remember(&path2, &meta2, None, None);
+        assert_eq!(
+            known_hash(&path2, &std::fs::metadata(&path2).unwrap()),
+            None
+        );
+
+        // 文件内容变了，指纹失效
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, b"hello world").unwrap();
+        assert_eq!(known_hash(&path, &std::fs::metadata(&path).unwrap()), None);
     }
 }

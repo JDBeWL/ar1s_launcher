@@ -153,9 +153,9 @@ impl ShaderPackInstaller {
             return Ok(Vec::new());
         }
 
-        // 并行分片算哈希：串行循环只用得上一个核
+        // 并行分片算哈希：串行循环只用得上一个核；指纹没变的文件沿用上次结论
         let (hashes, by_hash) =
-            tokio::task::spawn_blocking(move || file_utils::sha1_index_parallel(&files))
+            tokio::task::spawn_blocking(move || file_utils::sha1_index_cached(&files))
                 .await
                 .map_err(|e| LauncherError::Custom(format!("计算光影包哈希失败: {}", e)))?;
 

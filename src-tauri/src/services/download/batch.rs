@@ -121,24 +121,14 @@ pub async fn download_all_files(
         return Ok(());
     }
 
-    info!(
-        "Resuming download - {} files completed, {} remaining, {} bytes resumed",
-        completed_count,
-        filtered_jobs.len(),
-        resumed_bytes
-    );
-
     reset_cancel_flag();
     let global_cancel = get_cancel_flag();
 
-    let files_downloaded = Arc::new(AtomicU64::new(completed_count));
-    let bytes_downloaded = Arc::new(AtomicU64::new(resumed_bytes));
-    let bytes_since_last = Arc::new(AtomicU64::new(0));
     let state = Arc::new(AtomicBool::new(true));
     let was_cancelled = Arc::new(AtomicBool::new(false));
     let error_occurred = Arc::new(tokio::sync::Mutex::new(None::<String>));
 
-    // 用 listen 而非 once，以支持多次取消尝试
+    // 监听必须在预校验之前就位：预校验要读几百个文件，这段时间也得能取消
     let state_clone = state.clone();
     let was_cancelled_clone = was_cancelled.clone();
     let download_state_clone = download_state.clone();
@@ -156,6 +146,51 @@ pub async fn download_all_files(
             });
         }
     });
+
+    // 已在盘上的文件先单独核一遍，不占下载槽位
+    let verified = preverify_existing(&filtered_jobs, &state, &global_cancel).await;
+
+    if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
+        window.unlisten(listener_id);
+        crate::utils::file_utils::flush_verify_cache();
+        emit_cancelled_progress(window, 0, total_size);
+        return Err(LauncherError::Cancelled);
+    }
+
+    let verified_bytes: u64 = filtered_jobs
+        .iter()
+        .filter(|job| verified.contains(&job.url))
+        .map(|job| job.size)
+        .sum();
+    let verified_count = filtered_jobs
+        .iter()
+        .filter(|job| verified.contains(&job.url))
+        .count() as u64;
+
+    filtered_jobs.retain(|job| !verified.contains(&job.url));
+    let completed_count = completed_count + verified_count;
+    let resumed_bytes = resumed_bytes + verified_bytes;
+
+    // 预校验这一轮算出来的指纹必须落盘，下次才能跳过读盘
+    crate::utils::file_utils::flush_verify_cache();
+
+    if filtered_jobs.is_empty() {
+        // 全都已经在盘上且校验通过，没有要下的
+        window.unlisten(listener_id);
+        emit_completed_progress(window, total_size, total_size);
+        return Ok(());
+    }
+
+    info!(
+        "Resuming download - {} files completed, {} remaining, {} bytes resumed",
+        completed_count,
+        filtered_jobs.len(),
+        resumed_bytes
+    );
+
+    let files_downloaded = Arc::new(AtomicU64::new(completed_count));
+    let bytes_downloaded = Arc::new(AtomicU64::new(resumed_bytes));
+    let bytes_since_last = Arc::new(AtomicU64::new(0));
 
     let reporter_handle = spawn_progress_reporter(
         bytes_downloaded.clone(),
@@ -294,6 +329,68 @@ pub async fn download_all_files(
 /// 大文件先派发，尾部由大量小文件收尾，避免最后几个大文件把并发槽拖住
 fn order_jobs_for_dispatch(jobs: &mut [DownloadJob]) {
     jobs.sort_by_key(|job| std::cmp::Reverse(job.size));
+}
+
+/// 预校验：把已在盘上的文件先核一遍，通过的直接从待下载列表里拿掉
+///
+/// 以前这一步混在 `download_file` 里，等于占着一个下载槽位做纯读盘。几百个资源文件
+/// 里如果有大半已经存在，槽位全被哈希算占满，真正的网络下载反而起不来。
+///
+/// 现在读盘和下载彻底分开：这里用阻塞线程池并行核，核完再开始下载。
+/// 校验结果按「长度 + 修改时间」进指纹缓存，第二次基本不读盘。
+///
+/// 核不过的文件不会被删，仍留在列表里交给 `download_file` 重新校验并重下；
+/// 那种情况会多算一遍哈希，但损坏文件本来就是少数，不值得为它把接口搞复杂。
+async fn preverify_existing(
+    jobs: &[DownloadJob],
+    state: &Arc<AtomicBool>,
+    global_cancel: &Arc<AtomicBool>,
+) -> std::collections::HashSet<String> {
+    let candidates: Vec<DownloadJob> = jobs
+        .iter()
+        .filter(|job| job.path.exists())
+        .cloned()
+        .collect();
+
+    if candidates.is_empty() {
+        return std::collections::HashSet::new();
+    }
+
+    // 只用来读盘算哈希，与下载槽位无关；并行度过高反而互相抢 IO
+    let workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4)
+        .clamp(1, 4);
+    let verified = Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
+
+    for chunk in candidates.chunks(candidates.len().div_ceil(workers).max(1)) {
+        if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
+            break;
+        }
+
+        let chunk = chunk.to_vec();
+        let verified = verified.clone();
+
+        let handle = tokio::task::spawn_blocking(move || {
+            chunk
+                .into_iter()
+                .filter(|job| {
+                    crate::utils::file_utils::verify_file(&job.path, job.hash.as_deref(), job.size)
+                        .unwrap_or(false)
+                })
+                .map(|job| job.url)
+                .collect::<Vec<_>>()
+        });
+
+        // 各分片独立跑完，不能因为一个 join 失败就丢掉其他分片的结果
+        if let Ok(urls) = handle.await {
+            verified.lock().await.extend(urls);
+        }
+    }
+
+    let verified = verified.lock().await.clone();
+    debug!("预校验通过 {} 个已在盘上的文件", verified.len());
+    verified
 }
 
 /// 超过阈值的算大文件，单独用一个较小的池子限流

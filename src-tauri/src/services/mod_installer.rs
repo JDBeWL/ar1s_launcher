@@ -190,9 +190,10 @@ impl ModInstaller {
             return Ok(Vec::new());
         }
 
-        // 哈希是 CPU 密集活，扔到阻塞线程池并按核数并行分片
+        // 哈希是 CPU 密集活，扔到阻塞线程池并按核数并行分片；
+        // 指纹没变的文件直接沿用上次算出的内容哈希，不必重读
         let (hashes, by_hash) =
-            tokio::task::spawn_blocking(move || file_utils::sha1_index_parallel(&files))
+            tokio::task::spawn_blocking(move || file_utils::sha1_index_cached(&files))
                 .await
                 .map_err(|e| LauncherError::Custom(format!("计算模组哈希失败: {}", e)))?;
 
