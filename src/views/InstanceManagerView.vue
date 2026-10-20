@@ -14,6 +14,7 @@ import type { GameInstance } from '../types/events';
 import { formatLastPlayed, getErrorMessage } from '../utils/format';
 import { logError } from '../utils/logger';
 import { getInstanceViewMode, getInstanceSortBy } from '../utils/storage';
+import { isVanillaDownloadEnabled } from '../utils/vanillaGate';
 
 const route = useRoute();
 const router = useRouter();
@@ -21,6 +22,8 @@ const notificationStore = useNotificationStore();
 const { launchInstance: startInstance } = useGameLaunch();
 const { exportDiagnostics } = useDiagnosticsExport();
 const { t } = useI18n();
+
+const vanillaDownloadEnabled = isVanillaDownloadEnabled();
 
 const instances = ref<GameInstance[]>(getInstanceListCache());
 const loading = ref(false);
@@ -275,7 +278,7 @@ onUnmounted(() => {
           <v-icon size="20">mdi-refresh</v-icon>
           <v-tooltip activator="parent" location="bottom">{{ t('instanceManager.refreshList') }}</v-tooltip>
         </v-btn>
-        <v-btn color="primary" to="/add-instance">
+        <v-btn v-if="vanillaDownloadEnabled" color="primary" to="/add-instance">
           <v-icon start size="18">mdi-plus</v-icon>
           {{ t('instanceManager.newInstance') }}
         </v-btn>
@@ -307,8 +310,10 @@ onUnmounted(() => {
         <v-icon size="40" color="on-surface-variant">mdi-cube-outline</v-icon>
       </v-avatar>
       <div class="text-title-large font-weight-medium mb-2">{{ t('instanceManager.emptyTitle') }}</div>
-      <div class="text-body-medium text-on-surface-variant mb-4">{{ t('instanceManager.emptyHint') }}</div>
-      <v-btn color="primary" to="/add-instance">
+      <div class="text-body-medium text-on-surface-variant mb-4">
+        {{ vanillaDownloadEnabled ? t('instanceManager.emptyHint') : t('vanillaGate.disabled') }}
+      </div>
+      <v-btn v-if="vanillaDownloadEnabled" color="primary" to="/add-instance">
         <v-icon start size="18">mdi-plus</v-icon>
         {{ t('instanceManager.createInstance') }}
       </v-btn>

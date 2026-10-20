@@ -1,5 +1,10 @@
 /** App shell: sidebar, title bar, shortcuts, theme switch */
 export default {
+  vanillaGate: {
+    disabled:
+      'To comply with applicable laws and regulations, this build no longer provides Minecraft game files.',
+  },
+
   nav: {
     launch: 'Launch',
     download: 'Download',

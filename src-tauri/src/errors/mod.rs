@@ -24,6 +24,8 @@ pub enum LauncherError {
     #[error("另一个启动器实例正在占用 {0}")]
     Busy(String),
     #[error("{0}")]
+    Disabled(String),
+    #[error("{0}")]
     Custom(String),
 }
 
@@ -37,6 +39,7 @@ impl LauncherError {
             Self::Tauri(_) => "tauri",
             Self::Cancelled => "cancelled",
             Self::Busy(_) => "busy",
+            Self::Disabled(_) => "disabled",
             Self::Custom(_) => "custom",
         }
     }

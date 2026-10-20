@@ -238,12 +238,13 @@ impl ModpackInstaller {
         }
     }
 
-    /// 在线安装：从 Modrinth 拉项目信息与版本，下载 .mrpack 后走统一流水线
+    /// 在线安装
     pub async fn install_modrinth_modpack(
         &self,
         options: ModpackInstallOptions,
         window: &tauri::Window,
     ) -> Result<(), LauncherError> {
+        crate::services::vanilla_gate::ensure_enabled()?;
         reset_modpack_cancel_flag();
         validate_instance_name_or_error(&options.instance_name)?;
 
@@ -270,12 +271,13 @@ impl ModpackInstaller {
         finalize_install(&config, &targets, result)
     }
 
-    /// 本地导入：直接读取用户选中的 .mrpack，其余流程与在线安装一致
+    /// 本地导入
     pub async fn install_local_modpack(
         &self,
         options: LocalModpackInstallOptions,
         window: &tauri::Window,
     ) -> Result<(), LauncherError> {
+        crate::services::vanilla_gate::ensure_enabled()?;
         reset_modpack_cancel_flag();
         validate_instance_name_or_error(&options.instance_name)?;
 

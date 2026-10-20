@@ -184,6 +184,7 @@ pub async fn create_instance(
     loader: Option<LoaderType>,
     window: &Window,
 ) -> Result<(), LauncherError> {
+    crate::services::vanilla_gate::ensure_enabled()?;
     validate_instance_name_or_error(&new_instance_name)?;
 
     let (game_dir, versions_dir) = get_dirs()?;

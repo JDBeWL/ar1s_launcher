@@ -23,3 +23,4 @@ pub mod resourcepack;
 pub mod resourcepack_installer;
 pub mod shaderpack;
 pub mod shaderpack_installer;
+pub mod vanilla_gate;

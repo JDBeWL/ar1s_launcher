@@ -11,6 +11,7 @@ import { useAuthStore } from './stores/authStore';
 import { useSettingsStore } from './stores/settings';
 import { useUiLanguageStore } from './stores/uiLanguage';
 import { getThemePalette, getTheme, isValidThemePalette } from './utils/storage';
+import { isVanillaDownloadEnabled } from './utils/vanillaGate';
 import { configApi } from './services';
 import { logError } from './utils/logger';
 import GlobalDownloadStatus from './components/GlobalDownloadStatus.vue';
@@ -80,10 +81,10 @@ function handleGlobalShortcut(event: KeyboardEvent) {
   if (key === ',') {
     event.preventDefault();
     router.push('/settings');
-  } else if (key === 'd') {
+  } else if (key === 'd' && vanillaDownloadEnabled) {
     event.preventDefault();
     router.push('/download');
-  } else if (key === 'n') {
+  } else if (key === 'n' && vanillaDownloadEnabled) {
     event.preventDefault();
     router.push('/add-instance');
   } else if (key === 'i') {
@@ -151,11 +152,16 @@ const uiLanguageStore = useUiLanguageStore();
 const { t } = useI18n();
 
 const shortcutHelpVisible = ref(false);
+const vanillaDownloadEnabled = isVanillaDownloadEnabled();
 // 描述随语言切换实时变化，不能存成静态数组
 const shortcuts = computed(() => [
   { keys: 'Ctrl + ,', description: t('shell.shortcutSettings') },
-  { keys: 'Ctrl + D', description: t('shell.shortcutDownload') },
-  { keys: 'Ctrl + N', description: t('shell.shortcutAddInstance') },
+  ...(vanillaDownloadEnabled
+    ? [
+        { keys: 'Ctrl + D', description: t('shell.shortcutDownload') },
+        { keys: 'Ctrl + N', description: t('shell.shortcutAddInstance') },
+      ]
+    : []),
   { keys: 'Ctrl + I', description: t('shell.shortcutInstanceList') },
   { keys: 'Ctrl + /', description: t('shell.shortcutHelp') },
 ]);
@@ -199,12 +205,19 @@ onUnmounted(() => {
         <v-list-item prepend-icon="mdi-minecraft" :title="t('nav.launch')" to="/" class="nav-item mb-1">
           <v-tooltip activator="parent" location="right" :disabled="!rail">{{ t('nav.launch') }}</v-tooltip>
         </v-list-item>
-        <v-list-item prepend-icon="mdi-download" :title="t('nav.download')" to="/download" class="nav-item mb-1">
+        <v-list-item
+          v-if="vanillaDownloadEnabled"
+          prepend-icon="mdi-download"
+          :title="t('nav.download')"
+          to="/download"
+          class="nav-item mb-1"
+        >
           <v-tooltip activator="parent" location="right" :disabled="!rail">
             {{ t('nav.download') }} <kbd class="shortcut-key">Ctrl+D</kbd>
           </v-tooltip>
         </v-list-item>
         <v-list-item
+          v-if="vanillaDownloadEnabled"
           prepend-icon="mdi-plus-circle-outline"
           :title="t('nav.addInstance')"
           to="/add-instance"

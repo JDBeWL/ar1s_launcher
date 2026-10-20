@@ -20,6 +20,7 @@ pub async fn ensure_declared_libraries(
     version_json: &serde_json::Value,
     window: &Window,
 ) -> Result<(), LauncherError> {
+    crate::services::vanilla_gate::ensure_enabled()?;
     let config = load_config()?;
     let libraries_base_dir = PathBuf::from(&config.game_dir).join("libraries");
     let is_mirror = config.download_mirror.is_some();
@@ -60,6 +61,7 @@ pub async fn process_and_download_version(
     mirror: Option<String>,
     window: &Window,
 ) -> Result<(), LauncherError> {
+    crate::services::vanilla_gate::ensure_enabled()?;
     download_version(version_id, mirror, window, VersionDownloadScope::Full).await
 }
 
@@ -69,6 +71,7 @@ pub async fn ensure_version_core(
     mirror: Option<String>,
     window: &Window,
 ) -> Result<(), LauncherError> {
+    crate::services::vanilla_gate::ensure_enabled()?;
     download_version(version_id, mirror, window, VersionDownloadScope::Core).await
 }
 

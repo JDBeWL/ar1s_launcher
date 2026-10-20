@@ -11,9 +11,12 @@ import { instanceApi } from '../services';
 import { formatLastPlayed } from '../utils/format';
 import { useDebounceFn } from '../composables/useDebounce';
 import { logError } from '../utils/logger';
+import { isVanillaDownloadEnabled } from '../utils/vanillaGate';
 import type { GameInstance } from '../types/events';
 
 const { t } = useI18n();
+
+const vanillaDownloadEnabled = isVanillaDownloadEnabled();
 
 const { selectedVersion: selectedInstance, loadGameDir, initListeners } = useVersionManager();
 
@@ -267,7 +270,7 @@ onMounted(async () => {
       </v-card>
 
       <v-row>
-        <v-col cols="12" md="7">
+        <v-col cols="12" :md="vanillaDownloadEnabled ? 7 : 12">
           <div class="d-flex flex-column h-100">
             <v-card color="surface-container" variant="flat" class="d-flex flex-column flex-grow-1">
               <v-card-text class="pa-4 d-flex align-center card-head-row">
@@ -333,7 +336,7 @@ onMounted(async () => {
           </div>
         </v-col>
 
-        <v-col cols="12" md="5">
+        <v-col v-if="vanillaDownloadEnabled" cols="12" md="5">
           <div class="d-flex flex-column h-100">
             <v-card color="surface-container" variant="flat">
               <v-card-text class="pa-4">

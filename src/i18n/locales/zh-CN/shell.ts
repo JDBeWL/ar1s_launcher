@@ -1,5 +1,9 @@
 /** 应用外壳：侧边栏、标题栏、快捷键、主题切换 */
 export default {
+  vanillaGate: {
+    disabled: '为遵守相关法律法规，本版本已停止提供 Minecraft 原版游戏文件。',
+  },
+
   nav: {
     launch: '启动',
     download: '下载',
