@@ -155,11 +155,12 @@ pub async fn export_modpack(
         &content_root,
         &content_root,
         options.include_saves,
-        &linked_versions,
-        &sides,
         &mut seen_paths,
         &mut plan,
     )?;
+
+    // 收集完再统一算哈希：并行分片比在递归里逐个算快得多
+    apply_linked_files(&mut plan, &linked_versions, &sides).await;
 
     let total_bytes = plan.iter().map(|file| file.size).sum::<u64>();
     if total_bytes > MAX_OVERRIDES_BYTES {
@@ -272,14 +273,11 @@ async fn resolve_modrinth_versions(
     }
 
     let hashes = tokio::task::spawn_blocking(move || {
-        let mut hashes = Vec::new();
-        for path in candidates {
-            match file_utils::sha1_file(&path) {
-                Ok(hash) => hashes.push(hash),
-                Err(error) => warn!("计算 {} 的 sha1 失败: {}", path.display(), error),
-            }
-        }
-        hashes
+        // 串行算哈希只用得上一个核，导出几百个模组时很明显
+        file_utils::sha1_files_parallel(&candidates)
+            .into_iter()
+            .map(|(_, hash)| hash)
+            .collect::<Vec<_>>()
     })
     .await
     .map_err(|e| LauncherError::Custom(format!("计算文件哈希失败: {}", e)))?;
@@ -356,13 +354,10 @@ fn is_archivable_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn collect_planned_files(
     root: &Path,
     current: &Path,
     include_saves: bool,
-    linked_versions: &HashMap<String, ModrinthModpackVersion>,
-    sides: &HashMap<String, modrinth::ProjectSides>,
     seen_paths: &mut HashSet<String>,
     plan: &mut Vec<PlannedFile>,
 ) -> Result<(), LauncherError> {
@@ -390,15 +385,7 @@ fn collect_planned_files(
                     continue;
                 }
             }
-            collect_planned_files(
-                root,
-                &path,
-                include_saves,
-                linked_versions,
-                sides,
-                seen_paths,
-                plan,
-            )?;
+            collect_planned_files(root, &path, include_saves, seen_paths, plan)?;
             continue;
         }
 
@@ -419,29 +406,57 @@ fn collect_planned_files(
         }
 
         let size = path.metadata().map(|meta| meta.len()).unwrap_or(0);
-        let linked = if is_archivable_file(&path) {
-            match file_utils::sha1_file(&path) {
-                Ok(hash) => linked_versions
-                    .get(&hash.to_ascii_lowercase())
-                    .and_then(|version| build_linked_file(version, &hash, sides)),
-                Err(error) => {
-                    warn!("计算 {} 的 sha1 失败: {}", relative, error);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
         plan.push(PlannedFile {
             relative,
             source: path,
             size,
-            linked,
+            // 哈希与链接在收集完之后统一填，见 apply_linked_files
+            linked: None,
         });
     }
 
     Ok(())
+}
+
+/// 给计划里的 jar/zip 算 sha1，能反查到 Modrinth 版本的标记成链接
+///
+/// 递归过程中逐个算哈希只能用一个核；这里先把候选攒起来并行算完，再回填结果。
+async fn apply_linked_files(
+    plan: &mut [PlannedFile],
+    linked_versions: &HashMap<String, ModrinthModpackVersion>,
+    sides: &HashMap<String, modrinth::ProjectSides>,
+) {
+    let candidates: Vec<PathBuf> = plan
+        .iter()
+        .filter(|file| is_archivable_file(&file.source))
+        .map(|file| file.source.clone())
+        .collect();
+
+    if candidates.is_empty() {
+        return;
+    }
+
+    let hashes = tokio::task::spawn_blocking(move || file_utils::sha1_files_parallel(&candidates))
+        .await
+        .unwrap_or_else(|error| {
+            warn!("计算文件哈希异常终止: {}", error);
+            Vec::new()
+        });
+
+    let by_path: HashMap<PathBuf, String> = hashes.into_iter().collect();
+
+    for file in plan.iter_mut() {
+        if !is_archivable_file(&file.source) {
+            continue;
+        }
+        let Some(hash) = by_path.get(&file.source) else {
+            warn!("没有算出 {} 的 sha1，按 overrides 打包", file.relative);
+            continue;
+        };
+        file.linked = linked_versions
+            .get(&hash.to_ascii_lowercase())
+            .and_then(|version| build_linked_file(version, hash, sides));
+    }
 }
 
 fn build_linked_file(
@@ -542,6 +557,23 @@ fn sanitize_version_id(name: &str) -> String {
     }
 }
 
+/// 已经压缩过的格式再压一遍几乎没有收益，纯耗 CPU；大文件尤其明显
+fn compression_for(path: &Path) -> (CompressionMethod, Option<i64>) {
+    let ext = path
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        // jar 本身就是 zip，png/ogg 之类也压不动
+        "jar" | "zip" | "png" | "jpg" | "jpeg" | "ogg" | "mp3" | "mp4" | "gz" | "br" => {
+            (CompressionMethod::Stored, None)
+        }
+        // 配置文本可压缩但大多很小，低级别就够，省下的是 CPU 时间
+        _ => (CompressionMethod::Deflated, Some(1)),
+    }
+}
+
 fn write_mrpack(
     target: &Path,
     name: &str,
@@ -553,13 +585,14 @@ fn write_mrpack(
     let result = (|| -> Result<(), LauncherError> {
         let file = File::create(&temp)?;
         let mut zip = ZipWriter::new(file);
-        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        let text_options =
+            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
-        zip.start_file(INDEX_FILE, options)?;
+        zip.start_file(INDEX_FILE, text_options)?;
         zip.write_all(index_text.as_bytes())?;
 
         // 规范要求的额外说明文件，别的启动器会读它做展示
-        zip.start_file("README.md", options)?;
+        zip.start_file("README.md", text_options)?;
         zip.write_all(
             format!("# {name}\n\nModrinth 整合包，由 Ar1s Launcher 导出。\n\n版本: {version_id}\n")
                 .as_bytes(),
@@ -567,9 +600,20 @@ fn write_mrpack(
 
         for (relative, source) in overrides {
             let entry = format!("{}/{}", OVERRIDES_DIR, relative);
+            let (method, level) = compression_for(source);
+            let options = SimpleFileOptions::default()
+                .compression_method(method)
+                .compression_level(level);
+
             zip.start_file(entry, options)?;
-            let bytes = fs::read(source)?;
-            zip.write_all(&bytes)?;
+            // 流式拷贝：以前 fs::read 会把整个文件读进内存，一个 500 MB 的存档能直接顶爆
+            let mut input = std::io::BufReader::with_capacity(
+                1024 * 1024,
+                File::open(source).map_err(|error| {
+                    LauncherError::Custom(format!("读取 {} 失败: {}", source.display(), error))
+                })?,
+            );
+            std::io::copy(&mut input, &mut zip)?;
         }
 
         let file = zip.finish()?;
@@ -600,13 +644,38 @@ fn write_mrpack(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_dependencies, collect_planned_files, sanitize_version_id, validate_target,
-        write_mrpack,
+        build_dependencies, collect_planned_files, compression_for, sanitize_version_id,
+        validate_target, write_mrpack,
     };
     use crate::services::modpack_format;
-    use crate::services::modrinth::ProjectSides;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
     use std::fs;
+    use std::path::Path;
+
+    /// jar 本身是 zip，再压一遍纯耗 CPU；配置文本才值得压
+    #[test]
+    fn test_compression_is_skipped_for_already_compressed_files() {
+        use zip::CompressionMethod;
+
+        assert_eq!(
+            compression_for(Path::new("mods/sodium.jar")).0,
+            CompressionMethod::Stored
+        );
+        assert_eq!(
+            compression_for(Path::new("resourcepacks/x.zip")).0,
+            CompressionMethod::Stored
+        );
+        assert_eq!(
+            compression_for(Path::new("a.PNG")).0,
+            CompressionMethod::Stored
+        );
+        // 未压缩的文本走低级别 deflate，兼顾体积与耗时
+        assert_eq!(
+            compression_for(Path::new("config/sodium.toml")).0,
+            CompressionMethod::Deflated
+        );
+        assert_eq!(compression_for(Path::new("config/sodium.toml")).1, Some(1));
+    }
 
     /// 导出的包必须能被安装路径原样读回来，否则「导出 → 导入」是死路
     #[test]
@@ -705,16 +774,7 @@ mod tests {
 
         let mut seen = HashSet::new();
         let mut plan = Vec::new();
-        collect_planned_files(
-            root,
-            root,
-            false,
-            &HashMap::new(),
-            &HashMap::<String, ProjectSides>::new(),
-            &mut seen,
-            &mut plan,
-        )
-        .unwrap();
+        collect_planned_files(root, root, false, &mut seen, &mut plan).unwrap();
 
         let mut paths: Vec<&str> = plan.iter().map(|file| file.relative.as_str()).collect();
         paths.sort();
@@ -736,16 +796,7 @@ mod tests {
 
         let mut seen = HashSet::new();
         let mut plan = Vec::new();
-        collect_planned_files(
-            root,
-            root,
-            true,
-            &HashMap::new(),
-            &HashMap::<String, ProjectSides>::new(),
-            &mut seen,
-            &mut plan,
-        )
-        .unwrap();
+        collect_planned_files(root, root, true, &mut seen, &mut plan).unwrap();
 
         assert_eq!(plan.len(), 1);
         assert_eq!(plan[0].relative, "saves/world/level.dat");

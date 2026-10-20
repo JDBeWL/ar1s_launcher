@@ -125,13 +125,28 @@ async fn download_with_resume(
     bytes_downloaded: &Arc<AtomicU64>,
     bytes_since_last: &Arc<AtomicU64>,
 ) -> Result<(), LauncherError> {
-    let tmp_path = part_path(&job.path);
-    adopt_legacy_part(&job.path, &tmp_path);
+    // 小于阈值的文件直接写目标路径：省掉一次 .part + rename 的元数据往返，
+    // 也少触发一遍杀毒扫描；这类文件重下代价本来就低，不需要续传
+    let direct = is_small_file(job);
 
-    let existing_size = tokio::fs::metadata(&tmp_path)
-        .await
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let tmp_path = if direct {
+        job.path.clone()
+    } else {
+        let part = part_path(&job.path);
+        adopt_legacy_part(&job.path, &part);
+        part
+    };
+
+    let existing_size = if direct {
+        // 直写模式下目标文件就是写一半的产物，不能当续传依据
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        0
+    } else {
+        tokio::fs::metadata(&tmp_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0)
+    };
 
     if existing_size > 0 && job.size > 0 && existing_size >= job.size {
         debug!(
@@ -159,7 +174,7 @@ async fn download_with_resume(
     }
 
     // 不做 HEAD 预检，直接发 Range；返回 200（不支持 Range）由 download_chunk_with_resume 兜底
-    let resume_from = if existing_size > 0 && job.size > 0 && existing_size < job.size {
+    let resume_from = if !direct && existing_size > 0 && job.size > 0 && existing_size < job.size {
         debug!("Resuming download from byte {}: {}", existing_size, url);
         Some(existing_size)
     } else {
@@ -177,6 +192,13 @@ async fn download_with_resume(
         resume_from,
     )
     .await
+}
+
+/// 小文件走直写：不值得为断点续传付两次元数据操作与一次重命名
+const DIRECT_WRITE_LIMIT: u64 = 1024 * 1024;
+
+fn is_small_file(job: &DownloadJob) -> bool {
+    job.size > 0 && job.size <= DIRECT_WRITE_LIMIT
 }
 
 /// 保持 `<文件名>.part` 的形式：`with_extension` 会把 `a.jar` 变成 `a.part`，
@@ -218,7 +240,13 @@ async fn download_chunk_with_resume(
     bytes_since_last: &Arc<AtomicU64>,
     resume_from: Option<u64>,
 ) -> Result<(), LauncherError> {
-    let tmp_path = part_path(&job.path);
+    // 小文件直写目标文件，没有 .part 中转
+    let direct = resume_from.is_none() && is_small_file(job);
+    let tmp_path = if direct {
+        job.path.clone()
+    } else {
+        part_path(&job.path)
+    };
     let mut bytes_added_this_attempt: u64 = 0;
     let start_offset = resume_from.unwrap_or(0);
 
@@ -287,7 +315,10 @@ async fn download_chunk_with_resume(
 
         verify_downloaded(&tmp_path, job, hasher).await?;
 
-        finalize_download(&tmp_path, &job.path).await?;
+        // 直写模式下 tmp_path 就是目标文件，不需要再搬一次
+        if !direct {
+            finalize_download(&tmp_path, &job.path).await?;
+        }
         remember_fingerprint(&job.path, job.hash.as_deref());
 
         Ok::<(), LauncherError>(())
@@ -454,9 +485,29 @@ async fn finalize_download(tmp_path: &Path, final_path: &Path) -> Result<(), Lau
 
 #[cfg(test)]
 mod tests {
-    use super::part_path;
+    use super::{DIRECT_WRITE_LIMIT, is_small_file, part_path};
+    use crate::models::DownloadJob;
     use crate::utils::file_utils::FileHasher;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    fn job(size: u64) -> DownloadJob {
+        DownloadJob {
+            url: "https://example.com/x".to_string(),
+            fallback_url: None,
+            path: PathBuf::from("x.jar"),
+            size,
+            hash: None,
+        }
+    }
+
+    #[test]
+    fn test_small_files_take_the_direct_write_path() {
+        assert!(is_small_file(&job(DIRECT_WRITE_LIMIT)));
+        assert!(is_small_file(&job(1)));
+        // 大小未知（0）时不敢省续传，仍然走 .part
+        assert!(!is_small_file(&job(0)));
+        assert!(!is_small_file(&job(DIRECT_WRITE_LIMIT + 1)));
+    }
 
     #[test]
     fn test_part_path_appends_suffix_instead_of_replacing_extension() {

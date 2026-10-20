@@ -168,7 +168,12 @@ pub async fn download_all_files(
     let state_saver_handle =
         spawn_state_saver(download_state.clone(), state_file.clone(), state.clone());
 
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(threads));
+    // 大文件单独限流：几个几百 MB 的 client.jar / 整合包会长期占住槽位，
+    // 后面成百上千个小资源文件只能干等。分成两个池子，小文件永远有槽可用
+    let large_slots = (threads / 4).max(1).min(threads);
+    let small_slots = threads.saturating_sub(large_slots).max(1);
+    let large_semaphore = Arc::new(tokio::sync::Semaphore::new(large_slots));
+    let small_semaphore = Arc::new(tokio::sync::Semaphore::new(small_slots));
     let mut handles = vec![];
 
     for job in filtered_jobs {
@@ -176,7 +181,14 @@ pub async fn download_all_files(
             break;
         }
 
-        let permit = semaphore.clone().acquire_owned().await.unwrap();
+        // 许可在任务内部获取：在这里 await 的话，大文件池满了会卡住整个派发循环，
+        // 后面的小文件连排队的机会都没有
+        let semaphore = if is_large_file(&job) {
+            large_semaphore.clone()
+        } else {
+            small_semaphore.clone()
+        };
+
         let global_cancel_clone = global_cancel.clone();
         let handle = spawn_download_task(
             job,
@@ -188,7 +200,7 @@ pub async fn download_all_files(
             bytes_since_last.clone(),
             error_occurred.clone(),
             download_state.clone(),
-            permit,
+            semaphore,
         );
         handles.push(handle);
     }
@@ -284,6 +296,13 @@ fn order_jobs_for_dispatch(jobs: &mut [DownloadJob]) {
     jobs.sort_by_key(|job| std::cmp::Reverse(job.size));
 }
 
+/// 超过阈值的算大文件，单独用一个较小的池子限流
+const LARGE_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+fn is_large_file(job: &DownloadJob) -> bool {
+    job.size >= LARGE_FILE_BYTES
+}
+
 fn spawn_progress_reporter(
     bytes_downloaded: Arc<AtomicU64>,
     bytes_since_last: Arc<AtomicU64>,
@@ -364,12 +383,21 @@ fn spawn_download_task(
     bytes_since_last: Arc<AtomicU64>,
     error_occurred: Arc<tokio::sync::Mutex<Option<String>>>,
     download_state: Arc<Mutex<DownloadState>>,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    semaphore: Arc<tokio::sync::Semaphore>,
 ) -> tauri::async_runtime::JoinHandle<Result<(), LauncherError>> {
     async_runtime::spawn(async move {
         if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
-            drop(permit);
             return Ok::<(), LauncherError>(());
+        }
+
+        // 许可在这里才获取，派发循环不会被大文件池卡住
+        let permit = match semaphore.acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => return Ok(()),
+        };
+        if !state.load(Ordering::Acquire) || global_cancel.load(Ordering::Acquire) {
+            drop(permit);
+            return Ok(());
         }
 
         {

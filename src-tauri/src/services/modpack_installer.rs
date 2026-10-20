@@ -502,20 +502,26 @@ impl ModpackInstaller {
             .cloned()
             .collect();
 
-        send_progress(55, "下载模组文件...", false);
+        send_progress(55, "下载模组文件与游戏核心...", false);
         check_cancelled()?;
-        self.download_modpack_files(&client_files, &targets.content_root, window)
-            .await?;
 
-        send_progress(75, "准备游戏核心文件...", false);
-        check_cancelled()?;
-        self.install_game_and_loader(
+        // 模组下载和「游戏核心 + 加载器」互不依赖，串行只是白等网络。
+        // 两段都用各自的信号量限流，同时跑不会把连接数翻倍。
+        //
+        // 进度区间必须错开：模组占 55..74，加载器阶段只在 74 上报不确定态，
+        // 否则核心先装完会把进度推到 80，模组随后又报 62，进度条就倒退了
+        let mods_future = self.download_modpack_files(&client_files, &targets.content_root, window);
+        let core_future = self.install_game_and_loader(
             &plan.index.dependencies,
             instance_name,
             &targets.game_dir,
             window,
-        )
-        .await?;
+        );
+
+        let (mods_result, core_result) = tokio::join!(mods_future, core_future);
+        // 先报核心的错：模组缺失还能靠修复补，核心或加载器没装好是完全跑不起来的
+        core_result?;
+        mods_result?;
 
         send_progress(90, "创建实例配置...", false);
         check_cancelled()?;
@@ -776,10 +782,11 @@ impl ModpackInstaller {
 
         let loader = deps.loader();
         if loader.is_some() {
+            // 74 而不是 80：和并行跑的模组下载（55..74）错开，进度条才不会倒退
             let _ = window.emit(
                 "modpack-install-progress",
                 ModpackInstallProgress {
-                    progress: 80,
+                    progress: 74,
                     message: "安装加载器...".to_string(),
                     indeterminate: true,
                 },

@@ -165,8 +165,9 @@
                 </div>
               </template>
 
-              <template v-else-if="gameStage && versionDownload">
-                <div class="d-flex justify-space-between text-body-small text-on-surface-variant num-mono mt-3">
+              <!-- 核心文件与模组并行下载，所以这里不能是 else-if：两段同时进行时要一起显示 -->
+              <div v-if="gameStage && versionDownload" class="mt-3">
+                <div class="d-flex justify-space-between text-body-small text-on-surface-variant num-mono">
                   <span>
                     {{ formatBytes(versionDownload.bytes_downloaded) }} /
                     {{ formatBytes(versionDownload.total_bytes) }}
@@ -184,7 +185,7 @@
                 <div v-if="versionDownloadDone" class="text-body-small text-on-surface-variant mt-2">
                   {{ t('installModpack.gameReady') }}
                 </div>
-              </template>
+              </div>
 
               <div v-if="!validatingFiles" class="d-flex justify-end ga-2 mt-3">
                 <template v-if="postInstallChecked && missingFileCount > 0">
@@ -532,11 +533,14 @@ const checkingInstanceName = ref(false);
 let instanceNameCheckTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const activeFiles = computed(() => fileProgress.value?.files ?? []);
+// 模组下载与游戏核心并行：模组进度走 55..74，加载器不确定态在 74，核心下载的
+// download-progress 事件另行显示。两段并行期间同时展示文件列表与核心进度，
+// 都完成后再由后端推到 90
 const filesStage = computed(
-  () => installing.value && installProgress.value.progress >= 55 && installProgress.value.progress < 75,
+  () => installing.value && installProgress.value.progress >= 55 && installProgress.value.progress < 90,
 );
 const gameStage = computed(
-  () => installing.value && installProgress.value.progress >= 75 && installProgress.value.progress < 80,
+  () => installing.value && installProgress.value.progress >= 55 && installProgress.value.progress < 90,
 );
 const queuedFileCount = computed(() => {
   const progress = fileProgress.value;

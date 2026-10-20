@@ -161,6 +161,49 @@ pub fn sha1_file(path: &std::path::Path) -> Result<String, LauncherError> {
     Ok(digest_to_hex(&hasher.finalize()))
 }
 
+/// 多文件并行算 sha1，按 CPU 核数分片
+///
+/// 逐个串行算的时候只有单核在跑，导出 400 个模组完全感知得到；
+/// 这里按核数切块，每块内部仍然串行，避免几百个线程抢 IO
+pub fn sha1_files_parallel(paths: &[PathBuf]) -> Vec<(PathBuf, String)> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+
+    let workers = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(4)
+        .clamp(1, 8)
+        .min(paths.len());
+
+    if workers <= 1 {
+        return paths
+            .iter()
+            .filter_map(|path| sha1_file(path).ok().map(|hash| (path.clone(), hash)))
+            .collect();
+    }
+
+    let chunk_size = paths.len().div_ceil(workers);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .chunks(chunk_size)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .filter_map(|path| sha1_file(path).ok().map(|hash| (path.clone(), hash)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap_or_default())
+            .collect()
+    })
+}
+
 /// 边写边算：下载时每块数据顺手进哈希，写完不必再把整个文件读一遍
 pub struct FileHasher {
     hasher: Sha1,
@@ -589,6 +632,31 @@ mod tests {
         );
         assert_eq!(parse_sha1("not-a-hash"), None);
         assert_eq!(parse_sha1(""), None);
+    }
+
+    /// 并行分片算出来的哈希必须和逐个算完全一致，且不丢文件
+    #[test]
+    fn test_parallel_sha1_matches_serial_for_every_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut paths = Vec::new();
+        for index in 0..9 {
+            let path = dir.path().join(format!("f{index}.bin"));
+            fs::write(&path, format!("content-{index}")).unwrap();
+            paths.push(path);
+        }
+
+        let parallel = sha1_files_parallel(&paths);
+        assert_eq!(parallel.len(), paths.len());
+
+        let by_path: std::collections::HashMap<_, _> = parallel.into_iter().collect();
+        for path in &paths {
+            assert_eq!(by_path.get(path), Some(&sha1_file(path).unwrap()));
+        }
+    }
+
+    #[test]
+    fn test_parallel_sha1_handles_empty_input() {
+        assert!(sha1_files_parallel(&[]).is_empty());
     }
 
     #[test]
