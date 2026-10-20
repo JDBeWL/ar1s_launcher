@@ -8,3 +8,4 @@ pub mod library;
 pub mod logger;
 pub mod minecraft;
 pub mod secure_file;
+pub mod verify_cache;

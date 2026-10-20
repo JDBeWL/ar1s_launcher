@@ -11,7 +11,7 @@ use crate::services::launcher::isolation;
 use crate::services::modpack_format::{
     self, ModrinthDependencies, ModrinthIndex, ModrinthIndexFile,
 };
-use crate::services::{config, download, http_client, loaders, modrinth};
+use crate::services::{config, download, loaders, modrinth};
 use crate::utils::file_utils::{self, validate_instance_name_or_error};
 use log::{error, info, warn};
 use std::fs;
@@ -464,11 +464,16 @@ impl ModpackInstaller {
             fs::remove_dir_all(&targets.extract_dir)?;
         }
         fs::create_dir_all(&targets.extract_dir)?;
-        modpack_format::extract_archive(
-            &plan.archive_path,
-            &targets.extract_dir,
-            MAX_EXTRACTED_BYTES,
-        )
+
+        // 解压是纯同步阻塞活，几百 MB 的包会占住 async worker 几十秒：
+        // 期间进度心跳和取消响应都会跟着卡住，必须挪到阻塞线程池
+        let archive = plan.archive_path.clone();
+        let extract_dir = targets.extract_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            modpack_format::extract_archive(&archive, &extract_dir, MAX_EXTRACTED_BYTES)
+        })
+        .await
+        .map_err(|e| LauncherError::Custom(format!("解压任务异常终止: {}", e)))?
         .map_err(|e| LauncherError::Custom(format!("解压整合包失败: {}", e)))?;
 
         send_progress(45, "处理整合包配置...", false);
@@ -482,7 +487,12 @@ impl ModpackInstaller {
         send_progress(50, "复制整合包文件...", false);
         check_cancelled()?;
 
-        copy_overrides(&targets.extract_dir, &targets.content_root)?;
+        // 同样是纯同步的递归拷贝
+        let extract_dir = targets.extract_dir.clone();
+        let content_root = targets.content_root.clone();
+        tokio::task::spawn_blocking(move || copy_overrides(&extract_dir, &content_root))
+            .await
+            .map_err(|e| LauncherError::Custom(format!("复制任务异常终止: {}", e)))??;
 
         let client_files: Vec<ModrinthIndexFile> = plan
             .index
@@ -563,7 +573,7 @@ impl ModpackInstaller {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
         let completed_count = Arc::new(AtomicUsize::new(0));
         let failed_files = Arc::new(Mutex::new(Vec::<String>::new()));
-        let client = http_client::get_client();
+        let client = download::get_http_client();
 
         // download_file 靠这两个标志在流式读取中途响应取消
         let running = Arc::new(AtomicBool::new(true));
@@ -704,6 +714,9 @@ impl ModpackInstaller {
             "modpack-file-progress",
             snapshot_files(states.as_slice(), 0.0),
         );
+
+        // 这一轮校验过的文件指纹落盘，重复导入同一整合包时可跳过整盘哈希
+        file_utils::flush_verify_cache();
 
         check_cancelled()?;
 

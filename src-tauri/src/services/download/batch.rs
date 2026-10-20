@@ -1,6 +1,7 @@
 //! 批量下载调度
 //!
-//! 按配置线程数限并发，跳过 .ar1s/download_state 里已完成项，退避重试并响应取消
+//! 按配置线程数限并发，跳过 .ar1s/download_state 里已完成项、按校验指纹跳过未变的文件，
+//! 退避重试并响应取消
 
 use super::file::download_file;
 use super::http::get_http_client;
@@ -218,6 +219,9 @@ pub async fn download_all_files(
 
     reporter_result?;
     saver_result?;
+
+    // 这一轮校验过的文件指纹落盘，下次安装同一版本可跳过整盘哈希
+    crate::utils::file_utils::flush_verify_cache();
 
     if was_cancelled.load(Ordering::Acquire) {
         emit_cancelled_progress(window, bytes_downloaded.load(Ordering::Relaxed), total_size);

@@ -1,12 +1,13 @@
 //! 文件与下载校验工具
 //!
-//! 实例名校验、目录递归拷贝、sha1 与大小校验修复
+//! 实例名校验、目录递归拷贝、sha1 与大小校验修复；校验结果按「长度 + mtime」缓存
 
 use crate::errors::LauncherError;
+use crate::utils::verify_cache;
 use log::{debug, info, warn};
 use sha1::{Digest, Sha1};
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -95,6 +96,16 @@ pub fn validate_file_name_or_error(file_name: &str) -> Result<(), LauncherError>
     validate_safe_component(file_name, "文件名", 200).map_err(LauncherError::Custom)
 }
 
+/// 启动时绑定缓存目录；游戏目录改变后也要再调一次
+pub fn init_verify_cache(game_dir: &Path) {
+    verify_cache::init(game_dir);
+}
+
+/// 下载结束时把这一轮记下的指纹落盘，下次启动仍然有效
+pub fn flush_verify_cache() {
+    verify_cache::flush();
+}
+
 pub fn instance_dir(base: &Path, instance_name: &str) -> Result<PathBuf, LauncherError> {
     validate_instance_name_or_error(instance_name)?;
     Ok(base.join(instance_name))
@@ -116,21 +127,30 @@ pub fn is_safe_relative_path(raw: &str) -> bool {
     true
 }
 
+/// 逐字节 `format!` 会为每个字节分配一个 String；400 次校验就是几十万次分配
+const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
+
+fn digest_to_hex(digest: &[u8]) -> String {
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push(HEX_DIGITS[(byte >> 4) as usize] as char);
+        hex.push(HEX_DIGITS[(byte & 0x0f) as usize] as char);
+    }
+    hex
+}
+
 pub fn sha1_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha1::new();
     hasher.update(bytes);
-    hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    digest_to_hex(&hasher.finalize())
 }
 
 /// 流式计算文件 sha1，模组更新检查按内容识别文件，不依赖文件名
 pub fn sha1_file(path: &std::path::Path) -> Result<String, LauncherError> {
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha1::new();
-    let mut buf = [0u8; 64 * 1024];
+    // 大缓冲：小文件一次读完，大文件也少几次系统调用
+    let mut buf = vec![0u8; 1024 * 1024];
     loop {
         let read = file.read(&mut buf)?;
         if read == 0 {
@@ -138,11 +158,34 @@ pub fn sha1_file(path: &std::path::Path) -> Result<String, LauncherError> {
         }
         hasher.update(&buf[..read]);
     }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
+    Ok(digest_to_hex(&hasher.finalize()))
+}
+
+/// 边写边算：下载时每块数据顺手进哈希，写完不必再把整个文件读一遍
+pub struct FileHasher {
+    hasher: Sha1,
+}
+
+impl FileHasher {
+    pub fn new() -> Self {
+        Self {
+            hasher: Sha1::new(),
+        }
+    }
+
+    pub fn update(&mut self, chunk: &[u8]) {
+        self.hasher.update(chunk);
+    }
+
+    pub fn finish_hex(self) -> String {
+        digest_to_hex(&self.hasher.finalize())
+    }
+}
+
+impl Default for FileHasher {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// maven 的 .sha1 文件常见格式是「hash  filename」或只有 hash
@@ -157,6 +200,10 @@ pub fn verify_sha1(bytes: &[u8], expected: &str) -> bool {
     !expected.is_empty() && sha1_hex(bytes).eq_ignore_ascii_case(expected)
 }
 
+/// 递归拷贝目录
+///
+/// 用带缓冲的流式拷贝而不是 `fs::copy`：后者在部分平台上不预分配目标长度，
+/// 大文件会反复扩文件；这里顺手把 mtime 也带过去，方便后续按时间戳判断缓存
 pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), std::io::Error> {
     fs::create_dir_all(&dst)?;
     for entry in fs::read_dir(src)? {
@@ -165,13 +212,30 @@ pub fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<(), 
         if ty.is_dir() {
             copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
         } else {
-            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+            let target = dst.as_ref().join(entry.file_name());
+            if ty.is_file() {
+                copy_file(&entry.path(), &target)?;
+            } else {
+                // 符号链接等特殊文件原样复制，别当成普通文件去读
+                fs::copy(entry.path(), target)?;
+            }
         }
     }
     Ok(())
 }
 
+/// 流式拷贝单个文件，按源文件长度预分配目标
+fn copy_file(src: &Path, dst: &Path) -> Result<(), std::io::Error> {
+    let mut reader = std::io::BufReader::with_capacity(1024 * 1024, fs::File::open(src)?);
+    let mut writer = std::io::BufWriter::with_capacity(1024 * 1024, fs::File::create(dst)?);
+    std::io::copy(&mut reader, &mut writer)?;
+    writer.flush()?;
+    Ok(())
+}
+
 /// expected_size 为 0 或 expected_hash 为 None 时，对应校验直接跳过
+///
+/// 命中校验指纹缓存时不再读文件；缓存按「长度 + 修改时间」判定内容是否还是那一份
 pub fn verify_file(
     path: &std::path::Path,
     expected_hash: Option<&str>,
@@ -181,19 +245,25 @@ pub fn verify_file(
         return Ok(false);
     }
 
-    let actual_size = std::fs::metadata(path)?.len();
-    if expected_size > 0 && actual_size != expected_size {
+    let metadata = std::fs::metadata(path)?;
+    if expected_size > 0 && metadata.len() != expected_size {
         warn!(
             "文件大小不匹配: 期望 {} 字节, 实际 {} 字节",
-            expected_size, actual_size
+            expected_size,
+            metadata.len()
         );
         return Ok(false);
     }
 
-    if let Some(hash) = expected_hash {
+    if verify_cache::matches(path, &metadata, expected_hash) {
+        debug!("文件指纹未变，跳过哈希计算: {}", path.display());
+        return Ok(true);
+    }
+
+    let valid = if let Some(hash) = expected_hash {
         let mut file = std::fs::File::open(path)?;
         let mut hasher = Sha1::new();
-        let mut buf = [0u8; 64 * 1024];
+        let mut buf = vec![0u8; 1024 * 1024];
         loop {
             let read = file.read(&mut buf)?;
             if read == 0 {
@@ -201,26 +271,31 @@ pub fn verify_file(
             }
             hasher.update(&buf[..read]);
         }
-        let actual_hash: String = hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        let is_valid = actual_hash.to_lowercase() == hash.to_lowercase();
+        let actual_hash = digest_to_hex(&hasher.finalize());
+        let is_valid = actual_hash.eq_ignore_ascii_case(hash.trim());
 
         if !is_valid {
             warn!("文件哈希不匹配: 期望 {}, 实际 {}", hash, actual_hash);
         }
 
-        Ok(is_valid)
+        is_valid
     } else {
-        Ok(true)
+        true
+    };
+
+    if valid {
+        verify_cache::remember(path, &metadata, expected_hash);
     }
+    Ok(valid)
 }
 
+/// 校验并修复：只做校验和就地修复的判定，真正下载交给 `download_with_resume`
+///
+/// 这里以前自己 `response.bytes()` 下一遍，失败了下载层再下一遍；而且整文件读进
+/// 内存，大 jar 直接把内存顶上去。现在损坏文件就地删掉，由调用方决定怎么补。
 pub async fn verify_and_repair_file(
     job: &crate::models::DownloadJob,
-    client: &reqwest::Client,
+    _client: &reqwest::Client,
 ) -> Result<bool, LauncherError> {
     let path = &job.path;
 
@@ -234,45 +309,36 @@ pub async fn verify_and_repair_file(
         return Ok(true);
     }
 
-    warn!("文件损坏，尝试修复: {}", path.display());
+    warn!("文件损坏，删除后重新下载: {}", path.display());
 
-    let backup_path = path.with_extension("bak");
-    if let Err(e) = std::fs::copy(path, &backup_path) {
-        warn!("备份损坏文件失败: {}", e);
+    // 保留一份备份只在文件不大时值得，否则等于把整个 jar 再复制一遍磁盘
+    if let Ok(metadata) = std::fs::metadata(path)
+        && metadata.len() <= MAX_BACKUP_BYTES
+    {
+        let backup_path = with_backup_suffix(path);
+        if let Err(e) = std::fs::copy(path, &backup_path) {
+            warn!("备份损坏文件失败: {}", e);
+        }
     }
 
     if let Err(e) = std::fs::remove_file(path) {
         warn!("删除损坏文件失败: {}", e);
     }
 
-    info!("重新下载文件: {}", path.display());
+    Ok(false)
+}
 
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+/// 大文件不做备份：修复的意义远小于一次完整磁盘拷贝的开销
+const MAX_BACKUP_BYTES: u64 = 8 * 1024 * 1024;
 
-    let response = client.get(&job.url).send().await?;
-    if !response.status().is_success() {
-        return Err(LauncherError::Custom(format!(
-            "下载失败: HTTP {}",
-            response.status()
-        )));
-    }
-
-    let content = response.bytes().await?;
-    std::fs::write(path, &content)?;
-
-    if verify_file(path, job.hash.as_deref(), job.size)? {
-        info!("文件修复成功: {}", path.display());
-        let _ = std::fs::remove_file(&backup_path);
-        Ok(true)
-    } else {
-        warn!("文件修复失败: {}", path.display());
-        if backup_path.exists() {
-            let _ = std::fs::copy(&backup_path, path);
-        }
-        Ok(false)
-    }
+/// 追加后缀而不是换扩展名，否则 `mod.jar` 会覆盖同目录的 `mod.bak`
+fn with_backup_suffix(path: &std::path::Path) -> PathBuf {
+    let mut name = path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_default();
+    name.push(".bak");
+    path.with_file_name(name)
 }
 
 pub async fn batch_verify_files(
@@ -479,7 +545,6 @@ mod tests {
     #[test]
     fn test_checked_instance_dir_rejects_path_components() {
         let base = Path::new("versions");
-
         assert!(instance_dir(base, "../outside").is_err());
         assert!(instance_dir(base, "a/b").is_err());
         assert!(instance_dir(base, "a\\b").is_err());
@@ -536,5 +601,42 @@ mod tests {
         assert!(validate_file_name_or_error("mods\\pack.mrpack").is_err());
         assert!(validate_file_name_or_error("C:\\pack.mrpack").is_err());
         assert!(validate_file_name_or_error("CON.mrpack").is_err());
+    }
+
+    /// 指纹缓存只认「长度 + 修改时间」，内容被改过就必须重新算哈希，
+    /// 否则损坏的文件会被当成好的跳过下载
+    #[test]
+    fn test_verify_file_cache_invalidates_when_content_changes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("cached.bin");
+        fs::write(&path, b"hello").unwrap();
+
+        let hello = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
+        assert!(verify_file(&path, Some(hello), 5).unwrap());
+
+        // 内容变了、长度也变了：缓存必须失效
+        fs::write(&path, b"hello world").unwrap();
+        assert!(!verify_file(&path, Some(hello), 5).unwrap());
+        assert!(!verify_file(&path, Some(hello), 11).unwrap());
+
+        // 长度相同但内容不同：靠修改时间识破
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&path, b"world").unwrap();
+        assert!(!verify_file(&path, Some("d4e2b1dbb0de5e0d2c1f3a1b5e1e2f3c4d5e6f70"), 5).unwrap());
+    }
+
+    /// 只校验大小时不该把之前记下的哈希抹掉，否则下次带哈希的校验又要重算
+    #[test]
+    fn test_size_only_verify_keeps_the_recorded_hash() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("keep.bin");
+        fs::write(&path, b"hello").unwrap();
+
+        let hello = "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d";
+        assert!(verify_file(&path, Some(hello), 5).unwrap());
+        assert!(verify_file(&path, None, 0).unwrap());
+        // 缓存里仍留着哈希，这次应当直接命中而不再读文件
+        assert!(verify_file(&path, Some(hello), 5).unwrap());
+        assert!(!verify_file(&path, Some("0000000000000000000000000000000000000000"), 5).unwrap());
     }
 }

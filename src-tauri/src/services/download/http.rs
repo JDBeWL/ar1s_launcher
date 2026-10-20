@@ -1,6 +1,6 @@
 //! 下载 HTTP 客户端
 //!
-//! 独立于全局客户端的大文件专用 reqwest：禁用压缩、总超时 300 秒；
+//! 独立于全局客户端的大文件专用 reqwest：禁用压缩、只设读超时（不限制总时长）；
 //! 代理设置变更后可整体重建
 
 use std::sync::{LazyLock, RwLock};
@@ -66,6 +66,9 @@ fn client_builder(max_connections_per_host: usize) -> reqwest::ClientBuilder {
         .pool_max_idle_per_host(max_connections_per_host * 4)
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_keepalive(Some(Duration::from_secs(60)))
+        .tcp_nodelay(true)
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(300))
+        // 不能用 .timeout()：那是整个请求的总时长，大文件在慢线路上必然超时重下。
+        // 读超时只管「卡住不动」，只要还在出数据就让它继续下
+        .read_timeout(Duration::from_secs(60))
 }

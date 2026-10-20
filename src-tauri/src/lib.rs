@@ -143,6 +143,8 @@ pub fn run() {
                     &game_dir,
                     &game_dir.join("versions"),
                 );
+                // 校验指纹缓存：命中后二次安装不再整盘重算 sha1
+                utils::file_utils::init_verify_cache(&game_dir);
             }
 
             // 预热 Java 检测缓存，放后台跑以免阻塞启动
